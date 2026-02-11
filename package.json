@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
+    "test:all": "hardhat test nodejs",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
     "format:sol": "prettier --plugin prettier-plugin-solidity --write \"contracts/**/*.sol\"",
