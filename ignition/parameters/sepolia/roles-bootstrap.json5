@@ -1,0 +1,10 @@
+{
+  VaultRolesBootstrapModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Initial role holders
+    allocator: "0x0000000000000000000000000000000000000000",
+    rebalancer: "0x0000000000000000000000000000000000000000",
+    pauser: "0x0000000000000000000000000000000000000000",
+  },
+}

@@ -6,6 +6,14 @@ In simple terms, this contract helps put GRVT TVL to work by allocating funds in
 
 ## Project Overview
 
+This repository contains:
+
+- `GRVTDeFiVault`: L1 vault with RBAC, pause semantics, strategy routing, and L1->L2 rebalance/emergency flows.
+- `AaveV3Strategy`: vault-only strategy integration for Aave v3 (USDT-first).
+- `ZkSyncNativeBridgeAdapter`: vault-only adapter abstraction for L1 custody/bridge sends.
+
+The design enforces strict asset-flow restrictions, strategy whitelisting, and emergency controls.
+
 ## Architecture and Major Flows
 
 ### High-Level Structure
@@ -165,12 +173,73 @@ GRVTDeFiVault.emergencySendToL2(token, amount)
       +--> mints base token and submits TwoBridges request
 ```
 
+## Risk Controls Semantics
+
+- `rebalanceToL2` is the normal risk-on path and is blocked by pause and token-support checks.
+- `emergencySendToL2` intentionally bypasses pause and token-support checks to prioritize incident-time liquidity restoration.
+- Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
+
 ## Usage
 
 ### Running Tests
 
-To run all the tests in the project, execute the following command:
+Run all tests:
 
 ```shell
 npm run test
 ```
+
+Run only fork integration tests (requires mainnet RPC):
+
+```shell
+MAINNET_RPC_URL=<rpc-url> npx hardhat test test/fork/*.ts
+```
+
+Optional fork block pin:
+
+```shell
+MAINNET_RPC_URL=<rpc-url> MAINNET_FORK_BLOCK=22000000 npx hardhat test test/fork/*.ts
+```
+
+### Ignition Deployments
+
+Use `.env` for network credentials (`SEPOLIA_RPC_URL`, `SEPOLIA_PRIVATE_KEY`),
+and keep deployment inputs in Ignition parameter files under `ignition/parameters/`.
+
+Deploy vault core:
+
+```shell
+npm run deploy:vault -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/vault-core.json5
+```
+
+Deploy token + Aave strategy for an existing vault:
+
+```shell
+npm run deploy:token-strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/token-strategy.json5
+```
+
+Bootstrap vault roles:
+
+```shell
+npm run roles:bootstrap -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/roles-bootstrap.json5
+```
+
+Inspect deployment state:
+
+```shell
+npx hardhat ignition deployments --network sepolia
+npx hardhat ignition status <deployment-id> --network sepolia
+```
+
+Ignition deployment state is the source of truth and is stored under
+`ignition/deployments/`.
+
+### Ops Docs
+
+- Incident/deployment runbook: `docs/operations-runbook.md`

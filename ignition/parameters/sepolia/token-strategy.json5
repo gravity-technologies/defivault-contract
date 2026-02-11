@@ -1,0 +1,17 @@
+{
+  TokenStrategyModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Strategy proxy admin
+    proxyAdmin: "0x0000000000000000000000000000000000000000",
+    // Aave V3 addresses for the selected token
+    aavePool: "0x0000000000000000000000000000000000000000",
+    underlyingToken: "0x0000000000000000000000000000000000000000",
+    aToken: "0x0000000000000000000000000000000000000000",
+    // On-chain strategy metadata
+    strategyName: "AAVE_V3_UNDERLYING",
+    // Vault registry settings
+    tokenSupported: true,
+    strategyCap: "0n",
+  },
+}

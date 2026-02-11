@@ -8,7 +8,10 @@
     "typecheck": "tsc --noEmit",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
-    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,md,yml,yaml}\""
+    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\"",
+    "deploy:vault": "hardhat ignition deploy ./ignition/modules/VaultCore.ts",
+    "deploy:token-strategy": "hardhat ignition deploy ./ignition/modules/TokenStrategy.ts",
+    "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +30,7 @@
   "type": "module",
   "dependencies": {
     "@openzeppelin/contracts": "^5.4.0",
-    "@openzeppelin/contracts-upgradeable": "^5.4.0"
+    "@openzeppelin/contracts-upgradeable": "^5.4.0",
+    "dotenv": "^17.3.1"
   }
 }

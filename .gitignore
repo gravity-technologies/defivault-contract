@@ -19,8 +19,19 @@
 # Hardhat coverage reports
 /coverage
 
+# Local Solidity JS compiler download artifacts
+soljson-latest.js
+
 # Local working docs scratchpad
 docs/tmp/
+
+# Local environment files for operations scripts
+.env
+.env.*
+!.env.example
+
+# Hardhat Ignition local deployment state
+ignition/deployments/
 
 soljson-latest.js
 .claude
