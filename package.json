@@ -6,7 +6,9 @@
   "scripts": {
     "test": "hardhat test",
     "compile": "hardhat compile",
-    "clean": "hardhat clean"
+    "clean": "hardhat clean",
+    "format:sol": "prettier --plugin prettier-plugin-solidity --write \"contracts/**/*.sol\"",
+    "format:sol:check": "prettier --plugin prettier-plugin-solidity --check \"contracts/**/*.sol\""
   },
   "keywords": [],
   "author": "",
@@ -17,6 +19,8 @@
     "@types/node": "^22.19.11",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.1.7",
+    "prettier": "^3.8.1",
+    "prettier-plugin-solidity": "^2.2.1",
     "typescript": "~5.8.0",
     "viem": "^2.45.2"
   },
