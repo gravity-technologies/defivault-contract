@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IWrappedNative} from "../external/IWrappedNative.sol";
+
+/**
+ * @title NativeToWrappedIngress
+ * @notice Canonical native ingress path that wraps ETH and forwards wrapped-native tokens to the vault.
+ * @dev This contract is intended to be the single planned external ETH ingress path for the vault system.
+ */
+contract NativeToWrappedIngress {
+    using SafeERC20 for IERC20;
+
+    error InvalidParam();
+
+    /// @notice Canonical wrapped-native token used by vault accounting.
+    address public immutable wrappedNativeToken;
+
+    /// @notice L1 vault recipient that receives wrapped-native tokens.
+    address public immutable vault;
+
+    /// @notice Emitted when native ETH is wrapped and forwarded to the vault.
+    /// @param sender External caller that provided native ETH.
+    /// @param amount Native ETH amount wrapped and forwarded.
+    event NativeIngressProcessed(address indexed sender, uint256 amount);
+
+    /**
+     * @param wrappedNativeToken_ Wrapped-native token contract address.
+     * @param vault_ Vault recipient address.
+     */
+    constructor(address wrappedNativeToken_, address vault_) {
+        if (wrappedNativeToken_ == address(0) || vault_ == address(0)) revert InvalidParam();
+        if (wrappedNativeToken_.code.length == 0 || vault_.code.length == 0) revert InvalidParam();
+        wrappedNativeToken = wrappedNativeToken_;
+        vault = vault_;
+    }
+
+    /**
+     * @notice Wraps `msg.value` ETH and forwards wrapped-native tokens to the vault.
+     * @dev Reverts on zero-value ingress.
+     */
+    function ingress() external payable {
+        _processIngress(msg.sender, msg.value);
+    }
+
+    /**
+     * @notice Convenience receive path for plain ETH transfers.
+     */
+    receive() external payable {
+        _processIngress(msg.sender, msg.value);
+    }
+
+    /**
+     * @notice Rejects calldata-bearing sends.
+     */
+    fallback() external payable {
+        revert InvalidParam();
+    }
+
+    /**
+     * @notice Internal wrap-and-forward implementation.
+     * @param sender External sender used for telemetry.
+     * @param amount Native ETH amount to wrap.
+     */
+    function _processIngress(address sender, uint256 amount) internal {
+        if (amount == 0) revert InvalidParam();
+
+        IWrappedNative(wrappedNativeToken).deposit{value: amount}();
+        IERC20(wrappedNativeToken).safeTransfer(vault, amount);
+
+        emit NativeIngressProcessed(sender, amount);
+    }
+}

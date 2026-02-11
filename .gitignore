@@ -21,3 +21,6 @@
 
 # Local working docs scratchpad
 docs/tmp/
+
+soljson-latest.js
+.claude
