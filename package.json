@@ -5,8 +5,11 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
+    "test:fork": "hardhat test test/fork/*.ts",
     "compile": "hardhat compile",
-    "clean": "hardhat clean"
+    "clean": "hardhat clean",
+    "deploy:stack": "hardhat run scripts/deploy/deploy-vault-stack.ts",
+    "roles:bootstrap": "hardhat run scripts/roles/bootstrap-vault-roles.ts"
   },
   "keywords": [],
   "author": "",
