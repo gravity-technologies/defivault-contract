@@ -7,6 +7,9 @@ import { encodeFunctionData, zeroAddress } from "viem";
 describe("GRVTDeFiVault.availableForRebalance", async function () {
   const { viem } = await network.connect();
   const [admin] = await viem.getWalletClients();
+  const supportedTokenConfig = {
+    supported: true,
+  };
 
   async function deployVault() {
     const implementation = await viem.deployContract("GRVTDeFiVault");
@@ -16,6 +19,8 @@ describe("GRVTDeFiVault.availableForRebalance", async function () {
       args: [
         admin.account.address,
         "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+        270n,
         admin.account.address,
       ],
     });
@@ -57,7 +62,7 @@ describe("GRVTDeFiVault.availableForRebalance", async function () {
     const token = await deployToken();
 
     await token.write.mint([vault.address, 123n]);
-    await vault.write.setTokenConfig([token.address, { supported: true }]);
+    await vault.write.setTokenConfig([token.address, supportedTokenConfig]);
 
     assert.equal(await vault.read.availableForRebalance([token.address]), 123n);
   });
@@ -66,7 +71,7 @@ describe("GRVTDeFiVault.availableForRebalance", async function () {
     const vault = await deployVault();
     const token = await deployToken();
 
-    await vault.write.setTokenConfig([token.address, { supported: true }]);
+    await vault.write.setTokenConfig([token.address, supportedTokenConfig]);
 
     assert.equal(await vault.read.availableForRebalance([token.address]), 0n);
   });
