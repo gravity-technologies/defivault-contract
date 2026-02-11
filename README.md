@@ -6,6 +6,82 @@ In simple terms, this contract helps put GRVT TVL to work by allocating funds in
 
 ## Project Overview
 
+## Architecture and Major Flows
+
+### High-Level Structure
+
+```text
+                         +----------------------------------+
+                         |          Governance/Admin        |
+                         |   (DEFAULT_ADMIN, VAULT_ADMIN)   |
+                         +-----------------+----------------+
+                                           |
+                                           v
++---------------------+      calls     +---------------------+
+|  Rebalancer/Ops     +--------------->+    GRVTDeFiVault    |
+| (REBALANCER/PAUSER) |                | (upgradeable core)  |
++---------------------+                +----+-----------+----+
+                                            |           |
+                        allocate/deallocate |           | sendToL2(token,amount,recipient)
+                                            v           v
+                                   +----------------+  +---------------------------+
+                                   | Yield Strategy |  | ZkSync L1 Shared Bridge   |
+                                   | (AaveV3 first) |  |                           |
+                                   +--------+-------+  +-------------+-------------+
+                                            |                        |
+                                            v                        v
+                                    External DeFi venue        L1 custody + L2 routing
+```
+
+### Normal Yield Flow (Allocate / Deallocate)
+
+```text
+[ALLOCATOR role]
+      |
+      v
+GRVTDeFiVault.allocateToStrategy(token, strategy, amount)
+      |
+      +--> checks: token supported, strategy whitelisted, pause
+      +--> token approve(strategy)
+      +--> strategy.allocate(...)
+
+GRVTDeFiVault.deallocateFromStrategy(...)
+      |
+      +--> checks: roles + whitelist + token support
+      +--> strategy.deallocate(...)
+      +--> funds return to vault idle balance
+```
+
+### Normal Rebalance Flow (L1 -> L2 Top-Up)
+
+```text
+[REBALANCER role]
+      |
+      v
+GRVTDeFiVault.rebalanceToL2(token, amount)
+      |
+      +--> checks: paused? no, token supported, bridge config valid
+      +--> enforces: rebalanceMaxPerTx + rebalanceMinDelay + idle reserve
+      +--> sendToL2(token, amount, l2ExchangeRecipient)
+      |
+      v
+Vault transfers token to custody and emits L2 recipient metadata
+```
+
+### Emergency Liquidity Restoration Flow
+
+```text
+[REBALANCER or VAULT_ADMIN]
+      |
+      v
+GRVTDeFiVault.emergencySendToL2(token, amount)
+      |
+      +--> allowed while paused
+      +--> bypasses rebalanceMaxPerTx and rebalanceMinDelay
+      +--> pulls liquidity from whitelisted strategies until target reached
+      +--> sendToL2(...)
+```
+
 ## Usage
 
 ### Running Tests
@@ -13,5 +89,5 @@ In simple terms, this contract helps put GRVT TVL to work by allocating funds in
 To run all the tests in the project, execute the following command:
 
 ```shell
-npx hardhat test
+npm run test
 ```
