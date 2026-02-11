@@ -17,6 +17,7 @@ interface IL1DefiVault {
     error InvalidParam();
     error CapExceeded();
     error RateLimited();
+    error NativeTransferFailed();
     error UnsafeDestination();
 
     // --------- Roles (RBAC) ---------
@@ -41,7 +42,7 @@ interface IL1DefiVault {
     /// L2 GRVT ZkSync exchange address (where top-ups land)
     function l2ExchangeRecipient() external view returns (address);
 
-    /// True => blocks new allocations / non-essential outflows; must still allow "pull back to exchange".
+    /// True => blocks risk-taking actions (e.g., allocate/rebalance); defensive exits must remain available.
     function paused() external view returns (bool);
 
     function setBridgeAdapter(address adapter) external;
@@ -88,17 +89,28 @@ interface IL1DefiVault {
     /// Total = idle + sum(strategies). Used for TVL accounting and risk checks.
     function totalAssets(address token) external view returns (uint256);
 
+    /// Total with degraded-state visibility if one or more strategies fail `assets(token)` calls.
+    function totalAssetsStatus(address token) external view returns (uint256 total, uint256 skippedStrategies);
+
     /// Conservative "available now" amount for bridging to L2 without strategy withdraw (default: idle).
     function availableForRebalance(address token) external view returns (uint256);
 
     // --------- Yield operations (via whitelisted strategies) ---------
     event Allocate(address indexed token, address indexed strategy, uint256 amount, bytes data);
     event Deallocate(address indexed token, address indexed strategy, uint256 requested, uint256 received, bytes data);
+    event StrategyReportedReceivedMismatch(
+        address indexed token,
+        address indexed strategy,
+        uint256 requested,
+        uint256 reported,
+        uint256 actual
+    );
 
     /// Move idle funds into strategy (e.g., supply USDT to Aave -> receive aUSDT).
     function allocateToStrategy(address token, address strategy, uint256 amount, bytes calldata data) external;
 
     /// Withdraw funds from strategy back to idle (e.g., withdraw USDT from Aave).
+    /// Defensive action: callable while paused and when token support is disabled.
     /// Returns actual received (may differ due to protocol mechanics).
     function deallocateFromStrategy(
         address token,
@@ -108,6 +120,7 @@ interface IL1DefiVault {
     ) external returns (uint256 received);
 
     /// Emergency unwind: pull everything possible from a strategy for a token (funds remain in vault idle).
+    /// Defensive action: callable while paused and when token support is disabled.
     function deallocateAllFromStrategy(
         address token,
         address strategy,
@@ -122,6 +135,12 @@ interface IL1DefiVault {
         uint256 l2TxGasPerPubdataByte,
         address indexed refundRecipient,
         bytes32 bridgeTxHash
+    );
+    event RebalanceTimestampUpdated(
+        address indexed token,
+        uint64 previousTimestamp,
+        uint64 newTimestamp,
+        uint64 minDelay
     );
     event RebalanceFromL2(address indexed token, uint256 amount, bytes bridgeData);
 
@@ -153,6 +172,7 @@ interface IL1DefiVault {
 
     /**
      * Emergency variant of rebalanceToL2, callable under incident conditions.
+     * Defensive action: callable while paused and when token support is disabled.
      *
      * Fee model matches rebalanceToL2: caller provides bridge fee via `msg.value`,
      * and vault forwards full value to bridge adapter.
@@ -164,4 +184,10 @@ interface IL1DefiVault {
         uint256 l2TxGasPerPubdataByte,
         address refundRecipient
     ) external payable;
+
+    // --------- Native ETH management ---------
+    event NativeSwept(address indexed to, uint256 amount);
+
+    /// Sweep native ETH accidentally retained by vault (e.g., bridge fee refunds).
+    function sweepNative(address payable to, uint256 amount) external;
 }
