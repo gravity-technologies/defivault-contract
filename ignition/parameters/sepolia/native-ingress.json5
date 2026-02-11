@@ -1,0 +1,9 @@
+{
+  NativeIngressModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Wrapped native token address (e.g. WETH)
+    wrappedNativeToken: "0x0000000000000000000000000000000000000000",
+  },
+}
+

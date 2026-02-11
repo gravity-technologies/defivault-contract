@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {
     TokenAmountComponent,
@@ -9,28 +10,56 @@ import {
     StrategyAssetBreakdown
 } from "../interfaces/IVaultReportingTypes.sol";
 
+/**
+ * @title MockYieldStrategy
+ * @notice Test-only yield strategy mock with configurable reporting and balances.
+ * @dev Models vault-only allocate/deallocate flows and allows tests to force report reverts,
+ *      overflow-like values, and custom token-component payloads.
+ */
 contract MockYieldStrategy is IYieldStrategy {
+    using SafeERC20 for IERC20;
+
     struct MockComponent {
         address token;
         uint256 amount;
     }
 
-    mapping(address token => uint256 amount) public mockedAssets;
+    error Unauthorized();
+    error InvalidParam();
+
+    address public immutable vault;
+    string private _name;
+
+    mapping(address token => uint256 amount) private _trackedAssets;
     mapping(address token => bool value) public revertAssets;
     mapping(address token => bool value) public maxAssets;
     mapping(address queryToken => MockComponent[] components) private _mockedComponents;
 
-    function name() external pure override returns (string memory) {
-        return "MockYieldStrategy";
+    constructor(address vault_, string memory strategyName_) {
+        if (vault_ == address(0) || bytes(strategyName_).length == 0) revert InvalidParam();
+        vault = vault_;
+        _name = strategyName_;
     }
 
+    modifier onlyVault() {
+        if (msg.sender != vault) revert Unauthorized();
+        _;
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function name() external view override returns (string memory) {
+        return _name;
+    }
+
+    /// @notice Sets scalar exposure and default single-token asset component for `token`.
     function setAssets(address token, uint256 amount) external {
         delete _mockedComponents[token];
-        mockedAssets[token] = amount;
+        _trackedAssets[token] = amount;
     }
 
+    /// @notice Sets explicit component payload returned by `assets(queryToken)`.
     function setComponents(address queryToken, address[] calldata tokens, uint256[] calldata amounts) external {
-        if (tokens.length != amounts.length) revert("BAD_COMPONENTS_LENGTH");
+        if (tokens.length != amounts.length) revert InvalidParam();
         delete _mockedComponents[queryToken];
 
         uint256 total;
@@ -38,17 +67,20 @@ contract MockYieldStrategy is IYieldStrategy {
             _mockedComponents[queryToken].push(MockComponent({token: tokens[i], amount: amounts[i]}));
             total += amounts[i];
         }
-        mockedAssets[queryToken] = total;
+        _trackedAssets[queryToken] = total;
     }
 
+    /// @notice Configures `assets(token)` to revert for tests.
     function setRevertAssets(address token, bool value) external {
         revertAssets[token] = value;
     }
 
+    /// @notice Configures mock to report `type(uint256).max` exposure/component for `token`.
     function setMaxAssets(address token, bool value) external {
         maxAssets[token] = value;
     }
 
+    /// @inheritdoc IYieldStrategy
     function assets(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
         if (revertAssets[token]) revert("ASSETS_REVERT");
 
@@ -65,7 +97,7 @@ contract MockYieldStrategy is IYieldStrategy {
             return breakdown;
         }
 
-        uint256 amount = maxAssets[token] ? type(uint256).max : mockedAssets[token];
+        uint256 amount = maxAssets[token] ? type(uint256).max : _trackedAssets[token];
         if (amount == 0) return breakdown;
 
         breakdown.components = new TokenAmountComponent[](1);
@@ -76,27 +108,47 @@ contract MockYieldStrategy is IYieldStrategy {
         });
     }
 
+    /// @inheritdoc IYieldStrategy
     function principalBearingExposure(address token) external view override returns (uint256 exposure) {
         if (revertAssets[token]) revert("EXPOSURE_REVERT");
         if (maxAssets[token]) return type(uint256).max;
-        return mockedAssets[token];
+        return _trackedAssets[token];
     }
 
-    function allocate(address token, uint256 amount) external override {
-        if (!IERC20(token).transferFrom(msg.sender, address(this), amount)) revert("ALLOCATE_TRANSFER");
-        mockedAssets[token] += amount;
+    /// @inheritdoc IYieldStrategy
+    function allocate(address token, uint256 amount) external override onlyVault {
+        if (token == address(0) || amount == 0) revert InvalidParam();
+
+        uint256 beforeBal = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(vault, address(this), amount);
+        uint256 received = IERC20(token).balanceOf(address(this)) - beforeBal;
+        _trackedAssets[token] += received;
     }
 
-    function deallocate(address token, uint256 amount) external override returns (uint256 received) {
-        uint256 current = mockedAssets[token];
-        received = current < amount ? current : amount;
-        mockedAssets[token] = current - received;
-        if (received != 0 && !IERC20(token).transfer(msg.sender, received)) revert("DEALLOCATE_TRANSFER");
+    /// @inheritdoc IYieldStrategy
+    function deallocate(address token, uint256 amount) external override onlyVault returns (uint256 received) {
+        if (token == address(0) || amount == 0) revert InvalidParam();
+
+        uint256 tracked = _trackedAssets[token];
+        uint256 sendAmount = amount < tracked ? amount : tracked;
+
+        uint256 beforeBal = IERC20(token).balanceOf(vault);
+        IERC20(token).safeTransfer(vault, sendAmount);
+        received = IERC20(token).balanceOf(vault) - beforeBal;
+
+        _trackedAssets[token] = tracked - sendAmount;
     }
 
-    function deallocateAll(address token) external override returns (uint256 received) {
-        received = mockedAssets[token];
-        mockedAssets[token] = 0;
-        if (received != 0 && !IERC20(token).transfer(msg.sender, received)) revert("DEALLOCATE_ALL_TRANSFER");
+    /// @inheritdoc IYieldStrategy
+    function deallocateAll(address token) external override onlyVault returns (uint256 received) {
+        if (token == address(0)) revert InvalidParam();
+
+        uint256 tracked = _trackedAssets[token];
+        if (tracked == 0) return 0;
+
+        uint256 beforeBal = IERC20(token).balanceOf(vault);
+        IERC20(token).safeTransfer(vault, tracked);
+        received = IERC20(token).balanceOf(vault) - beforeBal;
+        _trackedAssets[token] = 0;
     }
 }

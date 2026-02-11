@@ -10,13 +10,13 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
   const supportedTokenConfig = { supported: true };
   const unsupportedTokenConfig = { supported: false };
 
-  function strategyConfig(whitelisted, cap = 0n) {
+  function strategyConfig(whitelisted: boolean, cap = 0n) {
     return { whitelisted, active: false, cap };
   }
 
   async function deploySystem() {
-    const baseToken = await viem.deployContract("MockERC20", ["Base Token", "BASE"]);
-    const wrappedNative = await viem.deployContract("MockERC20", ["Wrapped Ether", "WETH"]);
+    const baseToken = await viem.deployContract("MockERC20", ["Base Token", "BASE", 18]);
+    const wrappedNative = await viem.deployContract("MockERC20", ["Wrapped Ether", "WETH", 18]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [baseToken.address]);
 
     const implementation = await viem.deployContract("GRVTDeFiVault");
@@ -44,11 +44,14 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
   }
 
   async function deployToken(symbol = "MOCK") {
-    return viem.deployContract("MockERC20", [`${symbol} Token`, symbol]);
+    return viem.deployContract("MockERC20", [`${symbol} Token`, symbol, 18]);
   }
 
-  async function deployStrategy() {
-    return viem.deployContract("MockYieldStrategy");
+  async function deployStrategy(vault: { address: `0x${string}` }) {
+    return viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "TVL_STRAT",
+    ]);
   }
 
   it("tracks supported tokens and removes unsupported zero-exposure tokens", async function () {
@@ -88,7 +91,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
   it("keeps unsupported token tracked while strategy exposure exists", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("CCC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([token.address, supportedTokenConfig]);
     await vault.write.whitelistStrategy([
@@ -115,7 +118,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const tokenA = await deployToken("DDD");
     const tokenB = await deployToken("EEE");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([tokenA.address, supportedTokenConfig]);
     await vault.write.setTokenConfig([tokenB.address, supportedTokenConfig]);
@@ -143,7 +146,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("HHH");
     const receiptToken = await deployToken("AUS");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([underlying.address, supportedTokenConfig]);
     await vault.write.whitelistStrategy([
@@ -169,7 +172,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("UKY");
     const receiptToken = await deployToken("RCP");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([underlying.address, supportedTokenConfig]);
     // Configure component set before strategy activation so whitelist sync captures it.
@@ -198,7 +201,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("RSU");
     const receiptToken = await deployToken("RSR");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([underlying.address, supportedTokenConfig]);
     await strategy.write.setComponents([
@@ -221,7 +224,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("QKY");
     const receiptToken = await deployToken("QRC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([underlying.address, supportedTokenConfig]);
     await strategy.write.setComponents([
@@ -245,7 +248,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("WTY");
     const receiptToken = await deployToken("WRC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     const allocatorRole = await vault.read.ALLOCATOR_ROLE();
     await vault.write.grantRole([allocatorRole, admin.account.address]);
@@ -289,7 +292,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const receiptA = await deployToken("MSA");
     const receiptB = await deployToken("MSB");
     const receiptC = await deployToken("MSC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([underlying.address, supportedTokenConfig]);
     await strategy.write.setComponents([
@@ -323,7 +326,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("SKY");
     const receiptToken = await deployToken("SRC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([underlying.address, supportedTokenConfig]);
     await vault.write.whitelistStrategy([
@@ -346,7 +349,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
   it("normalizes strategyAssets read failures to InvalidStrategyAssetsRead", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("ERR");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([token.address, supportedTokenConfig]);
     await vault.write.whitelistStrategy([
@@ -360,7 +363,6 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
       vault.read.strategyAssets([token.address, strategy.address]),
       vault,
       "InvalidStrategyAssetsRead",
-      [token.address, strategy.address],
     );
   });
 
@@ -369,7 +371,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const tokenA = await deployToken("III");
     const tokenB = await deployToken("JJJ");
     const receiptToken = await deployToken("AKK");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([tokenA.address, supportedTokenConfig]);
     await vault.write.setTokenConfig([tokenB.address, supportedTokenConfig]);
@@ -399,7 +401,7 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const tokenRevert = await deployToken("FFF");
     const tokenOverflow = await deployToken("GGG");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setTokenConfig([tokenRevert.address, supportedTokenConfig]);
     await vault.write.setTokenConfig([tokenOverflow.address, supportedTokenConfig]);

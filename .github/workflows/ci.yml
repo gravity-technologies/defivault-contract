@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      deployment_smoke: ${{ steps.filter.outputs.deployment_smoke }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect deployment-smoke relevant changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            deployment_smoke:
+              - 'contracts/**'
+              - 'scripts/deploy/**'
+              - 'scripts/ci/**'
+              - 'ignition/**'
+              - '.github/workflows/ci.yml'
+              - 'hardhat.config.ts'
+              - 'package.json'
+              - 'package-lock.json'
+
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting (Prettier)
+        run: |
+          npm run format
+          git diff --exit-code
+
+      - name: Check TypeScript types
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm run test
+
+  deployment-smoke:
+    needs: changes
+    if: needs.changes.outputs.deployment_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npm run compile
+
+      - name: Start persistent localhost node
+        run: |
+          mkdir -p smoke-artifacts
+          npx hardhat node --hostname 127.0.0.1 --port 8545 > smoke-artifacts/hardhat-node.log 2>&1 &
+          echo $! > smoke-artifacts/hardhat-node.pid
+
+          for i in {1..60}; do
+            if curl -sf \
+              -X POST \
+              -H "Content-Type: application/json" \
+              --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              http://127.0.0.1:8545 > /dev/null; then
+              break
+            fi
+
+            if [ "$i" -eq 60 ]; then
+              echo "Local hardhat node failed to start"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run deployment smoke orchestrator
+        run: npm run smoke:deployment -- --no-compile
+
+      - name: Stop localhost node
+        if: always()
+        run: |
+          if [ -f smoke-artifacts/hardhat-node.pid ]; then
+            kill "$(cat smoke-artifacts/hardhat-node.pid)" || true
+          fi
+
+      - name: Upload deployment smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-smoke-artifacts
+          if-no-files-found: warn
+          path: |
+            smoke-artifacts/**
+            ignition/deployments/smoke-*/**

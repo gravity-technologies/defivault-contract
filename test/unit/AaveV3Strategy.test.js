@@ -10,7 +10,7 @@ describe("AaveV3Strategy", async function () {
   const publicClient = await viem.getPublicClient();
 
   async function deploySystem() {
-    const underlying = await viem.deployContract("MockERC20", ["Tether USD", "USDT"]);
+    const underlying = await viem.deployContract("MockERC20", ["Tether USD", "USDT", 6]);
     const pool = await viem.deployContract("MockAaveV3Pool", [underlying.address]);
     const aToken = await viem.deployContract("MockAaveV3AToken", [
       underlying.address,
@@ -39,7 +39,7 @@ describe("AaveV3Strategy", async function () {
     ]);
     const strategy = await viem.getContractAt("AaveV3Strategy", proxy.address);
 
-    const otherToken = await viem.deployContract("MockERC20", ["Other Token", "OTK"]);
+    const otherToken = await viem.deployContract("MockERC20", ["Other Token", "OTK", 18]);
     return { strategy, underlying, aToken, pool, otherToken };
   }
 
@@ -62,8 +62,8 @@ describe("AaveV3Strategy", async function () {
   }
 
   it("reverts initialize when aToken config does not match underlying/pool", async function () {
-    const underlying = await viem.deployContract("MockERC20", ["Tether USD", "USDT"]);
-    const otherUnderlying = await viem.deployContract("MockERC20", ["USD Coin", "USDC"]);
+    const underlying = await viem.deployContract("MockERC20", ["Tether USD", "USDT", 6]);
+    const otherUnderlying = await viem.deployContract("MockERC20", ["USD Coin", "USDC", 6]);
     const pool = await viem.deployContract("MockAaveV3Pool", [underlying.address]);
     const wrongAToken = await viem.deployContract("MockAaveV3AToken", [
       otherUnderlying.address,

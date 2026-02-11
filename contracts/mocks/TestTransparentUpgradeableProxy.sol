@@ -3,7 +3,11 @@ pragma solidity 0.8.28;
 
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
-/// @dev Test-only helper so local test tooling has a concrete proxy artifact to deploy.
+/**
+ * @title TestTransparentUpgradeableProxy
+ * @notice Test-only proxy wrapper for local Hardhat artifact-based deployments.
+ * @dev Production deployments should use OpenZeppelin TransparentUpgradeableProxy directly via deployment tooling.
+ */
 contract TestTransparentUpgradeableProxy is TransparentUpgradeableProxy {
     constructor(
         address logic,
