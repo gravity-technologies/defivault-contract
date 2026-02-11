@@ -61,7 +61,8 @@ GRVTDeFiVault.deallocateFromStrategy(...)
 GRVTDeFiVault.rebalanceToL2(token, amount)
       |
       +--> checks: paused? no, token supported, bridge config valid
-      +--> enforces: rebalanceMaxPerTx + rebalanceMinDelay + idle reserve
+      +--> enforces: rebalanceMaxPerTx + rebalanceMinDelay
+      +--> enforces: l2ExchangeRecipient is fixed at initialization (no admin setter)
       +--> sendToL2(token, amount, l2ExchangeRecipient)
       |
       v

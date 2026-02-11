@@ -41,8 +41,6 @@ interface IL1DefiVault {
     /// True => blocks new allocations / non-essential outflows; must still allow "pull back to exchange".
     function paused() external view returns (bool);
 
-    function setL2ExchangeRecipient(address l2Recipient) external;
-
     function pause() external;
 
     function unpause() external;
@@ -90,7 +88,11 @@ interface IL1DefiVault {
 
     /// Withdraw funds from strategy back to idle (e.g., withdraw USDT from Aave).
     /// Returns actual received (may differ due to protocol mechanics).
-    function deallocateFromStrategy(address token, address strategy, uint256 amount) external returns (uint256 received);
+    function deallocateFromStrategy(
+        address token,
+        address strategy,
+        uint256 amount
+    ) external returns (uint256 received);
 
     /// Emergency unwind: pull everything possible from a strategy for a token (funds remain in vault idle).
     function deallocateAllFromStrategy(address token, address strategy) external returns (uint256 received);
