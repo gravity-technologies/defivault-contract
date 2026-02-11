@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { encodeFunctionData, zeroAddress } from "viem";
 
-describe("GRVTDeFiVault.availableForRebalance", async function () {
+describe("GRVTDeFiVault rebalance availability", async function () {
   const { viem } = await network.connect();
   const [admin] = await viem.getWalletClients();
 
@@ -12,10 +12,12 @@ describe("GRVTDeFiVault.availableForRebalance", async function () {
     const baseToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
+      18,
     ]);
     const wrappedNative = await viem.deployContract("MockERC20", [
       "Wrapped Ether",
       "WETH",
+      18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
       baseToken.address,
@@ -44,7 +46,7 @@ describe("GRVTDeFiVault.availableForRebalance", async function () {
   }
 
   async function deployToken() {
-    return viem.deployContract("MockERC20", ["Mock Token", "MOCK"]);
+    return viem.deployContract("MockERC20", ["Mock Token", "MOCK", 18]);
   }
 
   async function deployNonErc20Contract() {

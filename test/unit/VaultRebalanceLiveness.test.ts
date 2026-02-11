@@ -15,11 +15,13 @@ describe("GRVTDeFiVault rebalance liveness", async function () {
     const baseToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
+      18,
     ]);
     const wrappedNative = await viem.deployContract("MockWETH");
     const token = await viem.deployContract("MockERC20", [
       "Mock Token",
       "MOCK",
+      18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
       baseToken.address,
@@ -113,7 +115,7 @@ describe("GRVTDeFiVault rebalance liveness", async function () {
       wrappedNative.address,
       supportedTokenConfig,
     ]);
-    await wrappedNative.write.deposit([], { value: 20n });
+    await wrappedNative.write.deposit({ value: 20n });
     await wrappedNative.write.transfer([vault.address, 20n]);
 
     await vault.write.rebalanceToL2([zeroAddress, 12n]);
@@ -155,7 +157,7 @@ describe("GRVTDeFiVault rebalance liveness", async function () {
       wrappedNative.address,
       unsupportedTokenConfig,
     ]);
-    await wrappedNative.write.deposit([], { value: 9n });
+    await wrappedNative.write.deposit({ value: 9n });
     await wrappedNative.write.transfer([vault.address, 9n]);
     await vault.write.pause();
 
@@ -208,7 +210,7 @@ describe("GRVTDeFiVault rebalance liveness", async function () {
       vault.address,
     ]);
 
-    await ingress.write.ingress([], { value: 4n });
+    await ingress.write.ingress({ value: 4n });
 
     assert.equal(await wrappedNative.read.balanceOf([vault.address]), 4n);
     assert.equal(await wrappedNative.read.balanceOf([ingress.address]), 0n);
@@ -226,7 +228,7 @@ describe("GRVTDeFiVault rebalance liveness", async function () {
     ]);
 
     await viem.assertions.revertWithCustomError(
-      ingress.write.ingress([], { value: 0n }),
+      ingress.write.ingress({ value: 0n }),
       ingress,
       "InvalidParam",
     );

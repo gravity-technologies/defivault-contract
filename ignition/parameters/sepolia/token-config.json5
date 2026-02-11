@@ -1,0 +1,10 @@
+{
+  VaultTokenConfigModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Token to configure
+    token: "0x0000000000000000000000000000000000000000",
+    // Support flag passed to setTokenConfig(token, { supported })
+    supported: true,
+  },
+}

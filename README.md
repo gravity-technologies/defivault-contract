@@ -6,6 +6,14 @@ In simple terms, this contract helps put GRVT TVL to work by allocating funds in
 
 ## Project Overview
 
+This repository contains:
+
+- `GRVTDeFiVault`: L1 vault with RBAC, pause semantics, strategy routing, and L1->L2 rebalance/emergency flows.
+- `AaveV3Strategy`: vault-only strategy integration for Aave v3 (USDT-first).
+- `ZkSyncNativeBridgeAdapter`: vault-only adapter abstraction for L1 custody/bridge sends.
+
+The design enforces strict asset-flow restrictions, strategy whitelisting, and emergency controls.
+
 ## Architecture and Major Flows
 
 ### High-Level Structure
@@ -328,12 +336,146 @@ The strategy interface is protocol-agnostic. Adapters must unify principal-beari
 
 These examples are theoretical adapter patterns; this scope does not add new Compound or Morpho strategy contracts.
 
+## Risk Controls Semantics
+
+- `rebalanceToL2` is the normal risk-on path and is blocked by pause and token-support checks.
+- `emergencySendToL2` intentionally bypasses pause and token-support checks to prioritize incident-time liquidity restoration.
+- Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
+
 ## Usage
 
 ### Running Tests
 
-To run all the tests in the project, execute the following command:
+Run all tests:
 
 ```shell
 npm run test
 ```
+
+### Current Test Matrix
+
+- `test/unit/*`: vault policy, RBAC, config/upgrade, reporting, and strategy integration behavior.
+- `test/adversarial/*`: reentrancy, malformed/fee-on-transfer ERC20 behavior, unwind failure handling, and bridge-path hardening.
+- `test/invariant/*`: accounting consistency across randomized operation sequences.
+- Default unit/adversarial/invariant suites are deterministic and mock-based.
+
+Run fork integration tests (requires mainnet RPC):
+
+```shell
+MAINNET_RPC_URL=<rpc-url> npx hardhat test test/fork/*.ts
+```
+
+Optional fork block pin:
+
+```shell
+MAINNET_RPC_URL=<rpc-url> MAINNET_FORK_BLOCK=22000000 npx hardhat test test/fork/*.ts
+```
+
+### Deployment Smoke Test
+
+Smoke test the Ignition deployment path end-to-end (vault core, strategy core,
+token-strategy onboarding, roles bootstrap, native ingress):
+
+```shell
+npx hardhat node --hostname 127.0.0.1 --port 8545
+```
+
+In a second terminal:
+
+```shell
+npm run smoke:deployment
+```
+
+The smoke runner writes debugging artifacts to `smoke-artifacts/`:
+
+- command stdout/stderr logs
+- Ignition deployed-address snapshots
+- assertion logs and summary
+
+### Deployments and Ops
+
+Use `.env` for network credentials (`SEPOLIA_RPC_URL`, `SEPOLIA_PRIVATE_KEY`)
+and JSON5 parameter files under `ignition/parameters/`.
+
+All core deployment, configuration, and upgrades are managed by Ignition modules.
+Core proxy deployments use OpenZeppelin `TransparentUpgradeableProxy` artifacts loaded
+directly from `@openzeppelin/contracts/build/contracts`.
+
+Deploy vault core (implementation + transparent proxy):
+
+```shell
+npm run deploy:vault -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/vault-core.json5
+```
+
+Deploy Aave strategy core (implementation + transparent proxy):
+
+```shell
+npm run deploy:strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/strategy-core.json5
+```
+
+Record deployed addresses from `ignition/deployments/<deployment-id>/deployed_addresses.json`.
+For each proxy, also read the EIP-1967 admin slot to capture its `ProxyAdmin` address
+for upgrade modules.
+
+Onboard strategy into the vault registry (set token support + whitelist):
+
+```shell
+npm run deploy:token-strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/token-strategy.json5
+```
+
+Deploy native ingress wrapper for external ETH -> wrapped-native flow:
+
+```shell
+npm run deploy:native-ingress -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/native-ingress.json5
+```
+
+Configure token support independently:
+
+```shell
+npm run config:token -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/token-config.json5
+```
+
+Bootstrap vault roles:
+
+```shell
+npm run roles:bootstrap -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/roles-bootstrap.json5
+```
+
+Upgrade vault proxy (ProxyAdmin `upgradeAndCall`):
+
+```shell
+npm run upgrade:vault -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/vault-upgrade.json5
+```
+
+Upgrade strategy proxy (ProxyAdmin `upgradeAndCall`):
+
+```shell
+npm run upgrade:strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/strategy-upgrade.json5
+```
+
+Inspect Ignition deployment state for post-deploy operations:
+
+```shell
+npx hardhat ignition deployments --network sepolia
+npx hardhat ignition status <deployment-id> --network sepolia
+```
+
+### Ops Docs
+
+- Incident/deployment runbook: `docs/operations-runbook.md`

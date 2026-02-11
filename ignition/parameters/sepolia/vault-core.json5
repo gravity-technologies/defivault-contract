@@ -1,0 +1,16 @@
+{
+  VaultCoreModule: {
+    // VAULT_ADMIN + proxy admin
+    deployAdmin: "0x0000000000000000000000000000000000000000",
+    // L1 BridgeHub
+    bridgeHub: "0x0000000000000000000000000000000000000000",
+    // Mintable GRVT base token on L1
+    baseToken: "0x0000000000000000000000000000000000000000",
+    // Example private-L2 chain id (JSON5 bigint string format)
+    l2ChainId: "270n",
+    // Fixed L2 recipient used by vault bridge sends
+    l2ExchangeRecipient: "0x0000000000000000000000000000000000000000",
+    // Canonical wrapped-native token (e.g. WETH)
+    wrappedNativeToken: "0x0000000000000000000000000000000000000000",
+  },
+}

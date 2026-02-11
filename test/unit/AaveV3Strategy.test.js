@@ -13,6 +13,7 @@ describe("AaveV3Strategy", async function () {
     const underlying = await viem.deployContract("MockERC20", [
       "Tether USD",
       "USDT",
+      6,
     ]);
     const pool = await viem.deployContract("MockAaveV3Pool", [
       underlying.address,
@@ -47,6 +48,7 @@ describe("AaveV3Strategy", async function () {
     const otherToken = await viem.deployContract("MockERC20", [
       "Other Token",
       "OTK",
+      18,
     ]);
     return { strategy, underlying, aToken, pool, otherToken };
   }
@@ -77,10 +79,12 @@ describe("AaveV3Strategy", async function () {
     const underlying = await viem.deployContract("MockERC20", [
       "Tether USD",
       "USDT",
+      6,
     ]);
     const otherUnderlying = await viem.deployContract("MockERC20", [
       "USD Coin",
       "USDC",
+      6,
     ]);
     const pool = await viem.deployContract("MockAaveV3Pool", [
       underlying.address,

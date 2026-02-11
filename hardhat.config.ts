@@ -20,6 +20,15 @@ export default defineConfig({
     },
   },
   networks: {
+    localhost: {
+      type: "http",
+      chainType: "l1",
+      url: "http://127.0.0.1:8545",
+      // Hardhat node default dev key #0 (local smoke/CI only).
+      accounts: [
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      ],
+    },
     hardhatMainnet: {
       type: "edr-simulated",
       chainType: "l1",

@@ -8,7 +8,16 @@
     "typecheck": "tsgo --noEmit",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
-    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\""
+    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\"",
+    "deploy:vault": "hardhat ignition deploy ./ignition/modules/VaultCore.ts",
+    "deploy:strategy": "hardhat ignition deploy ./ignition/modules/StrategyCore.ts",
+    "deploy:token-strategy": "hardhat ignition deploy ./ignition/modules/TokenStrategy.ts",
+    "deploy:native-ingress": "hardhat ignition deploy ./ignition/modules/NativeIngress.ts",
+    "config:token": "hardhat ignition deploy ./ignition/modules/VaultTokenConfig.ts",
+    "upgrade:vault": "hardhat ignition deploy ./ignition/modules/VaultUpgrade.ts",
+    "upgrade:strategy": "hardhat ignition deploy ./ignition/modules/StrategyUpgrade.ts",
+    "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts",
+    "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +36,7 @@
   "type": "module",
   "dependencies": {
     "@openzeppelin/contracts": "^5.4.0",
-    "@openzeppelin/contracts-upgradeable": "^5.4.0"
+    "@openzeppelin/contracts-upgradeable": "^5.4.0",
+    "dotenv": "^17.3.1"
   }
 }
