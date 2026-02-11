@@ -1,0 +1,9 @@
+node_modules
+artifacts
+cache
+coverage
+dist
+bundle
+types
+docs/tmp
+soljson-latest.js

@@ -1,0 +1,236 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { network } from "hardhat";
+import { encodeFunctionData } from "viem";
+
+describe("GRVTDeFiVault accounting invariant", async function () {
+  const { viem } = await network.connect();
+  const publicClient = await viem.getPublicClient();
+  const wallets = await viem.getWalletClients();
+  const [admin, allocator, rebalancer, l2Recipient, other] = wallets;
+
+  const L2_GAS_LIMIT = 900_000n;
+  const L2_GAS_PER_PUBDATA = 800n;
+
+  function addr(wallet: (typeof wallets)[number]) {
+    if (wallet.account === undefined) {
+      throw new Error("wallet has no account");
+    }
+    return wallet.account.address;
+  }
+
+  function mulberry32(seed: number) {
+    return function () {
+      let t = (seed += 0x6d2b79f5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  async function deployVault() {
+    const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
+    const baseToken = await viem.deployContract("MockERC20", [
+      "Mock Base",
+      "mBASE",
+      18,
+    ]);
+    const vaultImpl = await viem.deployContract("GRVTDeFiVault");
+    const initData = encodeFunctionData({
+      abi: vaultImpl.abi,
+      functionName: "initialize",
+      args: [
+        addr(admin),
+        bridge.address,
+        baseToken.address,
+        270n,
+        addr(l2Recipient),
+      ],
+    });
+    const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
+      vaultImpl.address,
+      addr(admin),
+      initData,
+    ]);
+    const vault = await viem.getContractAt("GRVTDeFiVault", proxy.address);
+
+    await vault.write.grantRole([
+      await vault.read.ALLOCATOR_ROLE(),
+      addr(allocator),
+    ]);
+    await vault.write.grantRole([
+      await vault.read.REBALANCER_ROLE(),
+      addr(rebalancer),
+    ]);
+
+    const vaultAsAllocator = await viem.getContractAt(
+      "GRVTDeFiVault",
+      vault.address,
+      {
+        client: { public: publicClient, wallet: allocator },
+      },
+    );
+    const vaultAsRebalancer = await viem.getContractAt(
+      "GRVTDeFiVault",
+      vault.address,
+      {
+        client: { public: publicClient, wallet: rebalancer },
+      },
+    );
+
+    return { vault, vaultAsAllocator, vaultAsRebalancer };
+  }
+
+  it("keeps totalAssets consistent with idle + strategies across random sequences", async function () {
+    const { vault, vaultAsAllocator, vaultAsRebalancer } = await deployVault();
+
+    const token = await viem.deployContract("MockERC20", [
+      "Mock USDT",
+      "mUSDT",
+      6,
+    ]);
+    await token.write.mint([vault.address, 3_000_000n]);
+
+    const stratA = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "STRAT_A",
+    ]);
+    const stratB = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "STRAT_B",
+    ]);
+
+    await vault.write.setTokenConfig([
+      token.address,
+      {
+        supported: true,
+      },
+    ]);
+    await vault.write.whitelistStrategy([
+      token.address,
+      stratA.address,
+      { whitelisted: true, active: false, cap: 2_000_000n },
+    ]);
+    await vault.write.whitelistStrategy([
+      token.address,
+      stratB.address,
+      { whitelisted: true, active: false, cap: 2_000_000n },
+    ]);
+
+    const rng = mulberry32(42);
+    const strategies = [stratA.address, stratB.address];
+
+    for (let i = 0; i < 30; i++) {
+      const action = Math.floor(rng() * 3);
+
+      if (action === 0) {
+        const idle = (await vault.read.idleAssets([token.address])) as bigint;
+        const strategy = strategies[Math.floor(rng() * strategies.length)];
+        const current = (await vault.read.strategyAssets([
+          token.address,
+          strategy,
+        ])) as bigint;
+        const remainingCap = 2_000_000n > current ? 2_000_000n - current : 0n;
+        let amount = idle / 10n;
+        if (amount > remainingCap) amount = remainingCap;
+        if (amount > 0n) {
+          await vaultAsAllocator.write.allocateToStrategy([
+            token.address,
+            strategy,
+            amount,
+          ]);
+        }
+      } else if (action === 1) {
+        const strategy = strategies[Math.floor(rng() * strategies.length)];
+        const sAssets = (await vault.read.strategyAssets([
+          token.address,
+          strategy,
+        ])) as bigint;
+        const amount = sAssets / 2n;
+        if (amount > 0n) {
+          await vaultAsAllocator.write.deallocateFromStrategy([
+            token.address,
+            strategy,
+            amount,
+          ]);
+        }
+      } else {
+        const available = (await vault.read.availableForRebalance([
+          token.address,
+        ])) as bigint;
+        let amount = available / 5n;
+        if (amount > 500_000n) amount = 500_000n;
+        if (amount > 0n) {
+          await vaultAsRebalancer.write.rebalanceToL2([token.address, amount]);
+        }
+      }
+
+      const idle = (await vault.read.idleAssets([token.address])) as bigint;
+      const sA = (await vault.read.strategyAssets([
+        token.address,
+        stratA.address,
+      ])) as bigint;
+      const sB = (await vault.read.strategyAssets([
+        token.address,
+        stratB.address,
+      ])) as bigint;
+      const total = (await vault.read.totalAssets([token.address])) as bigint;
+      const [statusTotal, skipped] = (await vault.read.totalAssetsStatus([
+        token.address,
+      ])) as [bigint, bigint];
+
+      assert.equal(skipped, 0n);
+      assert.equal(total, idle + sA + sB);
+      assert.equal(statusTotal, total);
+    }
+  });
+
+  it("keeps totalAssetsStatus callable in degraded mode with reverting strategies", async function () {
+    const { vault, vaultAsAllocator } = await deployVault();
+
+    const token = await viem.deployContract("MockERC20", [
+      "Mock USDT",
+      "mUSDT",
+      6,
+    ]);
+    await token.write.mint([vault.address, 1_500_000n]);
+
+    const healthy = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "HEALTHY",
+    ]);
+    const reverting = await viem.deployContract("MockRevertingStrategy");
+
+    await vault.write.setTokenConfig([
+      token.address,
+      {
+        supported: true,
+      },
+    ]);
+    await vault.write.whitelistStrategy([
+      token.address,
+      healthy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+    await vault.write.whitelistStrategy([
+      token.address,
+      reverting.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await vaultAsAllocator.write.allocateToStrategy([
+      token.address,
+      healthy.address,
+      400_000n,
+    ]);
+
+    const [statusTotal, skipped] = (await vault.read.totalAssetsStatus([
+      token.address,
+    ])) as [bigint, bigint];
+    const total = (await vault.read.totalAssets([token.address])) as bigint;
+
+    assert.ok(skipped > 0n);
+    assert.equal(statusTotal, total);
+  });
+});

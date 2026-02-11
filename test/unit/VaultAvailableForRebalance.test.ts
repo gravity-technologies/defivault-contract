@@ -35,7 +35,7 @@ describe("GRVTDeFiVault.availableForRebalance", async function () {
   }
 
   async function deployToken() {
-    return viem.deployContract("MockERC20", ["Mock Token", "MOCK"]);
+    return viem.deployContract("MockERC20", ["Mock Token", "MOCK", 18]);
   }
 
   it("returns 0 on zero token address", async function () {

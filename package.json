@@ -5,10 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
+    "typecheck": "tsc --noEmit",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
-    "format:sol": "prettier --plugin prettier-plugin-solidity --write \"contracts/**/*.sol\"",
-    "format:sol:check": "prettier --plugin prettier-plugin-solidity --check \"contracts/**/*.sol\""
+    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,md,yml,yaml}\""
   },
   "keywords": [],
   "author": "",
@@ -21,7 +21,7 @@
     "hardhat": "^3.1.7",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.2.1",
-    "typescript": "~5.8.0",
+    "typescript": "~5.9.0",
     "viem": "^2.45.2"
   },
   "type": "module",

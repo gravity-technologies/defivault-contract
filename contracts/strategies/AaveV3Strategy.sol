@@ -250,9 +250,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      *      Aave's internal index math.
      *
      */
-    function deallocateAll(
-        address token
-    ) external override onlyVault nonReentrant returns (uint256 received) {
+    function deallocateAll(address token) external override onlyVault nonReentrant returns (uint256 received) {
         if (token != underlying) revert InvalidParam();
         received = aavePool.withdraw(token, type(uint256).max, vault);
         emit Deallocated(token, type(uint256).max, received);
