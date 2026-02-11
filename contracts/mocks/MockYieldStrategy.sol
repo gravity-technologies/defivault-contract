@@ -3,7 +3,11 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {TokenAmountComponent, TokenAmountComponentKind, StrategyAssetBreakdown} from "../interfaces/IVaultReportingTypes.sol";
+import {
+    TokenAmountComponent,
+    TokenAmountComponentKind,
+    StrategyAssetBreakdown
+} from "../interfaces/IVaultReportingTypes.sol";
 
 contract MockYieldStrategy is IYieldStrategy {
     struct MockComponent {
