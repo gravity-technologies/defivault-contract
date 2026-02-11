@@ -6,10 +6,13 @@
   "scripts": {
     "test": "hardhat test",
     "test:all": "hardhat test nodejs",
+    "test:fork": "hardhat test test/fork/*.ts",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
     "format:sol": "prettier --plugin prettier-plugin-solidity --write \"contracts/**/*.sol\"",
-    "format:sol:check": "prettier --plugin prettier-plugin-solidity --check \"contracts/**/*.sol\""
+    "format:sol:check": "prettier --plugin prettier-plugin-solidity --check \"contracts/**/*.sol\"",
+    "deploy:stack": "hardhat run scripts/deploy/deploy-vault-stack.ts",
+    "roles:bootstrap": "hardhat run scripts/roles/bootstrap-vault-roles.ts"
   },
   "keywords": [],
   "author": "",
