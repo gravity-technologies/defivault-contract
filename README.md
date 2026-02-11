@@ -313,8 +313,11 @@ Operational notes:
 The strategy interface is protocol-agnostic. Adapters must unify principal-bearing exposure while preserving exact-token reporting:
 
 - Aave V3 style rebasing receipt token:
-  - components: `aUSDT` as invested principal and `USDT` residual when queried in USDT domain.
-  - scalar example: `principalBearingExposure(USDT) = aUSDT + USDT`, using conversion rule `1 aUSDT = 1 USDT`.
+  - implemented in `AaveV3Strategy` in this repo.
+  - components can include `aUSDT` as invested principal and `USDT` residual when queried in USDT domain.
+  - scalar example: `principalBearingExposure(USDT) = aUSDT + USDT`, using assumption `1 aUSDT = 1 USDT` (scalar path only).
+  - `deallocate`/`deallocateAll` sweep residual strategy-held underlying to vault to avoid dust-lock exposure.
+  - unsupported scalar domains return `0` (non-reverting).
 - Compound III style index-based accounting:
   - components remain exact token units only (typically base token domain).
   - non-underlying receipt-token reporting may be empty where accounting is purely index-based.
