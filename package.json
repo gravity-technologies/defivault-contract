@@ -8,6 +8,7 @@
     "test:fork": "hardhat test test/fork/*.ts",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
+    "slither": "bash scripts/slither.sh",
     "deploy:stack": "hardhat run scripts/deploy/deploy-vault-stack.ts",
     "roles:bootstrap": "hardhat run scripts/roles/bootstrap-vault-roles.ts"
   },
