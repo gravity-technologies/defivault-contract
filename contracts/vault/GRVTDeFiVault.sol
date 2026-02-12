@@ -212,9 +212,16 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
 
         total = idleAssets(token);
         address[] storage list = _tokenStrategies[token];
-        for (uint256 i = 0; i < list.length; ++i) {
-            total += IYieldStrategy(list[i]).assets(token);
-        }
+        uint256 len = list.length;
+        // Intentionally unrolled (bounded by MAX_STRATEGIES_PER_TOKEN = 8) to avoid loop-based brittle TVL reads.
+        if (len > 0) total += _safeStrategyAssets(token, list[0]);
+        if (len > 1) total += _safeStrategyAssets(token, list[1]);
+        if (len > 2) total += _safeStrategyAssets(token, list[2]);
+        if (len > 3) total += _safeStrategyAssets(token, list[3]);
+        if (len > 4) total += _safeStrategyAssets(token, list[4]);
+        if (len > 5) total += _safeStrategyAssets(token, list[5]);
+        if (len > 6) total += _safeStrategyAssets(token, list[6]);
+        if (len > 7) total += _safeStrategyAssets(token, list[7]);
     }
 
     /// @inheritdoc IL1DefiVault
@@ -238,7 +245,6 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         nonReentrant
         whenNotPaused
     {
-        data;
         if (!hasRole(ALLOCATOR_ROLE, msg.sender)) revert Unauthorized();
         if (token == address(0) || strategy == address(0) || amount == 0) revert InvalidParam();
 
@@ -317,49 +323,11 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     {
         if (token == address(0) || amount == 0) revert InvalidParam();
         if (!_tokenConfigs[token].supported) revert TokenNotSupported();
-        if (_bridgeAdapter == address(0) || _l2ExchangeRecipient == address(0)) revert InvalidParam();
-
-        uint256 idle = idleAssets(token);
-        if (idle < amount) {
-            uint256 needed = amount - idle;
-            address[] storage list = _tokenStrategies[token];
-            for (uint256 i = 0; i < list.length && needed > 0; ++i) {
-                address strategy = list[i];
-                if (!_strategyConfigs[token][strategy].whitelisted) continue;
-
-                uint256 sAssets;
-                try IYieldStrategy(strategy).assets(token) returns (uint256 assets_) {
-                    sAssets = assets_;
-                } catch {
-                    emit EmergencyStrategySkipped(token, strategy);
-                    continue;
-                }
-                if (sAssets == 0) continue;
-
-                uint256 request = needed < sAssets ? needed : sAssets;
-                uint256 got;
-                try IYieldStrategy(strategy).deallocate(token, request, "") returns (uint256 received_) {
-                    got = received_;
-                } catch {
-                    emit EmergencyStrategySkipped(token, strategy);
-                    continue;
-                }
-                if (got >= needed) {
-                    needed = 0;
-                } else {
-                    unchecked {
-                        needed -= got;
-                    }
-                }
-                emit Deallocate(token, strategy, request, got, "");
-            }
-        }
+        _validateBridgeConfig();
+        _pullLiquidityFromStrategies(token, amount);
 
         if (idleAssets(token) < amount) revert InvalidParam();
-
-        IERC20(token).forceApprove(_bridgeAdapter, amount);
-        IExchangeBridgeAdapter(_bridgeAdapter).sendToL2(token, amount, _l2ExchangeRecipient, bridgeData);
-        IERC20(token).forceApprove(_bridgeAdapter, 0);
+        _bridgeToL2(token, amount, bridgeData);
         emit EmergencyToL2(token, amount, bridgeData);
     }
 
@@ -383,7 +351,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         if (token == address(0) || amount == 0) revert InvalidParam();
         TokenConfig memory cfg = _tokenConfigs[token];
         if (!cfg.supported) revert TokenNotSupported();
-        if (_bridgeAdapter == address(0) || _l2ExchangeRecipient == address(0)) revert InvalidParam();
+        _validateBridgeConfig();
 
         if (cfg.rebalanceMaxPerTx != 0 && amount > cfg.rebalanceMaxPerTx) revert CapExceeded();
         if (amount > availableForRebalance(token)) revert InvalidParam();
@@ -395,6 +363,67 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
             _lastRebalanceAt[token] = uint64(block.timestamp);
         }
 
+        _bridgeToL2(token, amount, bridgeData);
+    }
+
+    function _pullLiquidityFromStrategies(address token, uint256 targetAmount) internal {
+        uint256 idle = idleAssets(token);
+        if (idle >= targetAmount) return;
+
+        uint256 needed;
+        unchecked {
+            needed = targetAmount - idle;
+        }
+
+        address[] storage list = _tokenStrategies[token];
+        for (uint256 i = 0; i < list.length && needed > 0; ++i) {
+            address strategy = list[i];
+            if (!_strategyConfigs[token][strategy].whitelisted) continue;
+
+            uint256 strategyAssetsAmount = 0;
+            try IYieldStrategy(strategy).assets(token) returns (uint256 assets_) {
+                strategyAssetsAmount = assets_;
+            } catch {
+                emit EmergencyStrategySkipped(token, strategy);
+                continue;
+            }
+            if (strategyAssetsAmount == 0) continue;
+
+            uint256 request = needed < strategyAssetsAmount ? needed : strategyAssetsAmount;
+            uint256 received = 0;
+            try IYieldStrategy(strategy).deallocate(token, request, "") returns (uint256 received_) {
+                received = received_;
+            } catch {
+                emit EmergencyStrategySkipped(token, strategy);
+                continue;
+            }
+
+            emit Deallocate(token, strategy, request, received, "");
+            if (received >= needed) {
+                needed = 0;
+                continue;
+            }
+
+            unchecked {
+                needed -= received;
+            }
+        }
+    }
+
+    function _safeStrategyAssets(address token, address strategy) internal view returns (uint256 assets) {
+        if (!_strategyConfigs[token][strategy].whitelisted) return 0;
+        try IYieldStrategy(strategy).assets(token) returns (uint256 strategyAssetsAmount) {
+            return strategyAssetsAmount;
+        } catch {
+            return 0;
+        }
+    }
+
+    function _validateBridgeConfig() internal view {
+        if (_bridgeAdapter == address(0) || _l2ExchangeRecipient == address(0)) revert InvalidParam();
+    }
+
+    function _bridgeToL2(address token, uint256 amount, bytes calldata bridgeData) internal {
         IERC20(token).forceApprove(_bridgeAdapter, amount);
         IExchangeBridgeAdapter(_bridgeAdapter).sendToL2(token, amount, _l2ExchangeRecipient, bridgeData);
         IERC20(token).forceApprove(_bridgeAdapter, 0);

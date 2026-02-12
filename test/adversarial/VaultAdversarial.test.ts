@@ -181,4 +181,34 @@ describe("GRVTDeFiVault adversarial behavior", async function () {
     await vaultAsRebalancer.write.emergencySendToL2([token.address, 400_000n, "0xbeef"]);
     assert.equal(await bridge.read.lastAmount(), 400_000n);
   });
+
+  it("keeps totalAssets readable when one whitelisted strategy reverts", async function () {
+    const token = await viem.deployContract("MockERC20", ["Mock USDT", "mUSDT", 6]);
+    const { vault } = await setupVaultForToken(token.address);
+    await token.write.mint([vault.address, 1_000_000n]);
+
+    const revertingStrategy = await viem.deployContract("MockRevertingStrategy");
+    const healthyStrategy = await viem.deployContract("MockYieldStrategy", [vault.address, "HEALTHY"]);
+
+    await vault.write.whitelistStrategy([
+      token.address,
+      revertingStrategy.address,
+      { whitelisted: true, cap: 0n, tag: zeroHash },
+    ]);
+    await vault.write.whitelistStrategy([
+      token.address,
+      healthyStrategy.address,
+      { whitelisted: true, cap: 0n, tag: zeroHash },
+    ]);
+
+    const vaultAsAllocator = await viem.getContractAt("GRVTDeFiVault", vault.address, {
+      client: { public: publicClient, wallet: allocator },
+    });
+    await vaultAsAllocator.write.allocateToStrategy([token.address, healthyStrategy.address, 900_000n, "0x"]);
+
+    const idle = await vault.read.idleAssets([token.address]);
+    const healthy = await vault.read.strategyAssets([token.address, healthyStrategy.address]);
+    const total = await vault.read.totalAssets([token.address]);
+    assert.equal(total, idle + healthy);
+  });
 });
