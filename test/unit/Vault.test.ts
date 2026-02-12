@@ -648,6 +648,53 @@ describe("GRVTDeFiVault", async function () {
     assert.equal(tsAfterEmergency, firstTs);
   });
 
+  it("emergency bypasses rebalance cap and min-delay while paused", async function () {
+    const { vaultAsRebalancer, vaultAsPauser, token, bridge } = await deployBase();
+
+    await vaultAsRebalancer.write.rebalanceToL2([
+      token.address,
+      300_000n,
+      L2_GAS_LIMIT,
+      L2_GAS_PER_PUBDATA,
+      addr(other),
+    ]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsRebalancer.write.rebalanceToL2([
+        token.address,
+        100_000n,
+        L2_GAS_LIMIT,
+        L2_GAS_PER_PUBDATA,
+        addr(other),
+      ]),
+      vaultAsRebalancer,
+      "RateLimited",
+    );
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsRebalancer.write.rebalanceToL2([
+        token.address,
+        700_000n,
+        L2_GAS_LIMIT,
+        L2_GAS_PER_PUBDATA,
+        addr(other),
+      ]),
+      vaultAsRebalancer,
+      "CapExceeded",
+    );
+
+    await vaultAsPauser.write.pause();
+    await vaultAsRebalancer.write.emergencySendToL2([
+      token.address,
+      700_000n,
+      L2_GAS_LIMIT,
+      L2_GAS_PER_PUBDATA,
+      addr(other),
+    ]);
+
+    assert.equal(await bridge.read.lastAmount(), 700_000n);
+  });
+
   it("reflects strategy yield accrual in vault totalAssets", async function () {
     const bridge = await viem.deployContract("MockBridgeAdapter");
     const vaultImpl = await viem.deployContract("GRVTDeFiVault");
