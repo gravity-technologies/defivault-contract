@@ -307,6 +307,8 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     }
 
     /// @inheritdoc IL1DefiVault
+    /// @dev Intentionally bypasses `rebalanceMaxPerTx` and `rebalanceMinDelay` to prioritize
+    ///      incident-time liquidity restoration for exchange withdrawals.
     function emergencySendToL2(address token, uint256 amount, bytes calldata bridgeData)
         external
         override

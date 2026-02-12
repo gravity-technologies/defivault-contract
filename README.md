@@ -14,6 +14,12 @@ This repository contains:
 
 The design enforces strict asset-flow restrictions, strategy whitelisting, and emergency controls.
 
+## Risk Controls Semantics
+
+- `rebalanceToL2` enforces token-level `rebalanceMaxPerTx` and `rebalanceMinDelay`.
+- `emergencySendToL2` intentionally bypasses those two limits to prioritize incident-time liquidity restoration.
+- Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
+
 ## Usage
 
 ### Running Tests
