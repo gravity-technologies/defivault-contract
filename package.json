@@ -9,6 +9,7 @@
     "compile": "hardhat compile",
     "clean": "hardhat clean",
     "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\"",
+    "slither": "bash scripts/slither.sh",
     "deploy:vault": "hardhat ignition deploy ./ignition/modules/VaultCore.ts",
     "deploy:strategy": "hardhat ignition deploy ./ignition/modules/StrategyCore.ts",
     "deploy:token-strategy": "hardhat ignition deploy ./ignition/modules/TokenStrategy.ts",
