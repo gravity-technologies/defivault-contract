@@ -162,6 +162,30 @@ describe("GRVTDeFiVault", async function () {
     );
   });
 
+  it("emergency bypasses rebalance cap and min-delay while paused", async function () {
+    const { vaultAsRebalancer, vaultAsPauser, token, bridge } = await deployBase();
+
+    await vaultAsRebalancer.write.rebalanceToL2([token.address, 300_000n, "0x1111"]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsRebalancer.write.rebalanceToL2([token.address, 100_000n, "0x2222"]),
+      vaultAsRebalancer,
+      "RateLimited",
+    );
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsRebalancer.write.rebalanceToL2([token.address, 700_000n, "0x3333"]),
+      vaultAsRebalancer,
+      "CapExceeded",
+    );
+
+    await vaultAsPauser.write.pause();
+    await vaultAsRebalancer.write.emergencySendToL2([token.address, 700_000n, "0x4444"]);
+
+    assert.equal((await bridge.read.lastToken()).toLowerCase(), token.address.toLowerCase());
+    assert.equal(await bridge.read.lastAmount(), 700_000n);
+  });
+
   it("emergency send works while paused and pulls from strategies", async function () {
     const { vaultAsAllocator, vaultAsRebalancer, vault, token, stratA, stratB, bridge, vaultAsPauser } =
       await deployBase();

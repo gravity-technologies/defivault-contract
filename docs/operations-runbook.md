@@ -28,7 +28,7 @@
 
 ## Normal Operations
 
-1. Rebalancer monitors L2 net balance and executes `rebalanceToL2` within limits.
+1. Rebalancer monitors L2 net balance and executes `rebalanceToL2` within configured limits (`rebalanceMaxPerTx`, `rebalanceMinDelay`).
 2. Allocator executes `allocateToStrategy` and `deallocateFromStrategy` under treasury policy.
 3. Keep enough idle reserve to absorb short-term withdrawal spikes.
 
@@ -39,7 +39,9 @@
 1. Pause vault (`pause()`).
 2. Stop new allocations/rebalances.
 3. Pull strategy liquidity with `deallocateFromStrategy`/`deallocateAllFromStrategy`.
-4. If exchange liquidity is constrained, execute `emergencySendToL2`.
+4. If exchange liquidity is constrained, execute `emergencySendToL2` (this path intentionally bypasses `rebalanceMaxPerTx` and `rebalanceMinDelay`).
+5. Require an incident ticket/reference before each emergency top-up transaction.
+6. Reconcile post-action balances after each emergency top-up.
 
 ### Scenario: bridge/custody misconfiguration
 
@@ -59,5 +61,6 @@
 
 1. Reconcile L1 idle + strategy assets against expected accounting.
 2. Confirm L2 liquidity restoration.
-3. Document timeline, root cause, and control improvements.
-4. Update runbook and alerting rules.
+3. Review emergency transaction sizes/timestamps against incident records and justify any outlier sends.
+4. Document timeline, root cause, and control improvements.
+5. Update runbook and alerting rules.
