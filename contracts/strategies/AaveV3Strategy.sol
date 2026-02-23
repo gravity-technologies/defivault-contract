@@ -53,7 +53,13 @@ import {
  *      - `allocate` / `deallocate` / `deallocateAll` remain exact ERC20 operations against Aave
  *        supply/withdraw flows; they do not rely on this scalar assumption for token movement.
  *      - If aUSDT-to-USDT deviates from 1:1, scalar-based vault decisions can drift from economic
- *        value, while reporting and actual token transfers remain exact-token correct.
+ *        value. Drift affects control decisions, not token accounting:
+ *          - scalar too high: cap can block allocation early; harvest can over-request and revert
+ *            on vault-side measured bounds (`YieldNotAvailable` in vault path).
+ *          - scalar too low: cap can allow excess allocation; harvest can under-extract yield.
+ *          - loss recognition timing can shift because principal write-down uses scalar exposure.
+ *      - Even under scalar drift, exact-token reporting (`assets`) and actual transfer outcomes
+ *        remain denomination-correct because vault measures real balance deltas on unwind.
  *
  *      ### allocate / deallocate flow
  *      - `allocate`:  pull `amount` from vault → approve pool → `pool.supply` → reset approval.

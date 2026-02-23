@@ -6,14 +6,11 @@ import { encodeFunctionData } from "viem";
 
 import { expectEventOnce } from "../helpers/events.js";
 
-describe("GRVTDeFiVault", async function () {
+describe("GRVTDeFiVault core flows", async function () {
   const { viem } = await network.connect();
   const publicClient = await viem.getPublicClient();
   const wallets = await viem.getWalletClients();
   const [admin, allocator, rebalancer, pauser, l2Recipient, other] = wallets;
-
-  const L2_GAS_LIMIT = 900_000n;
-  const L2_GAS_PER_PUBDATA = 800n;
 
   function addr(wallet: (typeof wallets)[number]) {
     if (wallet.account === undefined) throw new Error("wallet has no account");

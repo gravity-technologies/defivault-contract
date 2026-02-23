@@ -10,7 +10,6 @@ This repository contains:
 
 - `GRVTDeFiVault`: L1 vault with RBAC, pause semantics, strategy routing, and L1->L2 rebalance/emergency flows.
 - `AaveV3Strategy`: vault-only strategy integration for Aave v3 (USDT-first).
-- `ZkSyncNativeBridgeAdapter`: vault-only adapter abstraction for L1 custody/bridge sends.
 
 The design enforces strict asset-flow restrictions, strategy whitelisting, and emergency controls.
 
@@ -296,24 +295,41 @@ Operational notes:
 - Write paths that express native ETH intent use `NATIVE_TOKEN_SENTINEL = address(0)`.
 - Internal accounting keys and read/reporting surfaces use canonical ERC20 addresses.
 - Native exposure is represented as wrapped native token on read surfaces.
+- Strategy domain is always ERC20: strategies hold principal tokens (for native exposure, wrapped native), not native ETH.
 - `allocateToStrategy` does not implicitly wrap native ETH and requires canonical idle funds.
 - Native ingress is restricted: direct ETH sends from non-wrapper senders revert; `NativeToWrappedIngress` is the canonical external ETH ingress path.
+
+### Native ETH/Wrapped-Native Invariants (Why)
+
+- zkSync bridge integration here supports native ETH branch and non-wrapped-native ERC20 branch; explicit wrapped-native bridge-out is rejected.
+- To keep vault/strategy logic simple and deterministic, strategy accounting is ERC20-only and native exposure is always modeled as wrapped-native internally.
+- Inflow invariant: external native ETH must be wrapped first through `NativeToWrappedIngress` before it enters vault accounting.
+- Outflow invariant 1 (L1 -> L2 rebalance/emergency): wrapped-native is unwrapped and bridged as native ETH.
+- Outflow invariant 2 (harvest -> treasury): wrapped-native principal harvest pays treasury in native ETH to reduce operational conversion overhead and keep ETH available for gas/ops usage.
 
 ### Token-Separated Strategy Reporting
 
 - `IYieldStrategy.assets(token)` returns `StrategyAssetBreakdown` with exact-token components only.
 - Component amounts remain in each component token's native units; no cross-token conversion is done in reporting.
 - Unsupported token queries return an empty component array.
-- `totalAssets(token)` / status variants scan global active strategies, so component-token queries (for example `aUSDT`) are supported even when strategy registration is keyed by a different underlying token.
+- `totalAssets(token)` / status variants scan global active strategies, so component-token queries (for example `aUSDT`) are supported even when strategy registration is keyed by a different token domain.
 - `IL1DefiVault.totalAssets(token)` returns strict exact-token totals and reverts on invalid strategy reads.
 - `IL1DefiVault.totalAssetsStatus(token)` and batch status variants skip invalid strategies and report `skippedStrategies`.
 - Non-underlying component token queries (for example receipt tokens) are valid exact-token queries.
+- Break-glass root-tracking override exists for admin recovery when conservative read-failure handling pins root token tracking.
 
 ### Harvest and Cap Scalar Path
 
 - Harvest and cap logic are based on `IYieldStrategy.principalBearingExposure(token)`.
 - This scalar path is separate from reporting components and may use strategy-specific conversion policies.
 - Unsupported token queries for `principalBearingExposure(token)` return `0`.
+- Harvest/principal APIs use canonical principal token keys (ERC20); `address(0)` is not a strategy token key.
+- Harvest payout policy is principal-token based:
+  - if principal token is not wrapped native, treasury receives ERC20 directly;
+  - if principal token is wrapped native, vault unwraps and treasury receives native ETH.
+- `minReceived` is enforced on treasury-side net receipt:
+  - ERC20 balance delta for non-wrapped-native harvest,
+  - native ETH balance delta for wrapped-native harvest.
 - Current accounting/reporting scope excludes reward and incentive tokens.
 
 ## Protocol-Agnostic Adapter Guidance
@@ -338,8 +354,8 @@ These examples are theoretical adapter patterns; this scope does not add new Com
 
 ## Risk Controls Semantics
 
-- `rebalanceToL2` is the normal risk-on path and is blocked by pause and token-support checks.
-- `emergencySendToL2` intentionally bypasses pause and token-support checks to prioritize incident-time liquidity restoration.
+- `rebalanceToL2` uses conservative availability checks (`availableForRebalance`) and role gating.
+- `emergencySendToL2` intentionally bypasses pause and token-support restrictions to prioritize incident-time liquidity restoration.
 - Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
 
 ## Usage
@@ -453,6 +469,38 @@ npm run roles:bootstrap -- \
   --parameters ignition/parameters/sepolia/roles-bootstrap.json5
 ```
 
+Bootstrap treasury timelock governance (one-time):
+
+```shell
+npm run deploy:treasury-timelock -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-bootstrap.json5
+```
+
+Schedule a treasury recipient update through timelock:
+
+```shell
+npm run treasury:schedule-update -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-schedule-update.json5
+```
+
+Execute a ready treasury recipient update through timelock:
+
+```shell
+npm run treasury:execute-update -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-execute-update.json5
+```
+
+Execute a harvest operation (strategy -> treasury):
+
+```shell
+npm run ops:harvest-yield -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/harvest-yield.json5
+```
+
 Upgrade vault proxy (ProxyAdmin `upgradeAndCall`):
 
 ```shell
@@ -475,6 +523,17 @@ Inspect Ignition deployment state for post-deploy operations:
 npx hardhat ignition deployments --network sepolia
 npx hardhat ignition status <deployment-id> --network sepolia
 ```
+
+Treasury and harvest governance notes:
+
+- Treasury recipient updates are timelock-gated once `setTreasuryTimelock` is configured.
+- `setTreasury` is executed by timelock operations, not by direct vault-admin calls.
+- `harvestYieldFromStrategy` is vault-admin-gated, blocked while paused, and enforces `minReceived`.
+- Native treasury payout (wrapped-native harvest branch) reverts with `NativeTransferFailed` if treasury cannot receive ETH.
+- `YieldHarvested.token` is always the principal token key (for wrapped-native harvest it remains wrapped-native token).
+- Harvest transactions also emit `Deallocate` telemetry for strategy unwind; indexers should treat
+  `Deallocate.received` (vault-side balance delta) and `YieldHarvested.received` (treasury-side net receipt)
+  as distinct metrics.
 
 ### Ops Docs
 

@@ -1,20 +1,15 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
-import JSON5 from "json5";
 import { network } from "hardhat";
+import { encodeFunctionData, getAddress } from "viem";
+
 import {
-  encodeFunctionData,
-  getAddress,
-  isAddress,
-  type Abi,
-  type Hex,
-} from "viem";
-
-type Address = `0x${string}`;
-
-const EIP1967_ADMIN_SLOT =
-  "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103" as const;
+  parseAddress,
+  parseNonEmptyString,
+  readJson5Object,
+  readParametersPath,
+  readProxyAdminAddress,
+  readTransparentUpgradeableProxyArtifact,
+  type Address,
+} from "./shared.js";
 
 type StrategyDeployParams = {
   vaultProxy: Address;
@@ -25,51 +20,8 @@ type StrategyDeployParams = {
   strategyName: string;
 };
 
-type TransparentUpgradeableProxyArtifact = {
-  abi: Abi;
-  bytecode: Hex;
-};
-
-function cliArgValue(flag: string): string | undefined {
-  const index = process.argv.indexOf(flag);
-  if (index === -1) return undefined;
-  const value = process.argv[index + 1];
-  if (value === undefined || value.startsWith("--")) {
-    throw new Error(`missing value for ${flag}`);
-  }
-  return value;
-}
-
-function readParametersPath(): string {
-  const fromCli = cliArgValue("--parameters");
-  if (fromCli !== undefined) return resolve(process.cwd(), fromCli);
-
-  const fromEnv = process.env.DEPLOY_PARAMS_FILE;
-  if (fromEnv !== undefined && fromEnv.length > 0) {
-    return resolve(process.cwd(), fromEnv);
-  }
-
-  throw new Error(
-    "missing deployment parameters file; pass --parameters <path> or set DEPLOY_PARAMS_FILE",
-  );
-}
-
-function parseAddress(value: unknown, label: string): Address {
-  if (typeof value !== "string" || !isAddress(value)) {
-    throw new Error(`invalid ${label}: expected address string`);
-  }
-  return getAddress(value);
-}
-
-function parseStrategyName(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("invalid strategyName: expected non-empty string");
-  }
-  return value;
-}
-
 function readStrategyParameters(filePath: string): StrategyDeployParams {
-  const raw = JSON5.parse(readFileSync(filePath, "utf8")) as
+  const raw = readJson5Object(filePath) as
     | { StrategyCoreDeploy?: Record<string, unknown> }
     | { TokenStrategyModule?: Record<string, unknown> }
     | Record<string, unknown>;
@@ -105,48 +57,11 @@ function readStrategyParameters(filePath: string): StrategyDeployParams {
     aavePool: parseAddress(payload.aavePool, "aavePool"),
     underlyingToken: parseAddress(payload.underlyingToken, "underlyingToken"),
     aToken: parseAddress(payload.aToken, "aToken"),
-    strategyName: parseStrategyName(
+    strategyName: parseNonEmptyString(
       payload.strategyName ?? "AAVE_V3_UNDERLYING",
+      "strategyName",
     ),
   };
-}
-
-function readTransparentUpgradeableProxyArtifact(): TransparentUpgradeableProxyArtifact {
-  const artifactPath = resolve(
-    process.cwd(),
-    "node_modules/@openzeppelin/contracts/build/contracts/TransparentUpgradeableProxy.json",
-  );
-  const parsed = JSON.parse(readFileSync(artifactPath, "utf8")) as {
-    abi?: Abi;
-    bytecode?: Hex;
-  };
-  if (parsed.abi === undefined || parsed.bytecode === undefined) {
-    throw new Error("invalid TransparentUpgradeableProxy artifact");
-  }
-  return { abi: parsed.abi, bytecode: parsed.bytecode };
-}
-
-async function readProxyAdminAddress(
-  publicClient: {
-    getStorageAt(args: {
-      address: Address;
-      slot: Hex;
-    }): Promise<Hex | undefined>;
-  },
-  proxyAddress: Address,
-): Promise<Address> {
-  const raw = await publicClient.getStorageAt({
-    address: proxyAddress,
-    slot: EIP1967_ADMIN_SLOT,
-  });
-
-  if (raw === undefined) {
-    throw new Error("missing proxy admin slot value");
-  }
-
-  const hex = raw.slice(2);
-  const admin = `0x${hex.slice(24)}` as Address;
-  return getAddress(admin);
 }
 
 async function main() {

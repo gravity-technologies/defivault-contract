@@ -11,29 +11,30 @@ Why this fits:
   - `assets(token) -> StrategyAssetBreakdown`
   - `principalBearingExposure(token) -> uint256`
 - Vault tracked-token sync assumes at most one non-root receipt token per `(tokenDomain, strategy)`; this is compatible with typical Morpho adapter shapes in normal operation (`contracts/vault/GRVTDeFiVault.sol`).
+- Strategy token domain is canonical ERC20 only (`address(0)` is not a strategy token key).
 
 ## Recommended Adapter Shapes
 
-Use one adapter per underlying market domain token (for example `USDC`).
+Use one adapter per principal/root token domain (for example `USDC`).
 
 ### Option A: Morpho Vault (ERC4626 share token)
 
 - Receipt token: vault share token (one non-root token).
-- `assets(underlying)`:
+- `assets(principalToken)`:
   - include share token component as `InvestedPrincipal` (exact share units),
-  - include underlying residual as `ResidualUnderlying` when non-zero.
+  - include principal-token residual as `ResidualUnderlying` when non-zero.
 - `assets(shareToken)`:
   - return share-token component for exact-token queries.
-- `principalBearingExposure(underlying)`:
-  - return underlying-domain scalar using share conversion (`convertToAssets` style) plus residual underlying when applicable.
+- `principalBearingExposure(principalToken)`:
+  - return principal-token-domain scalar using share conversion (`convertToAssets` style) plus residual principal token when applicable.
 
 ### Option B: Morpho Blue direct position
 
 - No ERC20 receipt token expected for position accounting.
-- `assets(underlying)`:
-  - report underlying-domain component(s) only.
-- `principalBearingExposure(underlying)`:
-  - return underlying-domain exposure scalar from protocol accounting.
+- `assets(principalToken)`:
+  - report principal-token-domain component(s) only.
+- `principalBearingExposure(principalToken)`:
+  - return principal-token-domain exposure scalar from protocol accounting.
 
 ## Interface Contract Requirements
 
@@ -42,36 +43,40 @@ The adapter should satisfy all of the following:
 - Unsupported token queries:
   - `assets(token)` returns empty components.
   - `principalBearingExposure(token)` returns `0` and does not revert.
+- Canonical token boundary:
+  - strategy APIs (`assets`, `principalBearingExposure`, `allocate`, `deallocate`, `deallocateAll`) use canonical ERC20 principal token keys.
+  - native sentinel `address(0)` is not valid for strategy token inputs.
 - `allocate(token, amount)`:
   - only vault caller,
-  - pull underlying from vault (`transferFrom`),
+  - pull principal token from vault (`transferFrom`),
   - deposit/supply to Morpho path.
 - `deallocate(token, amount)` and `deallocateAll(token)`:
-  - return underlying to vault,
+  - return principal token to vault,
   - return actual received amount.
-- Keep reward/incentive tokens out of V1 reporting and exposure scalar.
+- Keep reward/incentive tokens out of current reporting and exposure scalar.
 
 ## Vault Integration Steps
 
 1. Deploy Morpho adapter with immutable config:
    - vault address,
-   - underlying token,
+   - principal/root token,
    - Morpho protocol contract(s),
    - optional share token (ERC4626 path).
 2. In vault admin flow:
-   - `setTokenConfig(underlying, {supported: true})`,
-   - `whitelistStrategy(underlying, adapter, {whitelisted: true, cap})`.
+   - `setTokenConfig(principalToken, {supported: true})`,
+   - `whitelistStrategy(principalToken, adapter, {whitelisted: true, cap})`.
 3. Grant allocator role and run a smoke flow:
-   - `allocateToStrategy(underlying, adapter, amount)`,
-   - `deallocateFromStrategy(underlying, adapter, smallAmount)`.
+   - `allocateToStrategy(principalToken, adapter, amount)`,
+   - `deallocateFromStrategy(principalToken, adapter, smallAmount)`.
 4. Validate reporting surfaces:
-   - `strategyAssets(underlying, adapter)`,
-   - `totalAssets(underlying)`,
+   - `strategyAssets(principalToken, adapter)`,
+   - `totalAssets(principalToken)`,
    - if share token exists, `totalAssets(shareToken)`,
    - `getTrackedTokens()` includes root + receipt token when present.
 
 ## Critical Notes
 
 - The vault is strict on malformed strategy reads for `totalAssets(token)`; keep adapter reads stable and non-reverting for supported query tokens.
-- Tracked-token sync is write-time; if adapter component shape changes unexpectedly without write hooks, registry updates on next write hook execution.
-- If adapter emits multiple distinct non-root tokens in one domain, vault emits `StrategyReceiptTokenShapeUnsupported` and tracks only the first non-root token for registry purposes.
+- Tracked-token sync is write-time. If strategy `assets(tokenDomain)` read fails during sync, vault preserves prior non-root registration.
+- If adapter component shape changes unexpectedly without write hooks, registry updates on next write hook execution.
+- If adapter emits multiple distinct non-root tokens in one domain, vault emits `StrategyPositionTokenShapeUnsupported` and uses the first non-root token for registry sync.

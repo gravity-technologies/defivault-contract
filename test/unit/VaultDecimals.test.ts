@@ -8,10 +8,7 @@ describe("GRVTDeFiVault decimals coverage", async function () {
   const { viem } = await network.connect();
   const publicClient = await viem.getPublicClient();
   const wallets = await viem.getWalletClients();
-  const [admin, allocator, rebalancer, l2Recipient, other] = wallets;
-
-  const L2_GAS_LIMIT = 900_000n;
-  const L2_GAS_PER_PUBDATA = 800n;
+  const [admin, allocator, rebalancer, l2Recipient] = wallets;
 
   function addr(wallet: (typeof wallets)[number]) {
     if (wallet.account === undefined) {

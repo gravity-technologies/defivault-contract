@@ -2,7 +2,7 @@
 
 ## Scope
 
-As of March 4, 2026, this document evaluates integrating Ethena sUSDe into the current vault/strategy model:
+As of March 5, 2026, this document is a point-in-time design evaluation for integrating Ethena sUSDe into the current vault/strategy model:
 
 - Vault: `contracts/vault/GRVTDeFiVault.sol`
 - Adapter interface: `contracts/interfaces/IYieldStrategy.sol`
@@ -21,7 +21,7 @@ So there are two viable modes:
 
 ## Protocol Facts (researched)
 
-From Ethena docs and verified code:
+From Ethena docs and verified code at the time of writing:
 
 - Mainnet staking/sUSDe contract: `0x9d39a5de30e57443bff2a8307a4256c8797a3497`.
 - `StakedUSDeV2` is ERC4626-like with reward vesting.
@@ -63,9 +63,9 @@ Sources:
 
 For this repository, model sUSDe as:
 
-- root token domain: `USDe`,
+- principal/root token domain: `USDe`,
 - receipt/component token: `sUSDe` (single non-root token, compatible with current tracked-token sync),
-- reward tokens: excluded from V1 accounting/reporting.
+- reward tokens: excluded from current accounting/reporting scope.
 
 Recommended adapter behavior:
 
@@ -79,8 +79,11 @@ Recommended adapter behavior:
 - unsupported tokens:
   - `assets(token)` returns empty,
   - `principalBearingExposure(token)` returns `0` and does not revert.
+- canonical token boundary:
+  - strategy APIs use canonical ERC20 token keys.
+  - native sentinel `address(0)` is not a strategy token key.
 
-## Option A (Recommended V1): Cooldown-Off Only
+## Option A (Recommended): Cooldown-Off Only
 
 Assumption:
 
@@ -145,8 +148,11 @@ Tradeoff:
 
 6. Reporting stance:
 
-- V1 should continue exact-token reporting and keep reward tokens out of scope.
+- Continue exact-token reporting and keep reward tokens out of scope.
 - Residual USDe dust should be reported when non-zero for cleaner strict reads.
+- Tracked-token sync behavior:
+  - write-time sync preserves prior non-root registration if strategy `assets(tokenDomain)` read fails.
+  - if strategy reports multiple distinct non-root tokens, vault emits `StrategyPositionTokenShapeUnsupported` and uses the first non-root token for registry sync.
 
 ## Potential Direction of Change
 

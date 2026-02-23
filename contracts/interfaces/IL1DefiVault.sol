@@ -10,9 +10,12 @@ import {StrategyAssetBreakdown, VaultTokenStatus, VaultTokenTotals} from "./IVau
  *
  * Boundary and reporting model:
  * - Mutating boundary-intent token inputs use `address(0)` for native ETH intent.
+ *   Carve-out: strategy-domain harvest/principal APIs use canonical ERC20 principal token keys only.
  * - Internal accounting and reporting use canonical ERC20 keys (for native: wrapped native token).
  * - Reporting is token-address exact and never converts amounts across token denominations.
  * - Harvest/cap logic uses strategy `principalBearingExposure` scalar, separate from reporting components.
+ * - Strategy-domain accounting is always ERC20; harvest/principal APIs use canonical principal token keys
+ *   and reject `address(0)` strategy-token input.
  */
 interface IL1DefiVault {
     // --------- Errors ---------
@@ -25,6 +28,17 @@ interface IL1DefiVault {
     error NativeTransferFailed();
     error InvalidStrategyAssetsRead(address token, address strategy);
     error InvalidStrategyExposureRead(address token, address strategy);
+    error UnsafeDestination();
+    error TreasuryTimelockNotSet();
+
+    /// @dev Thrown when `syncStrategyPrincipal` is called after sync has been permanently locked.
+    error PrincipalSyncAlreadyLocked();
+
+    /// @dev Thrown when requested harvest exceeds currently available strategy yield.
+    error YieldNotAvailable();
+
+    /// @dev Thrown when actual harvested amount is below caller-provided `minReceived`.
+    error SlippageExceeded();
 
     // --------- Roles (RBAC) ---------
     // - VAULT_ADMIN: config, whitelist strategies, and emergency administration
@@ -67,6 +81,46 @@ interface IL1DefiVault {
 
     function unpause() external;
 
+    // --------- Treasury management (for harvested yield) ---------
+    /// Current treasury recipient for harvested strategy yield.
+    function treasury() external view returns (address);
+
+    /// Timelock contract allowed to execute treasury recipient changes.
+    function treasuryTimelock() external view returns (address);
+
+    /**
+     * @notice Emitted when treasury timelock controller is configured.
+     * @param previousTimelock Previous timelock (zero on first set).
+     * @param newTimelock New treasury timelock contract.
+     */
+    event TreasuryTimelockUpdated(address indexed previousTimelock, address indexed newTimelock);
+
+    /**
+     * @notice Emitted when treasury recipient is changed.
+     * @param previousTreasury Treasury recipient before update.
+     * @param newTreasury Treasury recipient after update.
+     */
+    event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
+
+    /**
+     * @notice Sets the timelock contract that governs treasury changes.
+     * @dev Callable by `VAULT_ADMIN_ROLE`; intended as one-time bootstrap wiring.
+     *      Reverts with `InvalidParam` on zero/non-contract address or if already set.
+     * @param newTimelock Timelock controller contract address.
+     */
+    function setTreasuryTimelock(address newTimelock) external;
+
+    /**
+     * @notice Updates treasury recipient for harvested yield.
+     * @dev Callable only by configured `treasuryTimelock`.
+     *      Reverts with:
+     *      - `TreasuryTimelockNotSet` if timelock is not configured.
+     *      - `Unauthorized` if caller is not `treasuryTimelock`.
+     *      - `InvalidParam` if `newTreasury` is zero, current treasury, or vault address.
+     * @param newTreasury Proposed treasury recipient.
+     */
+    function setTreasury(address newTreasury) external;
+
     // --------- Token support & risk controls ---------
     struct TokenConfig {
         bool supported;
@@ -98,6 +152,11 @@ interface IL1DefiVault {
     /// @return strategies Strategy addresses for `token` (whitelisted and withdraw-only active entries).
     function getTokenStrategies(address token) external view returns (address[] memory);
 
+    /**
+     * @notice Configures strategy whitelist/cap state for a token-domain binding.
+     * @dev `cfg.active` is lifecycle output-state and is derived by vault internals.
+     *      Caller-provided `cfg.active` input is ignored.
+     */
     function whitelistStrategy(address token, address strategy, StrategyConfig calldata cfg) external;
 
     // --------- Accounting / views ---------
@@ -149,6 +208,24 @@ interface IL1DefiVault {
     /// @dev Tracked-token membership is synchronized on write paths; this read is O(1) mapping check.
     function isTrackedToken(address token) external view returns (bool);
 
+    /**
+     * @notice Emitted when root-tracking override is changed for a token.
+     * @param token Canonical ERC20 token key.
+     * @param enabled Whether override is enabled.
+     * @param forceTrack Forced root-tracking signal when override is enabled.
+     */
+    event RootTrackingOverrideUpdated(address indexed token, bool enabled, bool forceTrack);
+
+    /**
+     * @notice Sets or clears break-glass root-tracking override for a token.
+     * @dev Admin-only escape hatch for cases where conservative strategy-read failures pin root tracking.
+     *      Non-root tracked-token refs are still enforced and are not overridden by this control.
+     * @param token Canonical ERC20 token key. `address(0)` is invalid.
+     * @param enabled Whether override is active.
+     * @param forceTrack Forced root-tracking signal used when `enabled == true`.
+     */
+    function setRootTrackingOverride(address token, bool enabled, bool forceTrack) external;
+
     /// @notice Batch status variant of `totalAssetsStatus`.
     /// @param tokens Canonical ERC20 query keys.
     /// @return statuses Exact-token status results aligned to `tokens`.
@@ -184,6 +261,41 @@ interface IL1DefiVault {
     event StrategyPrincipalWriteDownSkipped(address indexed token, address indexed strategy);
     /// @notice Emitted when forced/native-dust ETH is swept to treasury.
     event NativeSwept(address indexed treasury, uint256 amount);
+    /**
+     * @notice Emitted when tracked strategy principal changes.
+     * @dev Principal changes on allocate/deallocate flows and explicit sync operations.
+     * @param token Principal token key (ERC20) of the strategy position.
+     * @param strategy Strategy whose principal changed.
+     * @param previousPrincipal Principal value before update.
+     * @param newPrincipal Principal value after update.
+     */
+    event StrategyPrincipalUpdated(
+        address indexed token,
+        address indexed strategy,
+        uint256 previousPrincipal,
+        uint256 newPrincipal
+    );
+
+    /// @notice Emitted when principal sync is permanently disabled.
+    event PrincipalSyncLockActivated();
+
+    /**
+     * @notice Emitted when strategy yield is harvested to treasury.
+     * @param token Principal token key (ERC20) being harvested.
+     *              For wrapped-native principal harvest, this remains `wrappedNativeToken()` even though payout
+     *              is native ETH.
+     * @param strategy Strategy from which yield is withdrawn.
+     * @param treasury Treasury recipient that receives harvested funds.
+     * @param requested Amount requested from strategy.
+     * @param received Actual treasury-side net amount received.
+     */
+    event YieldHarvested(
+        address indexed token,
+        address indexed strategy,
+        address indexed treasury,
+        uint256 requested,
+        uint256 received
+    );
 
     /**
      * @notice Moves idle funds into a whitelisted strategy.
@@ -220,6 +332,75 @@ interface IL1DefiVault {
     /// @notice Recovers forced/native-dust ETH to treasury only.
     /// @param amount Native ETH amount to sweep.
     function sweepNative(uint256 amount) external;
+    /**
+     * @notice Returns tracked principal for a strategy position.
+     * @dev Principal tracks net capital attributed to strategy and is used to separate
+     *      principal from harvestable yield.
+     * @param token Canonical principal token key (ERC20). `address(0)` is invalid.
+     * @param strategy Strategy address.
+     * @return Tracked principal amount.
+     */
+    function strategyPrincipal(address token, address strategy) external view returns (uint256);
+
+    /**
+     * @notice Returns currently harvestable yield for a strategy position.
+     * @dev Defined using scalar exposure (separate from reporting components):
+     *      `max(principalBearingExposure(token) - min(strategyPrincipal(token, strategy), principalBearingExposure(token)), 0)`.
+     * @param token Canonical principal token key (ERC20). `address(0)` is invalid.
+     * @param strategy Strategy address.
+     * @return Harvestable yield amount.
+     */
+    function harvestableYield(address token, address strategy) external view returns (uint256);
+
+    /**
+     * @notice Withdraws yield from strategy and transfers it to treasury.
+     * @dev Callable by `VAULT_ADMIN_ROLE` and blocked while paused.
+     *      Harvest always deallocates canonical principal-token units from strategy.
+     *      Payout policy:
+     *      - if `token != wrappedNativeToken()`: transfer ERC20 `token` directly to treasury.
+     *      - if `token == wrappedNativeToken()`: unwrap in vault and pay treasury in native ETH.
+     *      Reverts with:
+     *      - `StrategyNotWhitelisted` if strategy is not withdrawable.
+     *      - `InvalidStrategyExposureRead(token, strategy)` if scalar exposure read fails.
+     *      - `YieldNotAvailable` if `amount` exceeds currently harvestable yield.
+     *      - `SlippageExceeded` if actual received is below `minReceived`.
+     *      - `NativeTransferFailed` if wrapped-native harvest branch cannot transfer ETH to treasury.
+     * @param token Canonical principal token key (ERC20). `address(0)` is invalid.
+     * @param strategy Strategy address.
+     * @param amount Requested amount to harvest.
+     * @param minReceived Minimum acceptable net amount received by treasury after vault->treasury transfer.
+     * @return received Actual net amount received by treasury.
+     */
+    function harvestYieldFromStrategy(
+        address token,
+        address strategy,
+        uint256 amount,
+        uint256 minReceived
+    ) external returns (uint256 received);
+
+    /**
+     * @notice Sets tracked principal to current strategy assets.
+     * @dev Reconciliation safety valve callable by `VAULT_ADMIN_ROLE`.
+     *      Sync source is `IYieldStrategy.principalBearingExposure(token)` (scalar path).
+     *      Reverts with `PrincipalSyncAlreadyLocked` after `lockPrincipalSync`.
+     *      Reverts with `InvalidStrategyExposureRead(token, strategy)` on scalar read failure.
+     * @param token Canonical principal token key (ERC20). `address(0)` is invalid.
+     * @param strategy Strategy address.
+     */
+    function syncStrategyPrincipal(address token, address strategy) external;
+
+    /**
+     * @notice Returns whether principal sync is permanently disabled.
+     * @return True once `lockPrincipalSync` has been executed.
+     */
+    function principalSyncLocked() external view returns (bool);
+
+    /**
+     * @notice Irreversibly disables future calls to `syncStrategyPrincipal`.
+     * @dev Callable by `VAULT_ADMIN_ROLE`.
+     *      Implementations should reject repeated calls.
+     */
+    function lockPrincipalSync() external;
 
     // --------- Rebalancing between L1 vault and L2 exchange ---------
     event RebalanceToL2(

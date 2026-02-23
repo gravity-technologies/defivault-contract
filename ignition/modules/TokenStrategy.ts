@@ -10,11 +10,14 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * Parameters (TokenStrategyModule.*):
  * - vaultProxy: existing GRVTDeFiVault proxy address.
  * - strategyProxy: existing strategy proxy address.
- * - underlyingToken: ERC20 token managed by this strategy (e.g. USDT).
+ * - underlyingToken: canonical principal token key (ERC20) for this strategy binding.
  * - tokenSupported: value for setTokenConfig(token, { supported }).
  * - strategyWhitelisted: value for whitelistStrategy(..., { whitelisted }).
- * - strategyActive: value for whitelistStrategy(..., { active }).
  * - strategyCap: cap for whitelistStrategy(token, strategy, { cap }).
+ *
+ * Notes:
+ * - `StrategyConfig.active` is lifecycle output-state derived by vault internals.
+ *   This module always passes `active: false` on input and lets vault derive final state.
  */
 export default buildModule("TokenStrategyModule", (m) => {
   const vaultProxy = m.getParameter("vaultProxy");
@@ -22,7 +25,6 @@ export default buildModule("TokenStrategyModule", (m) => {
   const underlyingToken = m.getParameter("underlyingToken");
   const tokenSupported = m.getParameter("tokenSupported", true);
   const strategyWhitelisted = m.getParameter("strategyWhitelisted", true);
-  const strategyActive = m.getParameter("strategyActive", false);
   const strategyCap = m.getParameter("strategyCap", 0n);
 
   const vault = m.contractAt("GRVTDeFiVault", vaultProxy, { id: "Vault" });
@@ -40,7 +42,7 @@ export default buildModule("TokenStrategyModule", (m) => {
       strategyProxy,
       {
         whitelisted: strategyWhitelisted,
-        active: strategyActive,
+        active: false,
         cap: strategyCap,
       },
     ],
