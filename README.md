@@ -10,7 +10,6 @@ This repository contains:
 
 - `GRVTDeFiVault`: L1 vault with RBAC, pause semantics, strategy routing, and L1->L2 rebalance/emergency flows.
 - `AaveV3Strategy`: vault-only strategy integration for Aave v3 (USDT-first).
-- `ZkSyncNativeBridgeAdapter`: vault-only adapter abstraction for L1 custody/bridge sends.
 
 The design enforces strict asset-flow restrictions, strategy whitelisting, and emergency controls.
 
@@ -175,8 +174,8 @@ GRVTDeFiVault.emergencySendToL2(token, amount)
 
 ## Risk Controls Semantics
 
-- `rebalanceToL2` is the normal risk-on path and is blocked by pause and token-support checks.
-- `emergencySendToL2` intentionally bypasses pause and token-support checks to prioritize incident-time liquidity restoration.
+- `rebalanceToL2` uses conservative availability checks (`availableForRebalance`) and role gating.
+- `emergencySendToL2` intentionally bypasses pause and token-support restrictions to prioritize incident-time liquidity restoration.
 - Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
 
 ## Usage
