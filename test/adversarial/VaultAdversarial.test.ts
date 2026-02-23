@@ -12,9 +12,6 @@ describe("GRVTDeFiVault adversarial behavior", async function () {
   const wallets = await viem.getWalletClients();
   const [admin, allocator, rebalancer, l2Recipient, treasury, other] = wallets;
 
-  const L2_GAS_LIMIT = 900_000n;
-  const L2_GAS_PER_PUBDATA = 800n;
-
   function addr(wallet: (typeof wallets)[number]) {
     if (wallet.account === undefined) {
       throw new Error("wallet has no account");
@@ -256,6 +253,133 @@ describe("GRVTDeFiVault adversarial behavior", async function () {
       feeToken.address,
     ])) as bigint;
     assert.ok(finalIdle < 1_000_000n);
+  });
+
+  it("enforces harvest minReceived on treasury-side net receipt for fee-on-transfer tokens", async function () {
+    const feeToken = await viem.deployContract("MockFeeOnTransferERC20", [
+      "Fee Token",
+      "FEE",
+      6,
+      100n,
+      addr(other),
+    ]);
+    const { vault, vaultAsAllocator } = await setupVaultForToken(
+      feeToken.address,
+    );
+    await feeToken.write.mint([vault.address, 1_000_000n]);
+
+    const strategy = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "FEE_HARVEST",
+    ]);
+    await vault.write.whitelistStrategy([
+      feeToken.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await vaultAsAllocator.write.allocateToStrategy([
+      feeToken.address,
+      strategy.address,
+      100_000n,
+    ]);
+
+    // Principal tracked by vault is 100_000, while strategy only received 99_000 (1% fee).
+    // Add external yield so harvestable yield becomes 20_000.
+    await feeToken.write.mint([strategy.address, 21_000n]);
+    await strategy.write.setAssets([feeToken.address, 120_000n]);
+
+    await viem.assertions.revertWithCustomError(
+      vault.write.harvestYieldFromStrategy([
+        feeToken.address,
+        strategy.address,
+        20_000n,
+        19_603n,
+      ]),
+      vault,
+      "SlippageExceeded",
+    );
+
+    const treasuryAddress = (await vault.read.treasury()) as `0x${string}`;
+    const treasuryBefore = (await feeToken.read.balanceOf([
+      treasuryAddress,
+    ])) as bigint;
+    const hash = await vault.write.harvestYieldFromStrategy([
+      feeToken.address,
+      strategy.address,
+      20_000n,
+      19_602n,
+    ]);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    const treasuryAfter = (await feeToken.read.balanceOf([
+      treasuryAddress,
+    ])) as bigint;
+
+    // 20_000 strategy request -> 19_800 to vault (1% fee) -> 19_602 to treasury (1% fee).
+    assert.equal(treasuryAfter - treasuryBefore, 19_602n);
+    const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
+    assert.equal(harvested.requested, 20_000n);
+    assert.equal(harvested.received, 19_602n);
+  });
+
+  it("harvest emits mismatch telemetry for over-reporting strategies", async function () {
+    const token = await viem.deployContract("MockERC20", [
+      "Mock USDT",
+      "mUSDT",
+      6,
+    ]);
+    const { vault, vaultAsAllocator } = await setupVaultForToken(token.address);
+    await token.write.mint([vault.address, 1_000_000n]);
+
+    const overreporting = await viem.deployContract(
+      "MockOverreportingStrategy",
+      [vault.address],
+    );
+    await vault.write.whitelistStrategy([
+      token.address,
+      overreporting.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await vaultAsAllocator.write.allocateToStrategy([
+      token.address,
+      overreporting.address,
+      300_000n,
+    ]);
+
+    await token.write.mint([overreporting.address, 60_000n]);
+    await overreporting.write.setAssets([token.address, 360_000n]);
+    await overreporting.write.setReportExtra([7_000n]);
+
+    const treasuryAddress = (await vault.read.treasury()) as `0x${string}`;
+    const treasuryBefore = (await token.read.balanceOf([
+      treasuryAddress,
+    ])) as bigint;
+
+    const hash = await vault.write.harvestYieldFromStrategy([
+      token.address,
+      overreporting.address,
+      30_000n,
+      30_000n,
+    ]);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    const treasuryAfter = (await token.read.balanceOf([
+      treasuryAddress,
+    ])) as bigint;
+
+    assert.equal(treasuryAfter - treasuryBefore, 30_000n);
+
+    const mismatch = expectEventOnce(
+      receipt,
+      vault,
+      "StrategyReportedReceivedMismatch",
+    );
+    assert.equal(mismatch.requested, 30_000n);
+    assert.equal(mismatch.reported, 37_000n);
+    assert.equal(mismatch.actual, 30_000n);
+
+    const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
+    assert.equal(harvested.received, 30_000n);
   });
 
   it("continues emergency unwind when one strategy reverts", async function () {

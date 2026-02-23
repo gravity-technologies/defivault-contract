@@ -18,7 +18,11 @@
     "upgrade:vault": "hardhat ignition deploy ./ignition/modules/VaultUpgrade.ts",
     "upgrade:strategy": "hardhat ignition deploy ./ignition/modules/StrategyUpgrade.ts",
     "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts",
-    "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost"
+    "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost",
+    "deploy:treasury-timelock": "hardhat ignition deploy ./ignition/modules/VaultTreasuryTimelock.ts",
+    "treasury:schedule-update": "hardhat ignition deploy ./ignition/modules/TreasuryScheduleUpdate.ts",
+    "treasury:execute-update": "hardhat ignition deploy ./ignition/modules/TreasuryExecuteUpdate.ts",
+    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts"
   },
   "keywords": [],
   "author": "",

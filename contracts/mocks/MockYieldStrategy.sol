@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.34;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -33,6 +33,8 @@ contract MockYieldStrategy is IYieldStrategy {
     mapping(address token => uint256 amount) private _trackedAssets;
     mapping(address token => bool value) public revertAssets;
     mapping(address token => bool value) public maxAssets;
+    mapping(address token => bool value) public exposureOverrideSet;
+    mapping(address token => uint256 value) public exposureOverride;
     mapping(address queryToken => MockComponent[] components) private _mockedComponents;
 
     constructor(address vault_, string memory strategyName_) {
@@ -80,6 +82,18 @@ contract MockYieldStrategy is IYieldStrategy {
         maxAssets[token] = value;
     }
 
+    /// @notice Overrides scalar exposure returned by `principalBearingExposure(token)`.
+    function setExposure(address token, uint256 exposure) external {
+        exposureOverrideSet[token] = true;
+        exposureOverride[token] = exposure;
+    }
+
+    /// @notice Clears scalar exposure override for `token`.
+    function clearExposure(address token) external {
+        delete exposureOverrideSet[token];
+        delete exposureOverride[token];
+    }
+
     /// @inheritdoc IYieldStrategy
     function assets(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
         if (revertAssets[token]) revert("ASSETS_REVERT");
@@ -112,6 +126,7 @@ contract MockYieldStrategy is IYieldStrategy {
     function principalBearingExposure(address token) external view override returns (uint256 exposure) {
         if (revertAssets[token]) revert("EXPOSURE_REVERT");
         if (maxAssets[token]) return type(uint256).max;
+        if (exposureOverrideSet[token]) return exposureOverride[token];
         return _trackedAssets[token];
     }
 

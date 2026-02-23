@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.34;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -53,7 +53,13 @@ import {
  *      - `allocate` / `deallocate` / `deallocateAll` remain exact ERC20 operations against Aave
  *        supply/withdraw flows; they do not rely on this scalar assumption for token movement.
  *      - If aUSDT-to-USDT deviates from 1:1, scalar-based vault decisions can drift from economic
- *        value, while reporting and actual token transfers remain exact-token correct.
+ *        value. Drift affects control decisions, not token accounting:
+ *          - scalar too high: cap can block allocation early; harvest can over-request and revert
+ *            on vault-side measured bounds (`YieldNotAvailable` in vault path).
+ *          - scalar too low: cap can allow excess allocation; harvest can under-extract yield.
+ *          - loss recognition timing can shift because principal write-down uses scalar exposure.
+ *      - Even under scalar drift, exact-token reporting (`assets`) and actual transfer outcomes
+ *        remain denomination-correct because vault measures real balance deltas on unwind.
  *
  *      ### allocate / deallocate flow
  *      - `allocate`:  pull `amount` from vault → approve pool → `pool.supply` → reset approval.

@@ -84,7 +84,7 @@ describe("GRVTDeFiVault principal write-down", async function () {
     assert.ok(writeDown);
     assert.equal(writeDown.args.token.toLowerCase(), token.address.toLowerCase());
     assert.equal(writeDown.args.strategy.toLowerCase(), strategy.address.toLowerCase());
-    assert.equal(writeDown.args.previousPrincipal, 10n);
+    assert.equal(writeDown.args.previousPrincipal, 9n);
     assert.equal(writeDown.args.newPrincipal, 3n);
     assert.equal(writeDown.args.exposureAfter, 3n);
   });

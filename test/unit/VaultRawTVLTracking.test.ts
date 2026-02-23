@@ -114,6 +114,30 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     assert.equal(await vault.read.isTrackedToken([token.address]), false);
   });
 
+  it("supports break-glass root tracking override for strategy-read failure pinning", async function () {
+    const { vault } = await deploySystem();
+    const token = await deployToken("PIN");
+    const strategy = await deployStrategy(vault);
+
+    await vault.write.setTokenConfig([token.address, supportedTokenConfig]);
+    await vault.write.whitelistStrategy([
+      token.address,
+      strategy.address,
+      strategyConfig(true),
+    ]);
+    await strategy.write.setAssets([token.address, 5n]);
+    await strategy.write.setRevertAssets([token.address, true]);
+
+    await vault.write.setTokenConfig([token.address, unsupportedTokenConfig]);
+    assert.equal(await vault.read.isTrackedToken([token.address]), true);
+
+    await vault.write.setRootTrackingOverride([token.address, true, false]);
+    assert.equal(await vault.read.isTrackedToken([token.address]), false);
+
+    await vault.write.setRootTrackingOverride([token.address, false, false]);
+    assert.equal(await vault.read.isTrackedToken([token.address]), true);
+  });
+
   it("returns batch raw totals for provided tokens", async function () {
     const { vault } = await deploySystem();
     const tokenA = await deployToken("DDD");

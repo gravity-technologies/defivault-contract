@@ -305,7 +305,6 @@ async function main() {
       underlyingToken: underlyingToken.address,
       tokenSupported: true,
       strategyWhitelisted: true,
-      strategyActive: false,
       strategyCap: `${strategyCap}n`,
     },
   });

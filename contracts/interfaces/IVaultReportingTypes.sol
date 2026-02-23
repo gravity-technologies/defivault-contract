@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.34;
 
 /// @notice Classifies how a strategy component contributes to token reporting.
 enum TokenAmountComponentKind {

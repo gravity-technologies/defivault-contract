@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.34;
 
 /**
  * @notice Parameters for Era-style two-bridges L1->L2 request.

@@ -1,0 +1,17 @@
+{
+  VaultHarvestYieldModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Harvest request:
+    // - token is canonical principal token key (ERC20), never address(0)
+    // - if token == wrappedNativeToken, payout is native ETH to treasury
+    token: "0x0000000000000000000000000000000000000000",
+    strategy: "0x0000000000000000000000000000000000000000",
+    amount: "0n",
+    // Minimum treasury-side net receipt:
+    // - ERC20 balance delta for non-wrapped-native token
+    // - native ETH balance delta for wrapped-native token
+    // WARNING: setting "0n" disables slippage protection. Use only with explicit operator sign-off.
+    minReceived: "0n",
+  },
+}

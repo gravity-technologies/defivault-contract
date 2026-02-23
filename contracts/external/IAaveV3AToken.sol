@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.28;
+pragma solidity 0.8.34;
 
 interface IAaveV3AToken {
     function UNDERLYING_ASSET_ADDRESS() external view returns (address);
