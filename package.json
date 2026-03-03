@@ -12,7 +12,11 @@
     "slither": "bash scripts/slither.sh",
     "deploy:vault": "hardhat ignition deploy ./ignition/modules/VaultCore.ts",
     "deploy:token-strategy": "hardhat ignition deploy ./ignition/modules/TokenStrategy.ts",
-    "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts"
+    "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts",
+    "deploy:treasury-timelock": "hardhat ignition deploy ./ignition/modules/VaultTreasuryTimelock.ts",
+    "treasury:schedule-update": "hardhat ignition deploy ./ignition/modules/TreasuryScheduleUpdate.ts",
+    "treasury:execute-update": "hardhat ignition deploy ./ignition/modules/TreasuryExecuteUpdate.ts",
+    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts"
   },
   "keywords": [],
   "author": "",

@@ -252,13 +252,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
         client: { public: publicClient, wallet: rebalancerWallet },
       },
     );
-    await vaultAsRebalancer.write.emergencySendToL2([
-      USDT,
-      10_000_000n,
-      900_000n,
-      800n,
-      addr(otherWallet),
-    ]);
+    await vaultAsRebalancer.write.emergencySendToL2([USDT, 10_000_000n]);
     assert.equal(await bridge.read.lastAmount(), 10_000_000n);
   });
 });

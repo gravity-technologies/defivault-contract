@@ -18,6 +18,16 @@ interface IL1DefiVault {
     error CapExceeded();
     error NativeTransferFailed();
     error UnsafeDestination();
+    error TreasuryTimelockNotSet();
+
+    /// @dev Thrown when `syncStrategyPrincipal` is called after sync has been permanently locked.
+    error PrincipalSyncAlreadyLocked();
+
+    /// @dev Thrown when requested harvest exceeds currently available strategy yield.
+    error YieldNotAvailable();
+
+    /// @dev Thrown when actual harvested amount is below caller-provided `minReceived`.
+    error SlippageExceeded();
 
     // --------- Roles (RBAC) ---------
     // - VAULT_ADMIN: config, register/whitelist strategies (Governance)
@@ -53,6 +63,46 @@ interface IL1DefiVault {
     function pause() external;
 
     function unpause() external;
+
+    // --------- Treasury management (for harvested yield) ---------
+    /// Current treasury recipient for harvested strategy yield.
+    function treasury() external view returns (address);
+
+    /// Timelock contract allowed to execute treasury recipient changes.
+    function treasuryTimelock() external view returns (address);
+
+    /**
+     * @notice Emitted when treasury timelock controller is configured.
+     * @param previousTimelock Previous timelock (zero on first set).
+     * @param newTimelock New treasury timelock contract.
+     */
+    event TreasuryTimelockUpdated(address indexed previousTimelock, address indexed newTimelock);
+
+    /**
+     * @notice Emitted when treasury recipient is changed.
+     * @param previousTreasury Treasury recipient before update.
+     * @param newTreasury Treasury recipient after update.
+     */
+    event TreasuryUpdated(address indexed previousTreasury, address indexed newTreasury);
+
+    /**
+     * @notice Sets the timelock contract that governs treasury changes.
+     * @dev Callable by `VAULT_ADMIN_ROLE`; intended as one-time bootstrap wiring.
+     *      Reverts with `InvalidParam` on zero/non-contract address or if already set.
+     * @param newTimelock Timelock controller contract address.
+     */
+    function setTreasuryTimelock(address newTimelock) external;
+
+    /**
+     * @notice Updates treasury recipient for harvested yield.
+     * @dev Callable only by configured `treasuryTimelock`.
+     *      Reverts with:
+     *      - `TreasuryTimelockNotSet` if timelock is not configured.
+     *      - `Unauthorized` if caller is not `treasuryTimelock`.
+     *      - `InvalidParam` if `newTreasury` is zero, current treasury, or vault address.
+     * @param newTreasury Proposed treasury recipient.
+     */
+    function setTreasury(address newTreasury) external;
 
     // --------- Token support & risk controls ---------
     struct TokenConfig {
@@ -115,6 +165,39 @@ interface IL1DefiVault {
         uint256 reported,
         uint256 actual
     );
+    /**
+     * @notice Emitted when tracked strategy principal changes.
+     * @dev Principal changes on allocate/deallocate flows and explicit sync operations.
+     * @param token Underlying token of the strategy position.
+     * @param strategy Strategy whose principal changed.
+     * @param previousPrincipal Principal value before update.
+     * @param newPrincipal Principal value after update.
+     */
+    event StrategyPrincipalUpdated(
+        address indexed token,
+        address indexed strategy,
+        uint256 previousPrincipal,
+        uint256 newPrincipal
+    );
+
+    /// @notice Emitted when principal sync is permanently disabled.
+    event PrincipalSyncLockActivated();
+
+    /**
+     * @notice Emitted when strategy yield is harvested to treasury.
+     * @param token Underlying token being harvested.
+     * @param strategy Strategy from which yield is withdrawn.
+     * @param treasury Treasury recipient that receives harvested funds.
+     * @param requested Amount requested from strategy.
+     * @param received Actual amount transferred to treasury.
+     */
+    event YieldHarvested(
+        address indexed token,
+        address indexed strategy,
+        address indexed treasury,
+        uint256 requested,
+        uint256 received
+    );
 
     /// Move idle funds into strategy (e.g., supply USDT to Aave -> receive aUSDT).
     function allocateToStrategy(address token, address strategy, uint256 amount) external;
@@ -131,6 +214,67 @@ interface IL1DefiVault {
     /// Emergency unwind: pull everything possible from a strategy for a token (funds remain in vault idle).
     /// Defensive action: callable while paused and when token support is disabled.
     function deallocateAllFromStrategy(address token, address strategy) external returns (uint256 received);
+
+    /**
+     * @notice Returns tracked principal for a strategy position.
+     * @dev Principal tracks net capital attributed to strategy and is used to separate
+     *      principal from harvestable yield.
+     * @param token Underlying token.
+     * @param strategy Strategy address.
+     * @return Tracked principal amount.
+     */
+    function strategyPrincipal(address token, address strategy) external view returns (uint256);
+
+    /**
+     * @notice Returns currently harvestable yield for a strategy position.
+     * @dev Defined as `max(strategyAssets(token, strategy) - strategyPrincipal(token, strategy), 0)`.
+     * @param token Underlying token.
+     * @param strategy Strategy address.
+     * @return Harvestable yield amount.
+     */
+    function harvestableYield(address token, address strategy) external view returns (uint256);
+
+    /**
+     * @notice Withdraws yield from strategy and transfers it to treasury.
+     * @dev Callable by `VAULT_ADMIN_ROLE` and blocked while paused.
+     *      Reverts with:
+     *      - `StrategyNotWhitelisted` if strategy is not withdrawable.
+     *      - `YieldNotAvailable` if `amount` exceeds currently harvestable yield.
+     *      - `SlippageExceeded` if actual received is below `minReceived`.
+     * @param token Underlying token.
+     * @param strategy Strategy address.
+     * @param amount Requested amount to harvest.
+     * @param minReceived Minimum acceptable net amount received by treasury after vault->treasury transfer.
+     * @return received Actual net amount received by treasury.
+     */
+    function harvestYieldFromStrategy(
+        address token,
+        address strategy,
+        uint256 amount,
+        uint256 minReceived
+    ) external returns (uint256 received);
+
+    /**
+     * @notice Sets tracked principal to current strategy assets.
+     * @dev Reconciliation safety valve callable by `VAULT_ADMIN_ROLE`.
+     *      Reverts with `PrincipalSyncAlreadyLocked` after `lockPrincipalSync`.
+     * @param token Underlying token.
+     * @param strategy Strategy address.
+     */
+    function syncStrategyPrincipal(address token, address strategy) external;
+
+    /**
+     * @notice Returns whether principal sync is permanently disabled.
+     * @return True once `lockPrincipalSync` has been executed.
+     */
+    function principalSyncLocked() external view returns (bool);
+
+    /**
+     * @notice Irreversibly disables future calls to `syncStrategyPrincipal`.
+     * @dev Callable by `VAULT_ADMIN_ROLE`.
+     *      Implementations should reject repeated calls.
+     */
+    function lockPrincipalSync() external;
 
     // --------- Rebalancing between L1 vault and L2 exchange ---------
     event RebalanceToL2(

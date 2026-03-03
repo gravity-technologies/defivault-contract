@@ -18,6 +18,7 @@ It covers deployment, role/bootstrap operations, normal operations, emergency ha
 | `allocateToStrategy`        | `ALLOCATOR_ROLE`                        | Yes                  | Yes                                |
 | `deallocateFromStrategy`    | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                 |
 | `deallocateAllFromStrategy` | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                 |
+| `harvestYieldFromStrategy`  | `VAULT_ADMIN_ROLE`                      | Yes                  | No                                 |
 | `rebalanceToL2`             | `REBALANCER_ROLE`                       | Yes                  | Yes                                |
 | `emergencySendToL2`         | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No                   | No                                 |
 
@@ -131,13 +132,33 @@ npm run roles:bootstrap -- \
 
 For additional role members, run the roles module again with a new deployment ID and updated parameter file.
 
+### Step 4: Bootstrap Treasury Timelock
+
+Prepare:
+
+- `ignition/parameters/<env>/treasury-bootstrap.json5` with:
+  - `vaultProxy`
+  - `minDelay`
+  - `proposers`
+  - `executors`
+  - `admin`
+
+Command:
+
+```bash
+npm run deploy:treasury-timelock -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/treasury-bootstrap.json5
+```
+
 ## Post-Deploy Verification Checklist
 
 1. Confirm `paused() == false`.
 2. Confirm expected role holders for all roles.
 3. Confirm `bridgeHub/baseToken/l2ChainId/l2ExchangeRecipient` match intended values.
-4. Confirm token support and strategy whitelist state.
-5. Confirm Ignition deployment state and deployment ID are attached to deployment record.
+4. Confirm `treasuryTimelock()` is set to expected timelock controller.
+5. Confirm token support and strategy whitelist state.
+6. Confirm Ignition deployment state and deployment ID are attached to deployment record.
 
 ## Normal Operations
 
@@ -146,17 +167,60 @@ For additional role members, run the roles module again with a new deployment ID
 - Allocate: `allocateToStrategy(token, strategy, amount)`
 - Partial deallocate: `deallocateFromStrategy(token, strategy, amount)`
 - Full deallocate: `deallocateAllFromStrategy(token, strategy)`
+- Harvest yield to treasury: `harvestYieldFromStrategy(token, strategy, amount, minReceived)`
 
 Operator rules:
 
 - Do not allocate unless token is supported and strategy is whitelisted.
 - Use `totalAssetsStatus(token)`; non-zero `skippedStrategies` indicates degraded reporting.
+- Harvest only tracked excess above principal (`harvestableYield(token, strategy)`).
+- Set harvest `minReceived` based on treasury-side net receipt (post transfer fees), not strategy/vault gross receipt.
+
+Ignition operation modules:
+
+- Harvest yield:
+  - `npm run ops:harvest-yield -- --network <network> --parameters ignition/parameters/<env>/harvest-yield.json5`
+- Treasury update schedule:
+  - `npm run treasury:schedule-update -- --network <network> --parameters ignition/parameters/<env>/treasury-schedule-update.json5`
+- Treasury update execute (after delay):
+  - `npm run treasury:execute-update -- --network <network> --parameters ignition/parameters/<env>/treasury-execute-update.json5`
+
+### Principal and Yield Accounting
+
+The vault maintains per-(token, strategy) principal accounting:
+
+- `strategyPrincipal(token, strategy)`: tracked principal.
+- `harvestableYield(token, strategy)`: `max(strategyAssets - principal, 0)`.
+
+Admin reconciliation controls:
+
+- `syncStrategyPrincipal(token, strategy)` sets principal to current strategy assets.
+- `lockPrincipalSync()` permanently disables future principal sync operations.
+
+### Treasury Management for Harvest Proceeds
+
+Harvest proceeds are transferred to `treasury()`.
+
+Initial value:
+
+- Set to vault `admin` during initialization.
+
+Update method:
+
+- One-time bootstrap: `setTreasuryTimelock(newTimelock)` by `VAULT_ADMIN_ROLE`.
+- Ongoing changes: `setTreasury(newTreasury)` executed by the configured treasury timelock.
+
+Standardized governance requirement:
+
+- `VAULT_ADMIN_ROLE` should be assigned to an OpenZeppelin `TimelockController`
+  (or equivalent delayed governance contract), and `treasuryTimelock` should point
+  to that controller so treasury changes are delayed and cannot be redirected by direct admin calls.
 
 ### L1 -> L2 Top-Up
 
 Use:
 
-- `rebalanceToL2(token, amount, l2TxGasLimit, l2TxGasPerPubdataByte, refundRecipient)`
+- `rebalanceToL2(token, amount)`
 
 Checks:
 
@@ -171,7 +235,7 @@ Checks:
 ### A) Market/protocol stress
 
 1. `pause()`.
-2. Stop risk-on operations (`allocateToStrategy`, `rebalanceToL2`).
+2. Stop risk-on operations (`allocateToStrategy`, `rebalanceToL2`, `harvestYieldFromStrategy`).
 3. Pull funds from strategies (`deallocateFromStrategy` / `deallocateAllFromStrategy`).
 4. If urgent L2 liquidity is needed, execute `emergencySendToL2(...)`.
 5. Reconcile balances and document each action.

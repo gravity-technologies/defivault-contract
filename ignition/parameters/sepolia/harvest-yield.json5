@@ -1,0 +1,12 @@
+{
+  VaultHarvestYieldModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Harvest request
+    token: "0x0000000000000000000000000000000000000000",
+    strategy: "0x0000000000000000000000000000000000000000",
+    amount: "0n",
+    // Minimum treasury-side net receipt after transfer fees
+    minReceived: "0n",
+  },
+}

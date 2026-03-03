@@ -38,7 +38,7 @@ export default buildModule("TokenStrategyModule", (m) => {
     [vaultProxy, aavePool, underlyingToken, aToken, strategyName],
   );
 
-  const strategyProxy = m.contract("GRVTTransparentUpgradeableProxy", [
+  const strategyProxy = m.contract("TestTransparentUpgradeableProxy", [
     strategyImplementation,
     proxyAdmin,
     initializeCalldata,

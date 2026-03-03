@@ -5,7 +5,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  *
  * Purpose:
  * - Deploy GRVTDeFiVault implementation.
- * - Deploy GRVTTransparentUpgradeableProxy.
+ * - Deploy TestTransparentUpgradeableProxy.
  * - Initialize the vault proxy in constructor calldata.
  *
  * Parameters (VaultCoreModule.*):
@@ -30,7 +30,7 @@ export default buildModule("VaultCoreModule", (m) => {
     [deployAdmin, bridgeHub, baseToken, l2ChainId, l2ExchangeRecipient],
   );
 
-  const vaultProxy = m.contract("GRVTTransparentUpgradeableProxy", [
+  const vaultProxy = m.contract("TestTransparentUpgradeableProxy", [
     vaultImplementation,
     deployAdmin,
     initializeCalldata,

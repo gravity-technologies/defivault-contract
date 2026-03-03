@@ -18,26 +18,29 @@ The design enforces strict asset-flow restrictions, strategy whitelisting, and e
 ### High-Level Structure
 
 ```text
-                         +----------------------------------+
-                         |          Governance/Admin        |
-                         |   (DEFAULT_ADMIN, VAULT_ADMIN)   |
-                         +-----------------+----------------+
-                                           |
-                                           v
-+---------------------+      calls     +---------------------+
-|  Rebalancer/Ops     +--------------->+    GRVTDeFiVault    |
-| (REBALANCER/PAUSER) |                | (upgradeable core)  |
-+---------------------+                +----+-----------+----+
-                                            |           |
-                        allocate/deallocate |           | requestL2TransactionTwoBridges(...)
-                                            v           v
-                                   +----------------+  +---------------------------+
-                                   | Yield Strategy |  | BridgeHub + SharedBridge  |
-                                   | (AaveV3 first) |  | (two-bridges request)     |
-                                   +--------+-------+  +-------------+-------------+
-                                            |                        |
-                                            v                        v
-                                    External DeFi venue        L1 custody + L2 routing
+                         +------------------------------------------+
+                         |        Governance / Timelock Admin       |
+                         | (DEFAULT_ADMIN, VAULT_ADMIN via timelock)|
+                         +-------------------+----------------------+
+                                             |
+                                             v
++---------------------+        calls    +---------------------+       bridge to L2
+|  Rebalancer/Ops     +---------------->+    GRVTDeFiVault    +-------------------------------+
+| (REBALANCER/PAUSER) |                 | (upgradeable core)  |                               |
++---------------------+                 +----+-----------+----+                               |
+                                              |           |                                   |
+                          allocate/deallocate |           | harvestYieldFromStrategy          |
+                                              v           v                                   v
+                                     +----------------+  +---------------------------+  +------------------+
+                                     | Yield Strategy |  | BridgeHub + SharedBridge  |  | L2 Exchange Path |
+                                     | (AaveV3 first) |  | (two-bridges request)     |  +------------------+
+                                     +--------+-------+  +-------------+-------------+
+                                              |
+                                              | treasury transfer (post-withdraw)
+                                              v
+                                       +--------------+
+                                       |   Treasury   |
+                                       +--------------+
 ```
 
 ### Fund-Moving Policy Matrix
@@ -47,6 +50,7 @@ The design enforces strict asset-flow restrictions, strategy whitelisting, and e
 | `allocateToStrategy`        | `ALLOCATOR_ROLE`                        | Yes              | Yes                        |
 | `deallocateFromStrategy`    | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                         |
 | `deallocateAllFromStrategy` | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                         |
+| `harvestYieldFromStrategy`  | `VAULT_ADMIN_ROLE`                      | Yes              | No                         |
 | `rebalanceToL2`             | `REBALANCER_ROLE`                       | Yes              | Yes                        |
 | `emergencySendToL2`         | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No               | No                         |
 
@@ -115,6 +119,51 @@ GRVTDeFiVault.deallocateFromStrategy(...)
       +--> vault measures actual received via balance delta (does not trust strategy return value)
       +--> funds return to vault idle balance
 ```
+
+### Yield Harvest Flow (Principal vs Yield)
+
+The vault tracks per-(token, strategy) principal and only allows harvesting the excess:
+
+```text
+principal(token, strategy) = net allocated principal still tracked by vault
+yield(token, strategy) = max(strategy.assets(token) - principal(token, strategy), 0)
+```
+
+Operational behavior:
+
+- `allocateToStrategy` increases tracked principal by measured vault balance delta.
+- `deallocateFromStrategy` / `deallocateAllFromStrategy` reduce principal by measured received amount (capped at current principal).
+- `harvestYieldFromStrategy(token, strategy, amount, minReceived)`:
+  - callable only by `VAULT_ADMIN_ROLE`
+  - blocked when paused
+  - reverts if `amount > harvestableYield(token, strategy)`
+  - withdraws from strategy using vault-side balance-delta accounting
+  - transfers withdrawn funds to `treasury`
+  - enforces `minReceived` against treasury-side net receipt (post transfer fees)
+  - emits treasury-side net receipt in `YieldHarvested.received`
+
+Admin controls for principal accounting:
+
+- `syncStrategyPrincipal(token, strategy)`: set principal to current strategy assets (manual reconciliation tool).
+- `lockPrincipalSync()`: one-way lock that permanently disables future principal sync.
+
+### Treasury Management for Harvested Yield
+
+Harvested yield is sent to `treasury()` (initialized to the vault `admin` at deployment).
+
+Treasury updates are performed via:
+
+- `setTreasuryTimelock(newTimelock)` one-time bootstrap by `VAULT_ADMIN_ROLE`.
+- `setTreasury(newTreasury)` executed by the configured timelock controller.
+
+After bootstrap, treasury changes are timelock-only:
+
+- `setTreasury` is executable only by `treasuryTimelock()`.
+- Direct `VAULT_ADMIN` calls to `setTreasury` are rejected.
+- `newTreasury == address(this)` is rejected to avoid self-directed harvest loops.
+
+For production standardization, use OZ `TimelockController` as `treasuryTimelock`
+and as the holder of `VAULT_ADMIN_ROLE` for delayed governance execution.
 
 ### Normal Rebalance Flow (L1 -> L2 Top-Up)
 
@@ -227,6 +276,38 @@ Bootstrap vault roles:
 npm run roles:bootstrap -- \
   --network sepolia \
   --parameters ignition/parameters/sepolia/roles-bootstrap.json5
+```
+
+Bootstrap treasury timelock:
+
+```shell
+npm run deploy:treasury-timelock -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-bootstrap.json5
+```
+
+Schedule treasury recipient update:
+
+```shell
+npm run treasury:schedule-update -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-schedule-update.json5
+```
+
+Execute treasury recipient update (after delay):
+
+```shell
+npm run treasury:execute-update -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-execute-update.json5
+```
+
+Run yield harvest operation:
+
+```shell
+npm run ops:harvest-yield -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/harvest-yield.json5
 ```
 
 Inspect deployment state:

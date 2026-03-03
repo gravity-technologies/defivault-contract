@@ -42,6 +42,7 @@ import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
  *      Pausing (via PAUSER_ROLE or VAULT_ADMIN_ROLE) blocks *risk-taking* actions:
  *        - `allocateToStrategy`
  *        - `rebalanceToL2`
+ *        - `harvestYieldFromStrategy`
  *      Defensive *exit* actions remain callable at all times, even when paused:
  *        - `deallocateFromStrategy` / `deallocateAllFromStrategy`
  *        - `emergencySendToL2`
@@ -124,8 +125,15 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     // because `MAX_STRATEGIES_PER_TOKEN` caps list length.
     mapping(address token => mapping(address strategy => StrategyConfig cfg)) private _strategyConfigs;
     mapping(address token => address[] strategies) private _tokenStrategies;
+    mapping(address token => mapping(address strategy => uint256 principal)) private _strategyPrincipal;
     // Raw TVL token registry for on-chain discovery and batch reporting.
     address[] private _trackedTokens;
+    /// @dev Recipient for harvested strategy yield.
+    address private _treasury;
+    /// @dev Timelock controller authorized to update treasury recipient.
+    address private _treasuryTimelock;
+    /// @dev One-way switch that disables future principal sync operations.
+    bool private _principalSyncLocked;
 
     /// @dev Reserved storage gap for upgrade-safe layout extension (50 × 32 bytes).
     uint256[50] private __gap;
@@ -212,6 +220,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         _baseToken = baseToken_;
         _l2ChainId = l2ChainId_;
         _l2ExchangeRecipient = l2ExchangeRecipient_;
+        _treasury = admin;
     }
 
     // ============================================= Modifiers ======================================================
@@ -291,6 +300,16 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         return _paused;
     }
 
+    /// @inheritdoc IL1DefiVault
+    function treasury() external view override returns (address) {
+        return _treasury;
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function treasuryTimelock() external view override returns (address) {
+        return _treasuryTimelock;
+    }
+
     /// @dev Accept native ETH that may be accidentally sent to this contract.
     receive() external payable {}
 
@@ -313,6 +332,28 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         if (!_paused) revert InvalidParam();
         _paused = false;
         emit VaultUnpaused(msg.sender);
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function setTreasuryTimelock(address newTimelock) external override onlyVaultAdmin {
+        if (newTimelock == address(0) || newTimelock.code.length == 0 || _treasuryTimelock != address(0)) {
+            revert InvalidParam();
+        }
+        address previousTimelock = _treasuryTimelock;
+        _treasuryTimelock = newTimelock;
+        emit TreasuryTimelockUpdated(previousTimelock, newTimelock);
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function setTreasury(address newTreasury) external override {
+        address timelock = _treasuryTimelock;
+        if (timelock == address(0)) revert TreasuryTimelockNotSet();
+        if (msg.sender != timelock) revert Unauthorized();
+        if (newTreasury == address(0) || newTreasury == _treasury || newTreasury == address(this))
+            revert InvalidParam();
+        address previousTreasury = _treasury;
+        _treasury = newTreasury;
+        emit TreasuryUpdated(previousTreasury, newTreasury);
     }
 
     /// @inheritdoc IL1DefiVault
@@ -382,6 +423,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
 
         if (!exists) {
             delete _strategyConfigs[token][strategy];
+            _setStrategyPrincipal(token, strategy, 0);
             emit StrategyWhitelistUpdated(token, strategy, false, 0);
             _syncTrackedToken(token);
             return;
@@ -399,6 +441,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
             emit StrategyRemovalCheckFailed(token, strategy);
         }
         if (canRemove) {
+            _setStrategyPrincipal(token, strategy, 0);
             _removeStrategy(token, strategy);
             delete _strategyConfigs[token][strategy];
             emit StrategyWhitelistUpdated(token, strategy, false, 0);
@@ -424,6 +467,21 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         if (token == address(0) || strategy == address(0)) revert InvalidParam();
         if (!_canWithdrawFromStrategy(token, strategy)) return 0;
         return IYieldStrategy(strategy).assets(token);
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function strategyPrincipal(address token, address strategy) public view override returns (uint256) {
+        if (token == address(0) || strategy == address(0)) revert InvalidParam();
+        return _strategyPrincipal[token][strategy];
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function harvestableYield(address token, address strategy) public view override returns (uint256) {
+        if (token == address(0) || strategy == address(0)) revert InvalidParam();
+        if (!_canWithdrawFromStrategy(token, strategy)) return 0;
+        uint256 principal = _strategyPrincipal[token][strategy];
+        uint256 assets_ = IYieldStrategy(strategy).assets(token);
+        return assets_ > principal ? assets_ - principal : 0;
     }
 
     /// @inheritdoc IL1DefiVault
@@ -530,7 +588,8 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         StrategyConfig memory sCfg = _strategyConfigs[token][strategy];
         if (!sCfg.whitelisted) revert StrategyNotWhitelisted();
 
-        uint256 idle = idleAssets(token);
+        IERC20 asset = IERC20(token);
+        uint256 idle = asset.balanceOf(address(this));
         if (idle < amount) revert InvalidParam();
 
         if (sCfg.cap != 0) {
@@ -538,9 +597,16 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
             if (current + amount > sCfg.cap) revert CapExceeded();
         }
 
-        IERC20(token).forceApprove(strategy, amount);
+        uint256 beforeBal = asset.balanceOf(address(this));
+        asset.forceApprove(strategy, amount);
         IYieldStrategy(strategy).allocate(token, amount);
-        IERC20(token).forceApprove(strategy, 0);
+        asset.forceApprove(strategy, 0);
+        uint256 afterBal = asset.balanceOf(address(this));
+        if (afterBal > beforeBal) revert InvalidParam();
+
+        uint256 allocated = beforeBal - afterBal;
+        if (allocated == 0) revert InvalidParam();
+        _increaseStrategyPrincipal(token, strategy, allocated);
 
         emit Allocate(token, strategy, amount);
     }
@@ -568,7 +634,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     ) external override nonReentrant onlyAllocatorOrAdmin returns (uint256 received) {
         if (token == address(0) || strategy == address(0) || amount == 0) revert InvalidParam();
         if (!_canWithdrawFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-        received = _deallocateWithBalanceDelta(token, strategy, amount, false);
+        received = _deallocateWithBalanceDelta(token, strategy, amount, false, true);
     }
 
     /**
@@ -588,7 +654,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     ) external override nonReentrant onlyAllocatorOrAdmin returns (uint256 received) {
         if (token == address(0) || strategy == address(0)) revert InvalidParam();
         if (!_canWithdrawFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-        received = _deallocateWithBalanceDelta(token, strategy, type(uint256).max, true);
+        received = _deallocateWithBalanceDelta(token, strategy, type(uint256).max, true, true);
     }
 
     /**
@@ -597,12 +663,14 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
      * @param strategy The strategy to withdraw from.
      * @param requested Requested amount for events (`type(uint256).max` for deallocate-all).
      * @param useAll True to call `deallocateAll`, false to call `deallocate(requested)`.
+     * @param reducePrincipal True to reduce tracked principal by measured received amount.
      */
     function _deallocateWithBalanceDelta(
         address token,
         address strategy,
         uint256 requested,
-        bool useAll
+        bool useAll,
+        bool reducePrincipal
     ) internal returns (uint256 received) {
         IERC20 asset = IERC20(token);
         uint256 beforeBal = asset.balanceOf(address(this));
@@ -616,8 +684,61 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
         if (reported != received) {
             emit StrategyReportedReceivedMismatch(token, strategy, requested, reported, received);
         }
+        if (reducePrincipal) _decreaseStrategyPrincipal(token, strategy, received);
         emit Deallocate(token, strategy, requested, received);
         _syncTrackedToken(token);
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function harvestYieldFromStrategy(
+        address token,
+        address strategy,
+        uint256 amount,
+        uint256 minReceived
+    ) external override nonReentrant whenNotPaused onlyVaultAdmin returns (uint256 received) {
+        if (token == address(0) || strategy == address(0) || amount == 0) revert InvalidParam();
+        if (!_canWithdrawFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
+
+        address treasuryRecipient = _treasury;
+        if (treasuryRecipient == address(0)) revert InvalidParam();
+
+        uint256 maxYield = harvestableYield(token, strategy);
+        if (maxYield == 0 || amount > maxYield) revert YieldNotAvailable();
+
+        uint256 withdrawnToVault = _deallocateWithBalanceDelta(token, strategy, amount, false, false);
+        if (withdrawnToVault > maxYield) revert YieldNotAvailable();
+
+        IERC20 asset = IERC20(token);
+        uint256 treasuryBefore = asset.balanceOf(treasuryRecipient);
+        asset.safeTransfer(treasuryRecipient, withdrawnToVault);
+        uint256 treasuryAfter = asset.balanceOf(treasuryRecipient);
+        if (treasuryAfter < treasuryBefore) revert InvalidParam();
+        received = treasuryAfter - treasuryBefore;
+        if (received < minReceived) revert SlippageExceeded();
+        emit YieldHarvested(token, strategy, treasuryRecipient, amount, received);
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function syncStrategyPrincipal(address token, address strategy) external override onlyVaultAdmin {
+        if (_principalSyncLocked) revert PrincipalSyncAlreadyLocked();
+        if (token == address(0) || strategy == address(0)) revert InvalidParam();
+        if (!_canWithdrawFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
+
+        uint256 assets_ = IYieldStrategy(strategy).assets(token);
+        _setStrategyPrincipal(token, strategy, assets_);
+        _syncTrackedToken(token);
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function principalSyncLocked() external view override returns (bool) {
+        return _principalSyncLocked;
+    }
+
+    /// @inheritdoc IL1DefiVault
+    function lockPrincipalSync() external override onlyVaultAdmin {
+        if (_principalSyncLocked) revert InvalidParam();
+        _principalSyncLocked = true;
+        emit PrincipalSyncLockActivated();
     }
 
     /**
@@ -842,6 +963,46 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     }
 
     /**
+     * @notice Sets tracked principal for a strategy position.
+     * @dev Emits `StrategyPrincipalUpdated` only when value changes.
+     * @param token Underlying token for position.
+     * @param strategy Strategy address.
+     * @param newPrincipal New principal value to store.
+     */
+    function _setStrategyPrincipal(address token, address strategy, uint256 newPrincipal) internal {
+        uint256 previousPrincipal = _strategyPrincipal[token][strategy];
+        if (previousPrincipal == newPrincipal) return;
+        _strategyPrincipal[token][strategy] = newPrincipal;
+        emit StrategyPrincipalUpdated(token, strategy, previousPrincipal, newPrincipal);
+    }
+
+    /**
+     * @notice Increases tracked principal by `delta`.
+     * @param token Underlying token for position.
+     * @param strategy Strategy address.
+     * @param delta Principal increment amount.
+     */
+    function _increaseStrategyPrincipal(address token, address strategy, uint256 delta) internal {
+        if (delta == 0) return;
+        _setStrategyPrincipal(token, strategy, _strategyPrincipal[token][strategy] + delta);
+    }
+
+    /**
+     * @notice Decreases tracked principal by up to `delta`.
+     * @dev Decrease is capped at current principal and never underflows.
+     * @param token Underlying token for position.
+     * @param strategy Strategy address.
+     * @param delta Requested principal decrement amount.
+     */
+    function _decreaseStrategyPrincipal(address token, address strategy, uint256 delta) internal {
+        if (delta == 0) return;
+        uint256 principal = _strategyPrincipal[token][strategy];
+        if (principal == 0) return;
+        uint256 decreaseBy = delta < principal ? delta : principal;
+        _setStrategyPrincipal(token, strategy, principal - decreaseBy);
+    }
+
+    /**
      * @notice Returns true if `strategy` is present in the active strategy list for `token`.
      * @dev Membership is tracked directly in `StrategyConfig.active`.
      */
@@ -907,6 +1068,7 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
                     needed -= got;
                 }
             }
+            _decreaseStrategyPrincipal(token, strategy, got);
             emit Deallocate(token, strategy, request, got);
         }
     }
@@ -952,13 +1114,10 @@ contract GRVTDeFiVault is Initializable, AccessControlUpgradeable, ReentrancyGua
     /**
      * @notice Appends `strategy` to the active strategy list for `token`.
      * @dev Reverts with `CapExceeded` if `_tokenStrategies[token].length == MAX_STRATEGIES_PER_TOKEN`.
-     *      Membership uniqueness is guaranteed by `_isActiveStrategy`.
+     *      Reverts with `InvalidParam` if strategy is already active for token.
      */
     function _addStrategy(address token, address strategy) internal {
-        if (_isActiveStrategy(token, strategy)) {
-            _strategyConfigs[token][strategy].active = true;
-            return;
-        }
+        if (_isActiveStrategy(token, strategy)) revert InvalidParam();
 
         address[] storage list = _tokenStrategies[token];
         if (list.length >= MAX_STRATEGIES_PER_TOKEN) revert CapExceeded();

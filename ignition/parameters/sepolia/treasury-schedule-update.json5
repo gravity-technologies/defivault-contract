@@ -1,0 +1,14 @@
+{
+  TreasuryScheduleUpdateModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Configured vault treasury timelock
+    treasuryTimelock: "0x0000000000000000000000000000000000000000",
+    // Proposed treasury recipient
+    newTreasury: "0x0000000000000000000000000000000000000000",
+    // Timelock operation linkage
+    predecessor: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    delay: "86400n",
+  },
+}

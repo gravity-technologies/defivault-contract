@@ -33,6 +33,10 @@ contract MockOverreportingStrategy is IYieldStrategy {
         reportExtra = extra;
     }
 
+    function setAssets(address token, uint256 amount) external {
+        _trackedAssets[token] = amount;
+    }
+
     function name() external pure returns (string memory) {
         return "OVERREPORTING_STRATEGY";
     }
