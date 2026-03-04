@@ -141,12 +141,13 @@ interface IL1DefiVault {
      */
     function totalAssetsStatus(address token) external view returns (VaultTokenStatus memory);
 
-    /// @notice Returns all currently tracked tokens for raw TVL reporting.
-    /// @dev Tracked-token membership is synchronized on write paths; this read is storage-backed only.
+    /// @notice Returns all currently tracked root-domain tokens for raw TVL reporting discovery.
+    /// @dev Component/receipt tokens are intentionally excluded from this registry.
+    ///      Membership is synchronized on write paths; this read is storage-backed only.
     function getTrackedTokens() external view returns (address[] memory);
 
-    /// @notice Returns whether `token` is currently tracked for raw TVL reporting.
-    /// @dev Tracked-token membership is synchronized on write paths; this read is O(1) mapping check.
+    /// @notice Returns whether `token` is currently tracked as a root-domain token.
+    /// @dev Component/receipt tokens are not tracked by this root registry.
     function isTrackedToken(address token) external view returns (bool);
 
     /// @notice Batch status variant of `totalAssetsStatus`.
