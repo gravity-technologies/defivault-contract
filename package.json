@@ -19,10 +19,14 @@
     "@types/node": "^22.19.11",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.1.7",
-    "viem": "^2.45.2",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.2.1",
+    "viem": "^2.45.2",
     "@typescript/native-preview": "^7.0.0-dev.20260304.1"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "@openzeppelin/contracts-upgradeable": "^5.4.0"
+  }
 }
