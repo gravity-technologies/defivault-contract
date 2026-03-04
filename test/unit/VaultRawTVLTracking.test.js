@@ -98,6 +98,21 @@ describe("GRVTDeFiVault raw TVL tracking", async function () {
     assert.deepEqual(await vault.read.getTrackedTokens(), []);
   });
 
+  it("keeps unsupported token tracked until idle exposure is drained", async function () {
+    const { vault } = await deploySystem();
+    const token = await deployToken("BBB");
+
+    await vault.write.setTokenConfig([token.address, supportedTokenConfig]);
+    await token.write.mint([vault.address, 25n]);
+    await vault.write.setTokenConfig([token.address, unsupportedTokenConfig]);
+
+    assert.equal(await vault.read.isTrackedToken([token.address]), true);
+
+    await vault.write.emergencySendToL2([token.address, 25n]);
+
+    assert.equal(await vault.read.isTrackedToken([token.address]), false);
+  });
+
   it("keeps unsupported token tracked while strategy exposure exists", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("CCC");
