@@ -28,6 +28,12 @@ export default defineConfig({
       type: "edr-simulated",
       chainType: "op",
     },
+    hardhatTest: {
+      type: "edr-simulated",
+      chainType: "l1",
+      // Test-only convenience: vault mock suites deploy oversized contracts.
+      allowUnlimitedContractSize: true,
+    },
     sepolia: {
       type: "http",
       chainType: "l1",
