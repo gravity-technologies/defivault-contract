@@ -19,10 +19,12 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const baseToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
+      18,
     ]);
     const wrappedNative = await viem.deployContract("MockERC20", [
       "Wrapped Ether",
       "WETH",
+      18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
       baseToken.address,
@@ -57,7 +59,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   }
 
   async function deployToken(symbol = "MOCK") {
-    return viem.deployContract("MockERC20", [`${symbol} Token`, symbol]);
+    return viem.deployContract("MockERC20", [`${symbol} Token`, symbol, 18]);
   }
 
   async function deployStrategy() {

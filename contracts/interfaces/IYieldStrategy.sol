@@ -46,19 +46,19 @@ interface IYieldStrategy {
      */
     function principalBearingExposure(address token) external view returns (uint256);
 
-    /// @notice Deposits underlying token from vault into the strategy/protocol.
-    /// @param token Canonical underlying token key.
+    /// @notice Deposits principal token from vault into the strategy/protocol.
+    /// @param token Canonical principal token key.
     /// @param amount Amount to allocate.
     function allocate(address token, uint256 amount) external;
 
-    /// @notice Withdraws underlying token from strategy back to vault.
-    /// @param token Canonical underlying token key.
+    /// @notice Withdraws principal token from strategy back to vault.
+    /// @param token Canonical principal token key.
     /// @param amount Requested amount to deallocate.
     /// @return received Actual amount received by vault.
     function deallocate(address token, uint256 amount) external returns (uint256 received);
 
-    /// @notice Withdraws maximum available amount from strategy back to vault.
-    /// @param token Canonical underlying token key.
+    /// @notice Withdraws maximum available principal token amount from strategy back to vault.
+    /// @param token Canonical principal token key.
     /// @return received Actual amount received by vault.
     function deallocateAll(address token) external returns (uint256 received);
 }
