@@ -51,6 +51,7 @@ import {
  *        - `allocatePrincipalToStrategy`
  *        - `rebalanceNativeToL2`
  *        - `rebalanceErc20ToL2`
+ *        - `harvestYieldFromStrategy`
  *      Defensive *exit* actions remain callable at all times, even when paused:
  *        - `deallocatePrincipalFromStrategy` / `deallocateAllPrincipalFromStrategy`
  *        - `emergencyNativeToL2`
@@ -160,6 +161,11 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     // storage-backed and do not discover tokens by calling strategies at read time.
     address[] private _trackedPrincipalTokens;
     mapping(address token => bool tracked) private _trackedPrincipalTokenSet;
+    // Optional admin override for tracked-principal signal (break-glass only).
+    mapping(address token => bool enabled) private _trackedPrincipalOverrideEnabled;
+    mapping(address token => bool forceTrack) private _trackedPrincipalOverrideValue;
+    /// @dev Timelock controller authorized to update yield recipient.
+    address private _yieldRecipientTimelock;
 
     /// @dev Reserved storage gap for upgrade-safe layout extension (50 × 32 bytes).
     uint256[50] private __gap;
@@ -359,6 +365,16 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (msg.sender != _wrappedNativeToken) revert InvalidParam();
     }
 
+    /// @inheritdoc IL1TreasuryVault
+    function yieldRecipient() external view override returns (address) {
+        return _yieldRecipient;
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function yieldRecipientTimelock() external view override returns (address) {
+        return _yieldRecipientTimelock;
+    }
+
     /// @dev Reject unexpected calldata-bearing native sends.
     fallback() external payable {
         revert InvalidParam();
@@ -384,6 +400,31 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (!_paused) revert InvalidParam();
         _paused = false;
         emit VaultUnpaused(msg.sender);
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function setYieldRecipientTimelock(address newTimelock) external override onlyVaultAdmin {
+        if (newTimelock == address(0) || newTimelock.code.length == 0 || _yieldRecipientTimelock != address(0)) {
+            revert InvalidParam();
+        }
+        address previousTimelock = _yieldRecipientTimelock;
+        _yieldRecipientTimelock = newTimelock;
+        emit YieldRecipientTimelockUpdated(previousTimelock, newTimelock);
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function setYieldRecipient(address newYieldRecipient) external override {
+        address timelock = _yieldRecipientTimelock;
+        if (timelock == address(0)) revert YieldRecipientTimelockNotSet();
+        if (msg.sender != timelock) revert Unauthorized();
+        if (
+            newYieldRecipient == address(0) ||
+            newYieldRecipient == _yieldRecipient ||
+            newYieldRecipient == address(this)
+        ) revert InvalidParam();
+        address previousYieldRecipient = _yieldRecipient;
+        _yieldRecipient = newYieldRecipient;
+        emit YieldRecipientUpdated(previousYieldRecipient, newYieldRecipient);
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -508,6 +549,25 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
+    function strategyPrincipal(address token, address strategy) public view override returns (uint256) {
+        address canonicalToken = _requirePrincipalToken(token);
+        if (strategy == address(0)) revert InvalidParam();
+        return _strategyPrincipal[canonicalToken][strategy];
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function harvestableYield(address token, address strategy) public view override returns (uint256) {
+        address canonicalToken = _requirePrincipalToken(token);
+        if (strategy == address(0)) revert InvalidParam();
+        if (!_canWithdrawPrincipalFromStrategy(canonicalToken, strategy)) return 0;
+        (bool ok, uint256 exposure) = _readStrategyExposure(canonicalToken, strategy);
+        if (!ok) revert InvalidStrategyExposureRead(canonicalToken, strategy);
+        uint256 principal = _strategyPrincipal[canonicalToken][strategy];
+        uint256 effectivePrincipal = principal < exposure ? principal : exposure;
+        return exposure - effectivePrincipal;
+    }
+
+    /// @inheritdoc IL1TreasuryVault
     function totalExactAssetsStatus(address token) external view override returns (VaultTokenStatus memory status) {
         address canonicalToken = _canonicalToken(token);
         if (canonicalToken == address(0)) revert InvalidParam();
@@ -535,6 +595,26 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             if (canonicalToken == address(0)) revert InvalidParam();
             statuses[i] = _buildTokenStatus(canonicalToken);
         }
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function setTrackedPrincipalOverride(
+        address token,
+        bool enabled,
+        bool forceTrack
+    ) external override onlyVaultAdmin {
+        address principalToken = _requirePrincipalToken(token);
+
+        if (enabled) {
+            _trackedPrincipalOverrideEnabled[principalToken] = true;
+            _trackedPrincipalOverrideValue[principalToken] = forceTrack;
+        } else {
+            delete _trackedPrincipalOverrideEnabled[principalToken];
+            delete _trackedPrincipalOverrideValue[principalToken];
+        }
+
+        emit TrackedPrincipalOverrideUpdated(principalToken, enabled, forceTrack);
+        _afterPrincipalTokenBalanceChange(principalToken);
     }
 
     /**
@@ -607,10 +687,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         IERC20(canonicalToken).forceApprove(strategy, amount);
         IYieldStrategy(strategy).allocate(canonicalToken, amount);
         IERC20(canonicalToken).forceApprove(strategy, 0);
-
-        uint256 principal = _strategyPrincipal[canonicalToken][strategy];
-        if (amount > type(uint256).max - principal) revert InvalidParam();
-        _strategyPrincipal[canonicalToken][strategy] = principal + amount;
+        _increaseStrategyPrincipal(canonicalToken, strategy, amount);
         emit PrincipalAllocatedToStrategy(canonicalToken, strategy, amount);
         _afterPrincipalTokenBalanceChange(canonicalToken);
     }
@@ -639,7 +716,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address canonicalToken = _requirePrincipalToken(token);
         if (strategy == address(0) || amount == 0) revert InvalidParam();
         if (!_canWithdrawPrincipalFromStrategy(canonicalToken, strategy)) revert StrategyNotWhitelisted();
-        received = _deallocateWithBalanceDelta(canonicalToken, strategy, amount, false);
+        received = _deallocateWithBalanceDelta(canonicalToken, strategy, amount, false, true, true);
     }
 
     /**
@@ -660,21 +737,25 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address canonicalToken = _requirePrincipalToken(token);
         if (strategy == address(0)) revert InvalidParam();
         if (!_canWithdrawPrincipalFromStrategy(canonicalToken, strategy)) revert StrategyNotWhitelisted();
-        received = _deallocateWithBalanceDelta(canonicalToken, strategy, type(uint256).max, true);
+        received = _deallocateWithBalanceDelta(canonicalToken, strategy, type(uint256).max, true, true, true);
     }
 
     /**
      * @notice Shared deallocation accounting for normal and deallocate-all paths.
-     * @param token The underlying token being withdrawn.
+     * @param token The principal token being withdrawn.
      * @param strategy The strategy to withdraw from.
      * @param requested Requested amount for events (`type(uint256).max` for deallocate-all).
      * @param useAll True to call `deallocateAll`, false to call `deallocate(requested)`.
+     * @param reducePrincipal True to reduce tracked principal by measured received amount.
+     * @param syncPrincipalTracking True to run tracked-principal sync after state updates.
      */
     function _deallocateWithBalanceDelta(
         address token,
         address strategy,
         uint256 requested,
-        bool useAll
+        bool useAll,
+        bool reducePrincipal,
+        bool syncPrincipalTracking
     ) internal returns (uint256 received) {
         IERC20 asset = IERC20(token);
         uint256 beforeBal = asset.balanceOf(address(this));
@@ -688,9 +769,79 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (reported != received) {
             emit StrategyReportedReceivedMismatch(token, strategy, requested, reported, received);
         }
+        if (reducePrincipal) _decreaseStrategyPrincipal(token, strategy, received);
         emit PrincipalDeallocatedFromStrategy(token, strategy, requested, received);
         _applyPrincipalWriteDown(token, strategy);
-        _afterPrincipalTokenBalanceChange(token);
+        if (syncPrincipalTracking) _afterPrincipalTokenBalanceChange(token);
+    }
+
+    /**
+     * @notice Harvests strategy yield and pays proceeds to configured yield recipient.
+     * @dev Callable by `VAULT_ADMIN_ROLE` and blocked while paused.
+     *      Harvest deallocates from strategy without changing tracked principal, then pays yield recipient:
+     *      ERC20 for non-wrapped-native principal, native ETH for wrapped-native principal.
+     * @param token Canonical principal token key (ERC20).
+     * @param strategy Strategy source.
+     * @param amount Requested harvest amount from strategy.
+     * @param minReceived Minimum net amount that must reach yield recipient.
+     * @return received Net amount received by yield recipient.
+     */
+    function harvestYieldFromStrategy(
+        address token,
+        address strategy,
+        uint256 amount,
+        uint256 minReceived
+    ) external override nonReentrant whenNotPaused onlyVaultAdmin returns (uint256 received) {
+        address canonicalToken = _requirePrincipalToken(token);
+        if (strategy == address(0) || amount == 0) revert InvalidParam();
+        if (!_canWithdrawPrincipalFromStrategy(canonicalToken, strategy)) revert StrategyNotWhitelisted();
+
+        address recipient = _yieldRecipient;
+        if (recipient == address(0)) revert InvalidParam();
+
+        uint256 maxYield = harvestableYield(canonicalToken, strategy);
+        if (maxYield == 0 || amount > maxYield) revert YieldNotAvailable();
+
+        uint256 withdrawnToVault = _deallocateWithBalanceDelta(canonicalToken, strategy, amount, false, false, false);
+        if (withdrawnToVault > maxYield) revert YieldNotAvailable();
+
+        if (canonicalToken == _wrappedNativeToken) {
+            uint256 recipientBefore = recipient.balance;
+            IWrappedNative(_wrappedNativeToken).withdraw(withdrawnToVault);
+            (bool ok, ) = recipient.call{value: withdrawnToVault}("");
+            if (!ok) revert NativeTransferFailed();
+            uint256 recipientAfter = recipient.balance;
+            if (recipientAfter < recipientBefore) revert InvalidParam();
+            received = recipientAfter - recipientBefore;
+        } else {
+            IERC20 asset = IERC20(canonicalToken);
+            uint256 recipientBefore = asset.balanceOf(recipient);
+            asset.safeTransfer(recipient, withdrawnToVault);
+            uint256 recipientAfter = asset.balanceOf(recipient);
+            if (recipientAfter < recipientBefore) revert InvalidParam();
+            received = recipientAfter - recipientBefore;
+        }
+        if (received < minReceived) revert SlippageExceeded();
+        emit YieldHarvested(canonicalToken, strategy, recipient, amount, received);
+        // Harvest first deallocates into vault idle, then pays yield recipient.
+        // Sync after payout so unsupported principal tokens can untrack when exposure reaches zero.
+        _afterPrincipalTokenBalanceChange(canonicalToken);
+    }
+
+    /**
+     * @notice Re-syncs tracked principal for one `(principalToken, strategy)` pair to current scalar exposure.
+     * @param token Canonical principal token key (ERC20).
+     * @param strategy Strategy address.
+     */
+    function syncStrategyPrincipal(address token, address strategy) external override onlyVaultAdmin {
+        address canonicalToken = _requirePrincipalToken(token);
+        if (strategy == address(0)) revert InvalidParam();
+        if (!_canWithdrawPrincipalFromStrategy(canonicalToken, strategy)) revert StrategyNotWhitelisted();
+
+        (bool ok, uint256 exposure) = _readStrategyExposure(canonicalToken, strategy);
+        if (!ok) revert InvalidStrategyExposureRead(canonicalToken, strategy);
+        _setStrategyPrincipal(canonicalToken, strategy, exposure);
+        _afterPrincipalTokenBalanceChange(canonicalToken);
     }
 
     /**
@@ -862,6 +1013,18 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /**
+     * @notice Reads principal-bearing scalar exposure from strategy.
+     * @dev Returns `(false, 0)` on strategy read failure.
+     */
+    function _readStrategyExposure(address token, address strategy) internal view returns (bool ok, uint256 exposure) {
+        try IYieldStrategy(strategy).principalBearingExposure(token) returns (uint256 value) {
+            return (true, value);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /**
      * @notice Returns whether a token should be retained as a tracked principal token.
      * @dev Conservative on strategy read failures to avoid under-reporting.
      */
@@ -877,16 +1040,14 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     function _hasAnyPrincipalExposure(address token) internal view returns (bool) {
         if (idleTokenBalance(token) != 0) return true;
 
-        address[] storage list = _activeStrategies;
+        // Bounded by MAX_STRATEGIES_PER_TOKEN because this scans only token-domain active strategies.
+        address[] storage list = _principalTokenStrategies[token];
         for (uint256 i = 0; i < list.length; ++i) {
-            (bool ok, uint256 exactAmount) = _readStrategyExactComponent(token, list[i]);
-            if (!ok) return true;
-            if (exactAmount != 0) return true;
-            try IYieldStrategy(list[i]).principalBearingExposure(token) returns (uint256 exposure) {
-                if (exposure != 0) return true;
-            } catch {
+            (bool ok, uint256 exposure) = _readStrategyExposure(token, list[i]);
+            if (!ok) {
                 return true;
             }
+            if (exposure != 0) return true;
         }
         return false;
     }
@@ -919,6 +1080,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     function _reconcileTrackedPrincipalToken(address token) internal {
         bool shouldTrack = _shouldTrackPrincipalToken(token);
         bool currentlyTracked = _trackedPrincipalTokenSet[token];
+        if (_trackedPrincipalOverrideEnabled[token]) shouldTrack = _trackedPrincipalOverrideValue[token];
         if (shouldTrack && !currentlyTracked) {
             _addTrackedPrincipalToken(token);
             emit TrackedPrincipalTokenUpdated(token, true);
@@ -1100,8 +1262,48 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         }
 
         if (previousPrincipal <= exposureAfter) return;
-        _strategyPrincipal[token][strategy] = exposureAfter;
+        _setStrategyPrincipal(token, strategy, exposureAfter);
         emit StrategyPrincipalWrittenDown(token, strategy, previousPrincipal, exposureAfter, exposureAfter);
+    }
+
+    /**
+     * @notice Sets tracked principal for a strategy position.
+     * @dev Emits `StrategyPrincipalUpdated` only when value changes.
+     * @param token Principal token for position.
+     * @param strategy Strategy address.
+     * @param newPrincipal New principal value to store.
+     */
+    function _setStrategyPrincipal(address token, address strategy, uint256 newPrincipal) internal {
+        uint256 previousPrincipal = _strategyPrincipal[token][strategy];
+        if (previousPrincipal == newPrincipal) return;
+        _strategyPrincipal[token][strategy] = newPrincipal;
+        emit StrategyPrincipalUpdated(token, strategy, previousPrincipal, newPrincipal);
+    }
+
+    /**
+     * @notice Increases tracked principal by `delta`.
+     * @param token Principal token for position.
+     * @param strategy Strategy address.
+     * @param delta Principal increment amount.
+     */
+    function _increaseStrategyPrincipal(address token, address strategy, uint256 delta) internal {
+        if (delta == 0) return;
+        _setStrategyPrincipal(token, strategy, _strategyPrincipal[token][strategy] + delta);
+    }
+
+    /**
+     * @notice Decreases tracked principal by up to `delta`.
+     * @dev Decrease is capped at current principal and never underflows.
+     * @param token Principal token for position.
+     * @param strategy Strategy address.
+     * @param delta Requested principal decrement amount.
+     */
+    function _decreaseStrategyPrincipal(address token, address strategy, uint256 delta) internal {
+        if (delta == 0) return;
+        uint256 principal = _strategyPrincipal[token][strategy];
+        if (principal == 0) return;
+        uint256 decreaseBy = delta < principal ? delta : principal;
+        _setStrategyPrincipal(token, strategy, principal - decreaseBy);
     }
 
     /**
@@ -1180,6 +1382,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
                     needed -= got;
                 }
             }
+            _decreaseStrategyPrincipal(token, strategy, got);
             emit PrincipalDeallocatedFromStrategy(token, strategy, request, got);
             _applyPrincipalWriteDown(token, strategy);
             _afterPrincipalTokenBalanceChange(token);

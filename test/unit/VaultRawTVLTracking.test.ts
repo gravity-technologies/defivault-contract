@@ -11,7 +11,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   const supportedTokenConfig = { supported: true };
   const unsupportedTokenConfig = { supported: false };
 
-  function strategyConfig(whitelisted, cap = 0n) {
+  function strategyConfig(whitelisted: boolean, cap = 0n) {
     return { whitelisted, active: false, cap };
   }
 
@@ -62,11 +62,17 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     return viem.deployContract("MockERC20", [`${symbol} Token`, symbol, 18]);
   }
 
-  async function deployStrategy() {
-    return viem.deployContract("MockYieldStrategy");
+  async function deployStrategy(vault: { address: `0x${string}` }) {
+    return viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "TVL_STRAT",
+    ]);
   }
 
-  async function decodeVaultLogs(vault, txHash) {
+  async function decodeVaultLogs(
+    vault: { address: `0x${string}`; abi: readonly unknown[] },
+    txHash: `0x${string}`,
+  ): Promise<Array<{ eventName: string; args: Record<string, unknown> }>> {
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: txHash,
     });
@@ -85,7 +91,12 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
           return null;
         }
       })
-      .filter(Boolean);
+      .filter(
+        (
+          decoded,
+        ): decoded is { eventName: string; args: Record<string, unknown> } =>
+          decoded !== null,
+      );
   }
 
   it("tracks supported tokens and removes unsupported zero-exposure tokens", async function () {
@@ -148,7 +159,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("keeps unsupported token tracked while strategy exposure exists", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("CCC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,
@@ -183,11 +194,54 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     );
   });
 
+  it("supports break-glass root tracking override for strategy-read failure pinning", async function () {
+    const { vault } = await deploySystem();
+    const token = await deployToken("PIN");
+    const strategy = await deployStrategy(vault);
+
+    await vault.write.setPrincipalTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.setPrincipalStrategyWhitelist([
+      token.address,
+      strategy.address,
+      strategyConfig(true),
+    ]);
+    await strategy.write.setAssets([token.address, 5n]);
+    await strategy.write.setRevertAssets([token.address, true]);
+
+    await vault.write.setPrincipalTokenConfig([
+      token.address,
+      unsupportedTokenConfig,
+    ]);
+    assert.equal(
+      await vault.read.isTrackedPrincipalToken([token.address]),
+      true,
+    );
+
+    await vault.write.setTrackedPrincipalOverride([token.address, true, false]);
+    assert.equal(
+      await vault.read.isTrackedPrincipalToken([token.address]),
+      false,
+    );
+
+    await vault.write.setTrackedPrincipalOverride([
+      token.address,
+      false,
+      false,
+    ]);
+    assert.equal(
+      await vault.read.isTrackedPrincipalToken([token.address]),
+      true,
+    );
+  });
+
   it("returns batch raw totals for provided tokens", async function () {
     const { vault } = await deploySystem();
     const tokenA = await deployToken("DDD");
     const tokenB = await deployToken("EEE");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       tokenA.address,
@@ -223,7 +277,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("HHH");
     const receiptToken = await deployToken("AUS");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       underlying.address,
@@ -257,7 +311,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("UKY");
     const receiptToken = await deployToken("RCP");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       underlying.address,
@@ -293,7 +347,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("RSU");
     const receiptToken = await deployToken("RSR");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       underlying.address,
@@ -321,7 +375,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("QKY");
     const receiptToken = await deployToken("QRC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       underlying.address,
@@ -350,7 +404,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("WTY");
     const receiptToken = await deployToken("WRC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     const allocatorRole = await vault.read.ALLOCATOR_ROLE();
     await vault.write.grantRole([allocatorRole, admin.account.address]);
@@ -412,13 +466,13 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     );
   });
 
-  it("ignores non-root multi-token component shape for tracked-token discovery", async function () {
+  it("ignores non-principal multi-token component shape for tracked-principal discovery", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("MSU");
     const receiptA = await deployToken("MSA");
     const receiptB = await deployToken("MSB");
     const receiptC = await deployToken("MSC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       underlying.address,
@@ -482,7 +536,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("SKY");
     const receiptToken = await deployToken("SRC");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       underlying.address,
@@ -514,7 +568,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("normalizes strategyAssetBreakdown read failures to InvalidStrategyAssetsRead", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("ERR");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,
@@ -531,7 +585,6 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
       vault.read.strategyAssetBreakdown([token.address, strategy.address]),
       vault,
       "InvalidStrategyAssetsRead",
-      [token.address, strategy.address],
     );
   });
 
@@ -540,7 +593,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const tokenA = await deployToken("III");
     const tokenB = await deployToken("JJJ");
     const receiptToken = await deployToken("AKK");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       tokenA.address,
@@ -578,7 +631,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     const { vault } = await deploySystem();
     const tokenRevert = await deployToken("FFF");
     const tokenOverflow = await deployToken("GGG");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       tokenRevert.address,
@@ -632,7 +685,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("updates cap while remaining whitelisted on repeated whitelist", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("LC1");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,
@@ -661,7 +714,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("moves strategy into withdraw-only when de-whitelisted with remaining exposure", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("LC2");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,
@@ -701,7 +754,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("updates withdraw-only cap on repeated de-whitelist calls", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("LC3");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,
@@ -737,7 +790,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("emits StrategyRemovalCheckFailed and stays withdraw-only when exposure probe reverts", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("LC4");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,
@@ -773,7 +826,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   it("removes strategy from registry when de-whitelisted after exposure is zero", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("LC5");
-    const strategy = await deployStrategy();
+    const strategy = await deployStrategy(vault);
 
     await vault.write.setPrincipalTokenConfig([
       token.address,

@@ -28,6 +28,12 @@ interface IL1TreasuryVault {
     error InvalidStrategyAssetsRead(address token, address strategy);
     /// @dev Strategy scalar exposure read failed.
     error InvalidStrategyExposureRead(address token, address strategy);
+    /// @dev Harvest output is lower than required `minReceived`.
+    error SlippageExceeded();
+    /// @dev Requested harvest exceeds currently harvestable amount.
+    error YieldNotAvailable();
+    /// @dev Yield-recipient timelock is not configured.
+    error YieldRecipientTimelockNotSet();
 
     // --------- Roles (RBAC) ---------
     /// @notice Role allowed to configure vault policy and privileged controls.
@@ -61,6 +67,12 @@ interface IL1TreasuryVault {
     /// @notice Wrapped native token used for internal ERC20 accounting of native exposure.
     function wrappedNativeToken() external view returns (address);
 
+    /// @notice Recipient that receives harvested yield and native sweep funds.
+    function yieldRecipient() external view returns (address);
+
+    /// @notice Timelock controller authorized to update yield recipient.
+    function yieldRecipientTimelock() external view returns (address);
+
     /// @notice Returns true when vault is paused.
     function paused() external view returns (bool);
 
@@ -71,6 +83,14 @@ interface IL1TreasuryVault {
     /// @notice Exits paused mode.
     /// @dev Implementations should restrict this call to pauser/admin authority.
     function unpause() external;
+
+    /// @notice Sets one-time timelock authority for yield-recipient updates.
+    /// @param newTimelock Timelock controller address.
+    function setYieldRecipientTimelock(address newTimelock) external;
+
+    /// @notice Updates configured yield recipient via timelock governance.
+    /// @param newYieldRecipient New recipient address.
+    function setYieldRecipient(address newYieldRecipient) external;
 
     // --------- Token support & risk controls ---------
     /// @notice Principal-token enablement configuration.
@@ -194,6 +214,32 @@ interface IL1TreasuryVault {
     /// @notice Emitted when principal write-down is skipped due to exposure read failure.
     event StrategyPrincipalWriteDownSkipped(address indexed principalToken, address indexed strategy);
 
+    /// @notice Emitted when tracked principal value changes for a `(token, strategy)` pair.
+    event StrategyPrincipalUpdated(
+        address indexed principalToken,
+        address indexed strategy,
+        uint256 previousPrincipal,
+        uint256 newPrincipal
+    );
+
+    /// @notice Emitted when tracked-principal override policy is changed.
+    event TrackedPrincipalOverrideUpdated(address indexed principalToken, bool enabled, bool forceTrack);
+
+    /// @notice Emitted when harvest payout is transferred to yield recipient.
+    event YieldHarvested(
+        address indexed principalToken,
+        address indexed strategy,
+        address indexed yieldRecipient,
+        uint256 requested,
+        uint256 received
+    );
+
+    /// @notice Emitted when yield-recipient timelock is configured.
+    event YieldRecipientTimelockUpdated(address indexed previousTimelock, address indexed newTimelock);
+
+    /// @notice Emitted when yield recipient is updated via timelock.
+    event YieldRecipientUpdated(address indexed previousYieldRecipient, address indexed newYieldRecipient);
+
     /// @notice Emitted when forced/native-dust ETH is swept to yield recipient.
     event NativeSweptToYieldRecipient(address indexed yieldRecipient, uint256 amount);
 
@@ -222,6 +268,26 @@ interface IL1TreasuryVault {
         address principalToken,
         address strategy
     ) external returns (uint256 received);
+
+    /// @notice Returns tracked principal baseline for one `(principalToken, strategy)` pair.
+    function strategyPrincipal(address principalToken, address strategy) external view returns (uint256);
+
+    /// @notice Returns currently harvestable yield for one `(principalToken, strategy)` pair.
+    function harvestableYield(address principalToken, address strategy) external view returns (uint256);
+
+    /// @notice Harvests strategy yield and pays configured yield recipient.
+    function harvestYieldFromStrategy(
+        address principalToken,
+        address strategy,
+        uint256 amount,
+        uint256 minReceived
+    ) external returns (uint256 received);
+
+    /// @notice Re-syncs tracked principal to strategy scalar exposure for one pair.
+    function syncStrategyPrincipal(address principalToken, address strategy) external;
+
+    /// @notice Sets break-glass tracked-principal override for one token.
+    function setTrackedPrincipalOverride(address principalToken, bool enabled, bool forceTrack) external;
 
     /// @notice Sweeps native ETH balance from vault to yield recipient.
     /// @param amount Native ETH amount to transfer.
