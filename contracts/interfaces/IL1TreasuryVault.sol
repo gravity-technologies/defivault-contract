@@ -164,7 +164,7 @@ interface IL1TreasuryVault {
     /// @notice Emitted when principal is deallocated from strategy back to vault idle.
     /// @param principalToken Principal token domain.
     /// @param strategy Strategy source.
-    /// @param requested Requested withdrawal amount (or max sentinel by implementation).
+    /// @param requested Requested withdrawal amount (or implementation max marker).
     /// @param received Actual measured amount received by vault.
     event PrincipalDeallocatedFromStrategy(
         address indexed principalToken,
@@ -194,8 +194,8 @@ interface IL1TreasuryVault {
     /// @notice Emitted when principal write-down is skipped due to exposure read failure.
     event StrategyPrincipalWriteDownSkipped(address indexed principalToken, address indexed strategy);
 
-    /// @notice Emitted when forced/native-dust ETH is swept to treasury recipient.
-    event NativeSweptToTreasury(address indexed treasury, uint256 amount);
+    /// @notice Emitted when forced/native-dust ETH is swept to yield recipient.
+    event NativeSweptToYieldRecipient(address indexed yieldRecipient, uint256 amount);
 
     /// @notice Allocates vault idle principal into an approved strategy.
     /// @param principalToken Principal token to allocate.
@@ -223,9 +223,9 @@ interface IL1TreasuryVault {
         address strategy
     ) external returns (uint256 received);
 
-    /// @notice Sweeps native ETH balance from vault to treasury.
+    /// @notice Sweeps native ETH balance from vault to yield recipient.
     /// @param amount Native ETH amount to transfer.
-    function sweepNativeToTreasury(uint256 amount) external;
+    function sweepNativeToYieldRecipient(uint256 amount) external;
 
     // --------- Rebalancing between L1 vault and L2 exchange ---------
     /// @notice Emitted for normal native bridge rebalances.

@@ -4,11 +4,25 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "hardhat test",
+    "test": "hardhat test --network hardhatTest",
     "typecheck": "tsgo --noEmit",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
-    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\""
+    "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\"",
+    "slither": "bash scripts/slither.sh",
+    "deploy:vault": "hardhat ignition deploy ./ignition/modules/VaultCore.ts",
+    "deploy:strategy": "hardhat ignition deploy ./ignition/modules/StrategyCore.ts",
+    "deploy:token-strategy": "hardhat ignition deploy ./ignition/modules/TokenStrategy.ts",
+    "deploy:native-ingress": "hardhat ignition deploy ./ignition/modules/NativeIngress.ts",
+    "config:token": "hardhat ignition deploy ./ignition/modules/VaultTokenConfig.ts",
+    "upgrade:vault": "hardhat ignition deploy ./ignition/modules/VaultUpgrade.ts",
+    "upgrade:strategy": "hardhat ignition deploy ./ignition/modules/StrategyUpgrade.ts",
+    "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts",
+    "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost",
+    "deploy:yield-recipient-timelock": "hardhat ignition deploy ./ignition/modules/VaultTreasuryTimelock.ts",
+    "yield-recipient:schedule-update": "hardhat ignition deploy ./ignition/modules/TreasuryScheduleUpdate.ts",
+    "yield-recipient:execute-update": "hardhat ignition deploy ./ignition/modules/TreasuryExecuteUpdate.ts",
+    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,10 +33,14 @@
     "@types/node": "^22.19.11",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.1.7",
-    "viem": "^2.45.2",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.2.1",
+    "viem": "^2.45.2",
     "@typescript/native-preview": "^7.0.0-dev.20260304.1"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "@openzeppelin/contracts-upgradeable": "^5.4.0"
+  }
 }
