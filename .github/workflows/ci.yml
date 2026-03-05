@@ -58,6 +58,9 @@ jobs:
       - name: Compile contracts (typed artifacts for viem)
         run: npm run compile
 
+      - name: Enforce L1 runtime size limit (vault)
+        run: npm run size:check:vault
+
       - name: Check TypeScript types
         run: npm run typecheck
 

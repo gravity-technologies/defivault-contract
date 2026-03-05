@@ -7,6 +7,9 @@
     "test": "hardhat test --network hardhatTest",
     "typecheck": "tsgo --noEmit",
     "compile": "hardhat compile",
+    "size:contracts": "HARDHAT_BUILD_PROFILE=production hardhat contract-size list",
+    "size:check:vault": "HARDHAT_BUILD_PROFILE=production hardhat contract-size list --no-compile",
+    "check:all": "npm run clean && npm run compile && npm run size:check:vault && npm run typecheck && npm run format && npm run test",
     "clean": "hardhat clean",
     "format": "prettier --write \"**/*.{js,mjs,cjs,ts,sol,json,json5,md,yml,yaml}\"",
     "slither": "bash scripts/slither.sh",
@@ -30,13 +33,15 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-ignition": "^3.0.7",
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.2",
+    "@nomicfoundation/hardhat-utils": "^3.0.6",
+    "@solidstate/hardhat-contract-sizer": "^3.0.0",
     "@types/node": "^22.19.11",
+    "@typescript/native-preview": "^7.0.0-dev.20260304.1",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
     "hardhat": "^3.1.7",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.2.1",
-    "viem": "^2.45.2",
-    "@typescript/native-preview": "^7.0.0-dev.20260304.1"
+    "viem": "^2.45.2"
   },
   "type": "module",
   "dependencies": {

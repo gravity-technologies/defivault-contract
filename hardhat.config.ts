@@ -1,20 +1,32 @@
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
+import HardhatContractSizer from "@solidstate/hardhat-contract-sizer";
 import { configVariable, defineConfig } from "hardhat/config";
 
+const SOLIDITY_OPTIMIZER_SETTINGS = {
+  enabled: true,
+  runs: 200,
+} as const;
+
 export default defineConfig({
-  plugins: [hardhatToolboxViemPlugin],
+  plugins: [hardhatToolboxViemPlugin, HardhatContractSizer],
+  contractSizer: {
+    strict: true,
+    only: [/GRVTL1TreasuryVault/],
+    runOnCompile: false,
+    unit: "B",
+  },
   solidity: {
     profiles: {
       default: {
         version: "0.8.34",
+        settings: {
+          optimizer: SOLIDITY_OPTIMIZER_SETTINGS,
+        },
       },
       production: {
         version: "0.8.34",
         settings: {
-          optimizer: {
-            enabled: true,
-            runs: 200,
-          },
+          optimizer: SOLIDITY_OPTIMIZER_SETTINGS,
         },
       },
     },
