@@ -64,13 +64,13 @@ Native ingress path via NativeWrap (`NativeToWrappedIngress`) into canonical wra
 
 ### Fund-Moving Policy Matrix
 
-| Function                                     | Required caller                         | Blocked by pause | Requires `token.supported` |
-| -------------------------------------------- | --------------------------------------- | ---------------- | -------------------------- |
-| `allocatePrincipalToStrategy`                | `ALLOCATOR_ROLE`                        | Yes              | Yes                        |
-| `deallocatePrincipalFromStrategy`            | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                         |
-| `deallocateAllPrincipalFromStrategy`         | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                         |
-| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                       | Yes              | Yes                        |
-| `emergencyNativeToL2` / `emergencyErc20ToL2` | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No               | No                         |
+| Function                                     | Required caller                         | Blocked by pause | Requires `principalToken.supported` |
+| -------------------------------------------- | --------------------------------------- | ---------------- | ----------------------------------- |
+| `allocatePrincipalToStrategy`                | `ALLOCATOR_ROLE`                        | Yes              | Yes                                 |
+| `deallocatePrincipalFromStrategy`            | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                                  |
+| `deallocateAllPrincipalFromStrategy`         | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                                  |
+| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                       | Yes              | Yes                                 |
+| `emergencyNativeToL2` / `emergencyErc20ToL2` | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No               | No                                  |
 
 ### Terminology
 
@@ -127,7 +127,7 @@ The vault maintains a token registry for TVL discovery:
 - `getTrackedPrincipalTokens()` returns the current token set that should be tracked for TVL.
 - `isTrackedPrincipalToken(token)` checks if a token is currently in that set.
 - Registry scope is principal tokens only (canonical storage keys).
-- Principal tokens remain tracked while they still have exposure, even if `token.supported` is disabled.
+- Principal tokens remain tracked while they still have exposure, even if `principalToken.supported` is disabled.
 - A principal token is removed from tracking only when unsupported and fully unwound.
 - Tracker sync happens on vault write paths (for example `setPrincipalTokenConfig`, strategy whitelist changes, allocate/deallocate, rebalance/emergency sends).
 - Read paths (`getTrackedPrincipalTokens`/`isTrackedPrincipalToken`) are storage-backed and do not call `strategy.assets(...)`.
@@ -189,11 +189,11 @@ GRVTL1TreasuryVault.rebalanceNativeToL2(amount)
 or
 GRVTL1TreasuryVault.rebalanceErc20ToL2(erc20Token, amount)
       |
-      +--> checks: paused? no, token supported, bridge config valid
+      +--> checks: paused? no, principal token supported, bridge config valid
       +--> enforces: l2ExchangeRecipient fixed at initialization (no admin setter)
-      +--> requires msg.value == 0
-      +--> if token intent is ETH (`address(0)`), unwraps WETH and bridges native branch
-      +--> rejects direct WETH bridge-out for non-native branch
+      +--> both paths require msg.value == 0
+      +--> native path unwraps wrapped-native and bridges native branch
+      +--> ERC20 path rejects explicit wrapped-native bridge-out
       +--> mints base token for BridgeHub mintValue
       +--> calls bridgeHub.requestL2TransactionTwoBridges(...)
       |
@@ -300,7 +300,7 @@ Operational notes:
 - To keep vault/strategy logic simple and deterministic, strategy accounting is ERC20-only and native exposure is always modeled as wrapped-native internally.
 - Inflow invariant: external native ETH must be wrapped first through `NativeToWrappedIngress` before it enters vault accounting.
 - Outflow invariant 1 (L1 -> L2 rebalance/emergency): wrapped-native is unwrapped and bridged as native ETH.
-- Outflow invariant 2 (harvest -> treasury): wrapped-native principal harvest pays treasury in native ETH to reduce operational conversion overhead and keep ETH available for gas/ops usage.
+- Outflow invariant 2 (harvest -> yield recipient): wrapped-native principal harvest pays yield recipient in native ETH to reduce operational conversion overhead and keep ETH available for gas/ops usage.
 
 ### Token-Separated Strategy Reporting
 
@@ -320,9 +320,9 @@ Operational notes:
 - Unsupported token queries for `principalBearingExposure(token)` return `0`.
 - Harvest/principal APIs use canonical principal token keys (ERC20); `address(0)` is not a strategy token key.
 - Harvest payout policy is principal-token based:
-  - if principal token is not wrapped native, treasury receives ERC20 directly;
-  - if principal token is wrapped native, vault unwraps and treasury receives native ETH.
-- `minReceived` is enforced on treasury-side net receipt:
+  - if principal token is not wrapped native, yield recipient receives ERC20 directly;
+  - if principal token is wrapped native, vault unwraps and yield recipient receives native ETH.
+- `minReceived` is enforced on yield-recipient-side net receipt:
   - ERC20 balance delta for non-wrapped-native harvest,
   - native ETH balance delta for wrapped-native harvest.
 - Current accounting/reporting scope excludes reward and incentive tokens.
@@ -349,8 +349,8 @@ These examples are theoretical adapter patterns; this scope does not add new Com
 
 ## Risk Controls Semantics
 
-- `rebalanceToL2` uses conservative availability checks (`availableForRebalance`) and role gating.
-- `emergencySendToL2` intentionally bypasses pause and token-support restrictions to prioritize incident-time liquidity restoration.
+- `rebalanceNativeToL2`/`rebalanceErc20ToL2` use conservative availability checks (`availableNativeForRebalance`/`availableErc20ForRebalance`) and role gating.
+- `emergencyNativeToL2`/`emergencyErc20ToL2` intentionally bypass pause and principal-token-support restrictions to prioritize incident-time liquidity restoration.
 - Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
 
 ## Usage
@@ -432,12 +432,12 @@ Record deployed addresses from `ignition/deployments/<deployment-id>/deployed_ad
 For each proxy, also read the EIP-1967 admin slot to capture its `ProxyAdmin` address
 for upgrade modules.
 
-Onboard strategy into the vault registry (set token support + whitelist):
+Onboard strategy into the vault registry (set principal-token support + strategy whitelist):
 
 ```shell
-npm run deploy:token-strategy -- \
+npm run deploy:principal-token-strategy -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/token-strategy.json5
+  --parameters ignition/parameters/sepolia/principal-token-strategy.json5
 ```
 
 Deploy native ingress wrapper for external ETH -> wrapped-native flow:
@@ -448,12 +448,12 @@ npm run deploy:native-ingress -- \
   --parameters ignition/parameters/sepolia/native-ingress.json5
 ```
 
-Configure token support independently:
+Configure principal-token support independently:
 
 ```shell
-npm run config:token -- \
+npm run config:principal-token -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/token-config.json5
+  --parameters ignition/parameters/sepolia/principal-token-config.json5
 ```
 
 Bootstrap vault roles:
@@ -464,12 +464,12 @@ npm run roles:bootstrap -- \
   --parameters ignition/parameters/sepolia/roles-bootstrap.json5
 ```
 
-Bootstrap treasury timelock governance (one-time):
+Bootstrap yield-recipient timelock governance (one-time):
 
 ```shell
 npm run deploy:yield-recipient-timelock -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/treasury-bootstrap.json5
+  --parameters ignition/parameters/sepolia/yield-recipient-bootstrap.json5
 ```
 
 Schedule a yield recipient update through timelock:
@@ -477,7 +477,7 @@ Schedule a yield recipient update through timelock:
 ```shell
 npm run yield-recipient:schedule-update -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/treasury-schedule-update.json5
+  --parameters ignition/parameters/sepolia/yield-recipient-schedule-update.json5
 ```
 
 Execute a ready yield recipient update through timelock:
@@ -485,10 +485,10 @@ Execute a ready yield recipient update through timelock:
 ```shell
 npm run yield-recipient:execute-update -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/treasury-execute-update.json5
+  --parameters ignition/parameters/sepolia/yield-recipient-execute-update.json5
 ```
 
-Execute a harvest operation (strategy -> treasury):
+Execute a harvest operation (strategy -> yield recipient):
 
 ```shell
 npm run ops:harvest-yield -- \
@@ -524,10 +524,10 @@ Treasury and harvest governance notes:
 - Yield recipient updates are timelock-gated once `setYieldRecipientTimelock` is configured.
 - `setYieldRecipient` is executed by timelock operations, not by direct vault-admin calls.
 - `harvestYieldFromStrategy` is vault-admin-gated, blocked while paused, and enforces `minReceived`.
-- Native treasury payout (wrapped-native harvest branch) reverts with `NativeTransferFailed` if treasury cannot receive ETH.
+- Native yield-recipient payout (wrapped-native harvest branch) reverts with `NativeTransferFailed` if yield recipient cannot receive ETH.
 - `YieldHarvested.principalToken` is always the principal token key (for wrapped-native harvest it remains wrapped-native token).
 - Harvest transactions also emit `PrincipalDeallocatedFromStrategy` telemetry for strategy unwind; indexers should treat
-  `PrincipalDeallocatedFromStrategy.received` (vault-side balance delta) and `YieldHarvested.received` (treasury-side net receipt)
+  `PrincipalDeallocatedFromStrategy.received` (vault-side balance delta) and `YieldHarvested.received` (yield-recipient-side net receipt)
   as distinct metrics.
 
 ### Ops Docs

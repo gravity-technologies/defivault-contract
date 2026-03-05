@@ -1208,7 +1208,6 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       (updatedEvent.newYieldRecipient as string).toLowerCase(),
       newYieldRecipient.toLowerCase(),
     );
-
   });
 
   it("uses measured harvest delta when strategy over-reports and emits mismatch telemetry", async function () {
@@ -1405,5 +1404,4 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       false,
     );
   });
-
 });
