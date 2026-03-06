@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { encodeFunctionData, parseAbi } from "viem";
 
+import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
+
 const MAINNET_RPC_URL = process.env.MAINNET_RPC_URL;
 const MAINNET_FORK_BLOCK = process.env.MAINNET_FORK_BLOCK
   ? Number(process.env.MAINNET_FORK_BLOCK)
@@ -169,7 +171,8 @@ describeFork("Aave v3 mainnet fork integration", async function () {
       18,
     ]);
     const wrappedNative = await viem.deployContract("MockWETH");
-    const vaultImpl = await viem.deployContract("GRVTL1TreasuryVault");
+    const { vaultImplementation: vaultImpl } =
+      await deployVaultImplementation(viem);
     const initData = encodeFunctionData({
       abi: vaultImpl.abi,
       functionName: "initialize",

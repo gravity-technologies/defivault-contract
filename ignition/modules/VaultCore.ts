@@ -26,9 +26,19 @@ export default buildModule("VaultCoreModule", (m) => {
   const l2ExchangeRecipient = m.getParameter("l2ExchangeRecipient");
   const wrappedNativeToken = m.getParameter("wrappedNativeToken");
   const yieldRecipient = m.getParameter("yieldRecipient");
+  const vaultStrategyOpsLib = m.library("VaultStrategyOpsLib", {
+    id: "VaultStrategyOpsLib",
+  });
+  const vaultBridgeLib = m.library("VaultBridgeLib", {
+    id: "VaultBridgeLib",
+  });
 
   const vaultImplementation = m.contract("GRVTL1TreasuryVault", [], {
     id: "VaultImplementation",
+    libraries: {
+      VaultStrategyOpsLib: vaultStrategyOpsLib,
+      VaultBridgeLib: vaultBridgeLib,
+    },
   });
 
   const initializeCalldata = m.encodeFunctionCall(
@@ -57,5 +67,11 @@ export default buildModule("VaultCoreModule", (m) => {
     id: "Vault",
   });
 
-  return { vaultImplementation, vaultProxy, vault };
+  return {
+    vaultStrategyOpsLib,
+    vaultBridgeLib,
+    vaultImplementation,
+    vaultProxy,
+    vault,
+  };
 });

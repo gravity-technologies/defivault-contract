@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { decodeEventLog, encodeFunctionData } from "viem";
 
+import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
+
 describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   const { viem } = await network.connect();
   const [admin, yieldRecipient] = await viem.getWalletClients();
@@ -30,7 +32,8 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
       baseToken.address,
     ]);
 
-    const implementation = await viem.deployContract("GRVTL1TreasuryVault");
+    const { vaultImplementation: implementation } =
+      await deployVaultImplementation(viem);
     const initializeData = encodeFunctionData({
       abi: implementation.abi,
       functionName: "initialize",
