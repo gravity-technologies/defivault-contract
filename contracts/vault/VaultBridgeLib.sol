@@ -12,71 +12,25 @@ library VaultBridgeLib {
     using SafeERC20 for IERC20;
 
     /**
-     * @notice Emitted for standard native bridge sends initiated through the vault.
-     * @param amount Native amount bridged to L2.
+     * @notice Emitted for all successful L1 -> L2 bridge sends initiated through the vault.
+     * @param token Vault token used for the bridge flow.
+     * @param amount Amount bridged to L2.
      * @param l2TxGasLimit L2 gas limit used for the bridge request.
      * @param l2TxGasPerPubdataByte L2 pubdata gas setting used for the bridge request.
      * @param refundRecipient L2 refund recipient configured on the request.
      * @param bridgeTxHash L2 transaction hash returned by BridgeHub.
+     * @param isNative True when the bridge path used native intent.
+     * @param emergency True when the bridge path used emergency semantics.
      */
-    event NativeRebalancedToL2(
+    event BridgeSentToL2(
+        address indexed token,
         uint256 amount,
         uint256 l2TxGasLimit,
         uint256 l2TxGasPerPubdataByte,
         address indexed refundRecipient,
-        bytes32 bridgeTxHash
-    );
-
-    /**
-     * @notice Emitted for standard ERC20 bridge sends initiated through the vault.
-     * @param erc20Token ERC20 token bridged to L2.
-     * @param amount Token amount bridged to L2.
-     * @param l2TxGasLimit L2 gas limit used for the bridge request.
-     * @param l2TxGasPerPubdataByte L2 pubdata gas setting used for the bridge request.
-     * @param refundRecipient L2 refund recipient configured on the request.
-     * @param bridgeTxHash L2 transaction hash returned by BridgeHub.
-     */
-    event Erc20RebalancedToL2(
-        address indexed erc20Token,
-        uint256 amount,
-        uint256 l2TxGasLimit,
-        uint256 l2TxGasPerPubdataByte,
-        address indexed refundRecipient,
-        bytes32 bridgeTxHash
-    );
-
-    /**
-     * @notice Emitted for emergency native bridge sends initiated through the vault.
-     * @param amount Native amount bridged to L2.
-     * @param l2TxGasLimit L2 gas limit used for the bridge request.
-     * @param l2TxGasPerPubdataByte L2 pubdata gas setting used for the bridge request.
-     * @param refundRecipient L2 refund recipient configured on the request.
-     * @param bridgeTxHash L2 transaction hash returned by BridgeHub.
-     */
-    event NativeEmergencySentToL2(
-        uint256 amount,
-        uint256 l2TxGasLimit,
-        uint256 l2TxGasPerPubdataByte,
-        address indexed refundRecipient,
-        bytes32 bridgeTxHash
-    );
-
-    /**
-     * @notice Emitted for emergency ERC20 bridge sends initiated through the vault.
-     * @param erc20Token ERC20 token bridged to L2.
-     * @param amount Token amount bridged to L2.
-     * @param l2TxGasLimit L2 gas limit used for the bridge request.
-     * @param l2TxGasPerPubdataByte L2 pubdata gas setting used for the bridge request.
-     * @param refundRecipient L2 refund recipient configured on the request.
-     * @param bridgeTxHash L2 transaction hash returned by BridgeHub.
-     */
-    event Erc20EmergencySentToL2(
-        address indexed erc20Token,
-        uint256 amount,
-        uint256 l2TxGasLimit,
-        uint256 l2TxGasPerPubdataByte,
-        address indexed refundRecipient,
-        bytes32 bridgeTxHash
+        bytes32 bridgeTxHash,
+        bool isNative,
+        bool emergency
     );
 
     /**
@@ -88,7 +42,7 @@ library VaultBridgeLib {
      * @param wrappedNativeToken Canonical wrapped-native token for native-intent flows.
      * @param l2TxGasLimit L2 gas limit to request.
      * @param l2TxGasPerPubdataByte L2 pubdata gas setting to request.
-     * @param token Principal token being bridged.
+     * @param token Vault token being bridged.
      * @param amount Requested bridge amount.
      * @param isNativeIntent True when the wrapped-native token should be unwrapped and bridged as native ETH.
      */
@@ -214,8 +168,8 @@ library VaultBridgeLib {
     }
 
     /**
-     * @notice Emits the appropriate bridge event variant for the completed request.
-     * @param token Principal token bridged.
+     * @notice Emits the unified bridge event for the completed request.
+     * @param token Vault token bridged.
      * @param amount Bridge amount.
      * @param l2TxGasLimit L2 gas limit used for the request.
      * @param l2TxGasPerPubdataByte L2 pubdata gas setting used for the request.
@@ -234,20 +188,16 @@ library VaultBridgeLib {
         bool isNativeIntent,
         bool emergency
     ) public {
-        if (isNativeIntent) {
-            if (emergency) {
-                emit NativeEmergencySentToL2(amount, l2TxGasLimit, l2TxGasPerPubdataByte, refundRecipient, txHash);
-                return;
-            }
-            emit NativeRebalancedToL2(amount, l2TxGasLimit, l2TxGasPerPubdataByte, refundRecipient, txHash);
-            return;
-        }
-
-        if (emergency) {
-            emit Erc20EmergencySentToL2(token, amount, l2TxGasLimit, l2TxGasPerPubdataByte, refundRecipient, txHash);
-            return;
-        }
-        emit Erc20RebalancedToL2(token, amount, l2TxGasLimit, l2TxGasPerPubdataByte, refundRecipient, txHash);
+        emit BridgeSentToL2(
+            token,
+            amount,
+            l2TxGasLimit,
+            l2TxGasPerPubdataByte,
+            refundRecipient,
+            txHash,
+            isNativeIntent,
+            emergency
+        );
     }
 
     /**
@@ -262,7 +212,7 @@ library VaultBridgeLib {
 
     /**
      * @notice Attempts one best-effort emergency deallocation step and measures the received balance delta.
-     * @param token Principal token being withdrawn.
+     * @param token Vault token being withdrawn.
      * @param strategy Strategy to call.
      * @param request Requested withdrawal amount.
      * @return reported Amount self-reported by the strategy.
@@ -290,8 +240,8 @@ library VaultBridgeLib {
     /**
      * @notice Iterates strategies to source emergency liquidity until the request is covered or exhausted.
      * @dev Failures are captured in `steps[i].skipped` instead of reverting so the vault wrapper can continue.
-     * @param strategies Active strategies for the token domain.
-     * @param token Principal token being unwound.
+     * @param strategies Active strategies for the vault token.
+     * @param token Vault token being unwound.
      * @param needed Remaining amount needed from strategies.
      * @return steps Per-strategy unwind results.
      * @return remainingNeeded Amount still uncovered after the bounded loop.
@@ -334,14 +284,14 @@ library VaultBridgeLib {
     }
 
     /**
-     * @notice Reads strategy scalar exposure for emergency unwind planning.
-     * @param token Principal token domain to query.
+     * @notice Reads strategy exposure for emergency unwind planning.
+     * @param token Vault token to query.
      * @param strategy Strategy to read.
      * @return ok True when the strategy call succeeded.
      * @return exposure Scalar exposure returned by the strategy when successful.
      */
     function _readStrategyExposure(address token, address strategy) private view returns (bool ok, uint256 exposure) {
-        try IYieldStrategy(strategy).principalBearingExposure(token) returns (uint256 value) {
+        try IYieldStrategy(strategy).strategyExposure(token) returns (uint256 value) {
             return (true, value);
         } catch {
             return (false, 0);

@@ -1,74 +1,114 @@
-# Scenario 1: Native ETH and Wrapped-Native Handling
+# Scenario 1: Native ETH, Wrapped Native, and the Two Gateways
 
 ## What This Is For
 
-This scenario explains how native ETH intent is handled without introducing native ETH as a strategy accounting domain.
+This scenario explains how native ETH moves through the system and why the vault keeps its token-domain logic ERC20-only.
 
 Primary users:
 
-- backend engineers wiring rebalance/allocate calls
+- engineers wiring native deposit, harvest, and bridge flows
 - operators handling bridge and treasury incidents
 
-## Design Reason (Why We Enforce Wrapped-Native Internally)
+## Core Rule
 
-- In this vault's zkSync bridge path, explicit WETH bridge-out is not supported: native branch uses ETH and ERC20 branch is for non-wrapped-native ERC20 tokens.
-- To keep strategy/accounting code simpler and deterministic, vault and strategy domains are enforced as ERC20-only.
-- So native inflow invariant is:
-  - external ETH must be wrapped before vault accounting/strategy flows.
-  - `NativeToWrappedIngress` is the canonical wrapper that enforces this invariant.
+The vault is not the normal entrypoint for raw ETH.
+
+- External ETH must go through `NativeVaultGateway`.
+- Native L1 -> L2 bridge sends must go through `NativeBridgeGateway`.
+- Vault and strategy accounting use wrapped native (`wrappedNativeToken`) as the ERC20 form of native exposure.
+
+In practice, that means native ETH is handled only at explicit conversion points. The vault should not be treated as a general-purpose ETH receiver.
+
+## The Two Gateways
+
+### `NativeVaultGateway`
+
+`NativeVaultGateway` is the ETH entry contract.
+
+- It accepts ETH from users or operators.
+- It wraps that ETH into `wrappedNativeToken`.
+- It forwards the wrapped token to the vault.
+
+This keeps planned inbound flows in ERC20 form before the vault ever sees the funds.
+
+### `NativeBridgeGateway`
+
+`NativeBridgeGateway` is the ETH bridge contract.
+
+- The vault sends wrapped native and base token to this gateway.
+- The gateway unwraps wrapped native into ETH for the native bridge path.
+- The gateway is also the recovery point for failed native bridge deposits returned on L1.
+- Recovered ETH is wrapped again before funds go back to the vault.
+
+This keeps native bridge execution and failed-deposit recovery out of the vault itself.
 
 ## Most Common Flow (Day-to-Day)
 
-Goal: move funds through vault using canonical wrapped-native ERC20.
+Goal: move native value through the system without introducing raw ETH into the vault's token-domain APIs.
 
-1. External ETH enters through `NativeToWrappedIngress`.
-2. Ingress wraps ETH into wrapped-native token and forwards to vault.
-3. Vault now holds canonical wrapped-native idle balance.
-4. Allocation/deallocation uses sentinel `address(0)` at API boundary, but internal accounting uses wrapped-native token address.
+1. External ETH enters through `NativeVaultGateway`.
+2. `NativeVaultGateway` wraps ETH into `wrappedNativeToken`.
+3. The gateway transfers wrapped native to the vault.
+4. The vault now holds wrapped-native idle balance.
+5. Strategy allocation and accounting use the wrapped-native token address, not ETH.
 
 Why this is the default:
 
-- one accounting domain for strategy and principal tracking
-- avoids ambiguous native-balance behavior in strategy paths
+- strategy code stays ERC20-only
+- cost basis and TVL tracking stay token-address based
+- bridge and recovery ETH handling stays isolated in the gateway layer
 
 ## Ad-hoc / Incident Flows
 
-### 1) Direct ETH sent to vault
+### 1) Direct ETH sent to the vault
 
-- Vault `receive()` accepts ETH only from wrapped-native token contract (unwrap callback).
-- Any other direct sender reverts.
+- Direct external ETH is not a supported ingress path.
+- The vault should not be used as an ETH receiver in normal operation.
+- The vault `receive()` hook exists only for internal wrapped-native withdraw callbacks.
+- Any other planned ETH flow should be routed through `NativeVaultGateway`.
 
 ### 2) L1 -> L2 native bridge path
 
-- Caller uses boundary sentinel (`address(0)`) on rebalance/emergency call.
-- Vault canonicalizes internally, then unwraps at bridge boundary and uses native branch.
-- Passing wrapped-native token directly to rebalance/emergency boundary APIs is rejected.
-- Why: this bridge integration path does not support explicit wrapped-native bridge-out; native intent must be sent as ETH.
+- Native bridge sends use the explicit native methods: `rebalanceNativeToL2` and `emergencyNativeToL2`.
+- Internally, the vault sources funds from wrapped-native balance.
+- The vault transfers wrapped native and base token to `NativeBridgeGateway`.
+- `NativeBridgeGateway` unwraps and submits the native bridge request.
 
-### 3) Wrapped-native harvest payout
+Do not use the ERC20 bridge path with the wrapped-native token for native sends.
 
-- Harvest input token is canonical wrapped-native token (not sentinel).
-- Vault deallocates wrapped-native from strategy.
-- Vault unwraps and pays treasury in ETH.
-- Non-payable treasury reverts with `NativeTransferFailed`.
-- Why ETH payout (instead of forwarding wrapped-native):
-  - lower operational overhead for treasury (no extra unwrap step),
-  - ETH can be reused directly for transaction gas and operational payments.
+### 3) Failed native bridge deposit recovery
 
-### 4) Forced ETH in vault
+- Failed native deposits are recovered back to `NativeBridgeGateway`, not to the vault.
+- `NativeBridgeGateway` wraps the recovered ETH back into `wrappedNativeToken`.
+- The gateway returns wrapped native to the vault.
 
-- Forced ETH (e.g. `SELFDESTRUCT`) can still appear.
-- Recovery path is admin-only `sweepNativeToYieldRecipient(amount)` to treasury.
+This keeps native recovery consistent with the ERC20-only vault accounting model.
 
-## Why This Is Complex
+### 4) Wrapped-native harvest payout
 
-- UX wants native intent (`address(0)`), but accounting requires ERC20 keys.
-- Bridge/native and strategy/harvest boundaries are different conversion points.
-- Security requires strict ingress and reentrancy-safe native payout behavior.
+- Harvest input is the wrapped-native vault token.
+- The vault deallocates wrapped native from the strategy.
+- The vault unwraps and pays the yield recipient in ETH.
+- A non-payable treasury reverts with `NativeTransferFailed`.
+
+This is a payout boundary, not a change to the vault's token-domain model.
+
+### 5) Forced ETH in the vault
+
+- Forced ETH can still appear through EVM edge cases such as `SELFDESTRUCT`.
+- That ETH is outside the planned accounting flow.
+- Recovery path is admin-only `sweepNativeToYieldRecipient(amount)`.
+
+## Why This Can Be Confusing
+
+- Native value enters through one gateway and leaves through another.
+- The vault stores native exposure as wrapped native, but bridge and payout edges still use ETH.
+- The vault has a `receive()` hook, but that does not make it a supported ETH ingress contract.
 
 ## Debug Checklist
 
-- Did caller use sentinel on boundary APIs (and not wrapped-native token directly)?
-- Is `msg.value == 0` on rebalance/emergency calls?
-- For harvest payout issues: is treasury payable?
-- For unexpected ETH in vault: was it forced ETH requiring `sweepNative`?
+- Did external ETH go through `NativeVaultGateway` rather than directly to the vault?
+- Did native bridge sends use `rebalanceNativeToL2` or `emergencyNativeToL2` rather than the ERC20 bridge path?
+- Did failed native deposit recovery terminate at `NativeBridgeGateway`?
+- For harvest payout issues: is the treasury payable?
+- For unexpected ETH in the vault: was it forced ETH requiring `sweepNativeToYieldRecipient`?

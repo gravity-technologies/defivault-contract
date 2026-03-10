@@ -3,7 +3,7 @@ pragma solidity 0.8.34;
 
 /**
  * @title IL1SharedBridge
- * @notice Minimal shared-bridge claim surface used for failed-deposit recovery.
+ * @notice Minimal shared-bridge claim interface used for failed-deposit recovery.
  * @dev Signature follows zkSync Era `L1SharedBridge.claimFailedDeposit`.
  */
 interface IL1SharedBridge {

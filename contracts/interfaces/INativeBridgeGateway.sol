@@ -3,19 +3,19 @@ pragma solidity 0.8.34;
 
 /**
  * @title INativeBridgeGateway
- * @notice Minimal vault-facing interface for native bridge execution through an external gateway.
+ * @notice Minimal interface the vault uses to bridge native ETH through an external gateway.
  */
 interface INativeBridgeGateway {
     /**
-     * @notice Submits a native ETH L1 -> L2 bridge request using gateway-held wrapped-native and base token.
+     * @notice Bridges native ETH from L1 to L2 using wrapped-native and base token already held by the gateway.
      * @param chainId Target L2 chain id.
      * @param l2GasLimit L2 gas limit for the request.
-     * @param l2GasPerPubdataByteLimit L2 pubdata gas setting.
+     * @param l2GasPerPubdataByteLimit L2 pubdata gas limit setting.
      * @param l2Recipient L2 recipient for bridged native ETH.
-     * @param refundRecipient L2 recipient for refunded bridge execution value.
+     * @param refundRecipient L2 address that receives any refunded bridge execution value.
      * @param amount Native ETH amount to bridge.
      * @param baseCost Base-token `mintValue` required by BridgeHub.
-     * @return txHash Canonical L2 transaction hash returned by BridgeHub.
+     * @return txHash L2 transaction hash returned by BridgeHub.
      */
     function bridgeNativeToL2(
         uint256 chainId,

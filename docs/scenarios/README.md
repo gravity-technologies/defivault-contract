@@ -3,7 +3,7 @@
 ## Why These Files Exist
 
 These scenario docs are not API specs.
-They are operator/developer mental models for common and uncommon flows in the vault.
+They explain common and uncommon vault flows in plain terms for operators and developers.
 
 Use them when you ask:
 
@@ -13,19 +13,19 @@ Use them when you ask:
 
 ## Scenario Index
 
-- `native-eth-weth-handling.md`: native-intent boundary rules, wrapped-native ingress invariant, bridge/harvest ETH conversion points.
+- `native-eth-weth-handling.md`: how native ETH enters and leaves the system, when it is wrapped, and where ETH conversions happen.
 - `yield-harvesting.md`: yield extraction path, treasury payout semantics, and slippage checks.
-- `tvl-reporting-underlying-and-non-underlying.md`: exact-token reporting model and how root/component queries differ.
-- `strategy-generic-adapter-flow.md`: vault-level adapter contract and tracking assumptions that apply to all protocols.
-- `strategy-aave-1to1-scalar.md`: concrete behavior of current `AaveV3Strategy` (including explicit 1:1 scalar assumption).
-- `strategy-non-1to1-scalar.md`: design guidance for adapters that need non-1:1 conversion/index/oracle-aware scalar logic.
+- `tvl-reporting-underlying-and-non-underlying.md`: per-token TVL reporting and how direct token queries differ from per-strategy breakdowns.
+- `strategy-generic-adapter-flow.md`: the rules every strategy adapter must follow and how the vault tracks reported tokens.
+- `strategy-aave-1to1-scalar.md`: the current `AaveV3Strategy` behavior, including the 1:1 exposure assumption.
+- `strategy-non-1to1-scalar.md`: guidance for adapters that need share, index, or oracle conversion to calculate exposure.
 
 ## Recommended Reading Order
 
 1. `strategy-generic-adapter-flow.md` (shared baseline contract).
 2. Then pick one implementation profile:
    - `strategy-aave-1to1-scalar.md` for current deployed path in this repo.
-   - `strategy-non-1to1-scalar.md` for future adapters with conversion/index-driven scalar exposure.
+   - `strategy-non-1to1-scalar.md` for future adapters that need conversion logic to calculate exposure.
 
 ## Quick File Chooser
 
@@ -45,26 +45,26 @@ For each scenario file, read in this order:
 
 ## Shared Terminology
 
-- **Boundary token**: token value at mutating API boundary.
-  Example: `rebalanceErc20ToL2(address(0), amount)` where `address(0)` means native intent.
-- **Canonical token**: internal accounting key (always ERC20 address).
-  Example: native intent canonicalizes to `wrappedNativeToken`.
-- **Root token**: token-domain key used for a strategy binding in vault registry.
+- **Call token**: the token value passed into a write function.
+  Example: `rebalanceErc20ToL2(address(0), amount)` where `address(0)` means "bridge native ETH".
+- **Vault token**: ERC20 token used for a strategy pair in the vault registry.
   Example: `USDT` for `(USDT, AaveStrategy)`.
-- **Component token**: token returned inside `positionBreakdown(principalToken).components`.
+- **TVL token**: any exact ERC20 token surfaced by vault TVL reporting.
+  Example: `USDT` and `aUSDT`.
+- **Component token**: token returned inside the `positionBreakdown(vaultToken)` array.
   Example: `aUSDT` and residual `USDT`.
-- **Receipt token**: non-principal component token representing invested position.
+- **Receipt token**: non-vault-token component token representing invested position.
   Example: `aUSDT`.
-- **Principal-bearing exposure**: scalar used for cap/harvest math.
-  Example: `principalBearingExposure(USDT)`.
-- **Tracked principal token**: principal token included in on-chain tracked-principal registry.
-  Example: `USDT`.
+- **Strategy exposure**: single number the vault uses for cap and harvest math.
+  Example: `strategyExposure(USDT)`.
+- **Tracked TVL token**: token included in on-chain TVL-token registry.
+  Example: `USDT` or `aUSDT`.
 
 ## Important Distinction (Harvest)
 
-Harvest emits two different telemetry surfaces in one tx:
+Harvest emits two different event values in one transaction:
 
-- `PrincipalDeallocatedFromStrategy.received`: vault-side measured strategy unwind delta.
-- `YieldHarvested.received`: treasury-side net receipt after payout.
+- `VaultTokenDeallocatedFromStrategy.received`: amount the vault measured coming back from the strategy.
+- `YieldHarvested.received`: amount the treasury received after payout.
 
 Do not treat those as duplicates.

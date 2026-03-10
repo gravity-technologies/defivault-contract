@@ -7,16 +7,22 @@ This scenario explains how `harvestYieldFromStrategy` works, what it guarantees,
 Primary users:
 
 - vault operators running harvest jobs
-- engineers indexing harvest/deallocation telemetry
+- engineers indexing harvest and deallocation events
 
 ## Most Common Flow (Day-to-Day)
 
-Goal: extract yield only, keep principal stable.
+Goal: extract yield only, keep cost basis stable.
+
+Why cost basis uses the requested amount:
+
+- `strategyCostBasis` follows requested allocation amount, not realized strategy receipt.
+- This keeps deposit-time friction classified as loss/cost instead of future harvestable yield.
+- See the README terminology section for the worked example.
 
 Example:
 
-- stored principal = `1000`
-- scalar exposure = `1120`
+- stored cost basis = `1000`
+- exposure value = `1120`
 - harvestable = `120`
 
 Call:
@@ -26,11 +32,11 @@ Call:
 Flow:
 
 1. Vault checks strategy is withdrawable and `amount <= harvestable`.
-2. Vault deallocates from strategy (vault-side measured delta).
+2. Vault deallocates from the strategy and measures how much actually came back.
 3. Vault pays treasury (ERC20 transfer or wrapped-native unwrap + ETH payout).
-4. Vault enforces treasury-side slippage: `received >= minReceived`.
-5. Vault emits `PrincipalDeallocatedFromStrategy` and `YieldHarvested`.
-6. Vault re-syncs tracked-token state post-payout.
+4. Vault checks the treasury-side slippage rule: `received >= minReceived`.
+5. Vault emits `VaultTokenDeallocatedFromStrategy` and `YieldHarvested`.
+6. Vault refreshes tracked-token state after payout.
 
 ## Ad-hoc / Incident Flows
 
@@ -47,22 +53,24 @@ Flow:
 ### 3) Sequential harvests
 
 - Multiple harvests are expected.
-- Principal stays stable across yield-only harvests.
+- Cost basis stays stable across yield-only harvests.
 
 ## Why This Is Complex
 
-Harvest mixes three domains:
+Harvest combines three different measurements:
 
-- strategy-side scalar exposure math
-- vault-side measured balance deltas
-- treasury-side net receipt/slippage enforcement
+- the strategy's exposure calculation
+- the vault's measured balance change
+- the treasury's final received amount
 
-Those domains intentionally differ to resist malformed strategy returns and fee-on-transfer/token quirks.
+These measurements are intentionally separate so the vault does not rely on a strategy's own return values and can handle fee-on-transfer behavior.
+
+The requested-allocation cost-basis rule is part of that design. It prevents deposit-time friction from being reclassified as profit on a later harvest.
 
 ## Debug Checklist
 
-- Was `token` canonical ERC20 principal token key (not `address(0)`)?
+- Was `token` the ERC20 vault token (not `address(0)`)?
 - Is strategy in withdrawable lifecycle state?
-- Did `minReceived` match treasury-side net receipt expectations?
-- Are indexers handling both `PrincipalDeallocatedFromStrategy` and `YieldHarvested` in same tx?
-- If principal moved unexpectedly, inspect allocation/deallocation flows and tracked principal updates.
+- Did `minReceived` match the treasury's expected received amount?
+- Are indexers handling both `VaultTokenDeallocatedFromStrategy` and `YieldHarvested` in the same transaction?
+- If cost basis moved unexpectedly, inspect allocation/deallocation flows and tracked cost basis updates.

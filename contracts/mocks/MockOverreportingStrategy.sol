@@ -4,11 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {
-    TokenAmountComponent,
-    TokenAmountComponentKind,
-    StrategyAssetBreakdown
-} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent, PositionComponentKind} from "../interfaces/IVaultReportingTypes.sol";
 
 /**
  * @dev Strategy mock that can deliberately over-report deallocation return values.
@@ -50,19 +46,20 @@ contract MockOverreportingStrategy is IYieldStrategy {
         return _trackedAssets[token];
     }
 
-    function positionBreakdown(address token) external view returns (StrategyAssetBreakdown memory breakdown) {
-        uint256 amount = _trackedAssets[token];
-        if (amount == 0) return breakdown;
-
-        breakdown.components = new TokenAmountComponent[](1);
-        breakdown.components[0] = TokenAmountComponent({
-            token: token,
-            amount: amount,
-            kind: TokenAmountComponentKind.InvestedPrincipal
-        });
+    function tvlTokens(address vaultToken) external pure returns (address[] memory tokens) {
+        tokens = new address[](1);
+        tokens[0] = vaultToken;
     }
 
-    function principalBearingExposure(address token) external view returns (uint256 exposure) {
+    function positionBreakdown(address token) external view returns (PositionComponent[] memory components) {
+        uint256 amount = _trackedAssets[token];
+        if (amount == 0) return components;
+
+        components = new PositionComponent[](1);
+        components[0] = PositionComponent({token: token, amount: amount, kind: PositionComponentKind.InvestedPosition});
+    }
+
+    function strategyExposure(address token) external view returns (uint256 exposure) {
         return _trackedAssets[token];
     }
 

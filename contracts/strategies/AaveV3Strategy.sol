@@ -8,11 +8,7 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import {IAaveV3AToken} from "../external/IAaveV3AToken.sol";
 import {IAaveV3Pool} from "../external/IAaveV3Pool.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {
-    StrategyAssetBreakdown,
-    TokenAmountComponent,
-    TokenAmountComponentKind
-} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent, PositionComponentKind} from "../interfaces/IVaultReportingTypes.sol";
 
 /**
  * @title AaveV3Strategy
@@ -29,7 +25,7 @@ import {
  *      ### aToken configuration validation
  *      `initialize` cross-checks the provided `aToken_` against the Aave pool by calling
  *      `IAaveV3AToken.UNDERLYING_ASSET_ADDRESS()` and `IAaveV3AToken.POOL()`. Misconfigured
- *      aToken addresses (e.g. wrong asset or wrong pool) revert with `InvalidATokenConfig`
+ *      aToken addresses (e.g. wrong token or wrong pool) revert with `InvalidATokenConfig`
  *      at init time rather than silently producing incorrect TVL accounting.
  *
  *      ### Split reporting surfaces
@@ -38,21 +34,21 @@ import {
  *      - for `token == aToken`: report invested `aToken` balance
  *      - for unsupported tokens: return `0` (non-reverting)
  *
- *      `positionBreakdown(principalToken)` returns structured principal-domain components:
- *      - for `principalToken == underlying`: report `aToken` invested principal + `underlying` residual
- *      - for unsupported principal domains: return `components.length == 0` (non-reverting)
+ *      `positionBreakdown(vaultToken)` returns structured position components:
+ *      - for `vaultToken == underlying`: report `aToken` invested position + `underlying` residual
+ *      - for unsupported vault-token queries: return `components.length == 0` (non-reverting)
  *
  *      The aToken balance accrues yield continuously (Aave's rebasing mechanism).
  *      The underlying balance is normally near-zero between calls, but residual dust can exist.
  *
  *      ### Scalar assumption (USDT deployment)
  *      For the USDT/aUSDT deployment, this adapter explicitly assumes `1 USDT == 1 aUSDT`
- *      for the `principalBearingExposure(USDT)` scalar path. This simplifies vault-side
+ *      for the `strategyExposure(USDT)` scalar path. This simplifies vault-side
  *      cap/harvest/exposure math by avoiding index-based conversion logic in this scope.
  *
  *      Implications:
  *      - TVL reporting is still exact-token and assumption-free: `exactTokenBalance(token)` and
- *        `positionBreakdown(principalToken)` keep aUSDT and residual USDT separate and do not merge
+ *        `positionBreakdown(vaultToken)` keep aUSDT and residual USDT separate and do not merge
  *        or convert denominations.
  *      - `allocate` / `deallocate` / `deallocateAll` remain exact ERC20 operations against Aave
  *        supply/withdraw flows; they do not rely on this scalar assumption for token movement.
@@ -61,7 +57,7 @@ import {
  *          - scalar too high: cap can block allocation early; harvest can over-request and revert
  *            on vault-side measured bounds (`YieldNotAvailable` in vault path).
  *          - scalar too low: cap can allow excess allocation; harvest can under-extract yield.
- *      - Even under scalar drift, exact-token reporting (`assets`) and actual transfer outcomes
+ *      - Even under scalar drift, exact-token reporting and actual transfer outcomes
  *        remain denomination-correct because vault measures real balance deltas on unwind.
  *
  *      ### allocate / deallocate flow
@@ -126,7 +122,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
 
     /// @dev Thrown by `allocate` when underlying balance after `supply` exceeds the pre-call balance.
     ///      This indicates supply did not consume all newly pulled funds.
-    error ResidualUnderlyingAfterSupply(uint256 beforeBalance, uint256 afterBalance);
+    error UninvestedTokenAfterSupply(uint256 beforeBalance, uint256 afterBalance);
 
     // =============================================== Events ===================================================
 
@@ -150,7 +146,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      * @param token  The underlying token swept.
      * @param amount Amount transferred to vault.
      */
-    event ResidualUnderlyingSwept(address indexed token, uint256 amount);
+    event UninvestedTokenSwept(address indexed token, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -219,54 +215,62 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
         return 0;
     }
 
+    /// @inheritdoc IYieldStrategy
+    function tvlTokens(address vaultToken) external view override returns (address[] memory tokens) {
+        if (vaultToken != underlying) return tokens;
+        tokens = new address[](2);
+        tokens[0] = underlying;
+        tokens[1] = aToken;
+    }
+
     /**
      * @inheritdoc IYieldStrategy
-     * @dev Principal-domain breakdown reporting:
-     *      - `principalToken == underlying`: reports up to two components:
-     *          1. `aToken` (InvestedPrincipal)
-     *          2. `underlying` (ResidualUnderlying)
-     *      - otherwise: returns empty components (unsupported principal-domain path).
+     * @dev Breakdown reporting for the configured vault token:
+     *      - `vaultToken == underlying`: reports up to two components:
+     *          1. `aToken` (InvestedPosition)
+     *          2. `underlying` (UninvestedToken)
+     *      - otherwise: returns empty components (unsupported position path).
      */
     function positionBreakdown(
-        address principalToken
-    ) external view override returns (StrategyAssetBreakdown memory breakdown) {
-        if (principalToken != underlying) return breakdown;
+        address vaultToken
+    ) external view override returns (PositionComponent[] memory components) {
+        if (vaultToken != underlying) return components;
 
         uint256 invested = IERC20(aToken).balanceOf(address(this));
         uint256 residual = IERC20(underlying).balanceOf(address(this));
         uint256 len = (invested == 0 ? 0 : 1) + (residual == 0 ? 0 : 1);
-        if (len == 0) return breakdown;
+        if (len == 0) return components;
 
-        breakdown.components = new TokenAmountComponent[](len);
+        components = new PositionComponent[](len);
         uint256 index;
         if (invested != 0) {
-            breakdown.components[index] = TokenAmountComponent({
+            components[index] = PositionComponent({
                 token: aToken,
                 amount: invested,
-                kind: TokenAmountComponentKind.InvestedPrincipal
+                kind: PositionComponentKind.InvestedPosition
             });
             ++index;
         }
         if (residual != 0) {
-            breakdown.components[index] = TokenAmountComponent({
+            components[index] = PositionComponent({
                 token: underlying,
                 amount: residual,
-                kind: TokenAmountComponentKind.ResidualUnderlying
+                kind: PositionComponentKind.UninvestedToken
             });
         }
-        return breakdown;
+        return components;
     }
 
     /**
      * @inheritdoc IYieldStrategy
      * @dev Aave scalar policy for this adapter:
-     *      - supported domain: `token == underlying`
+     *      - supported query: `token == underlying`
      *      - scalar: `aTokenBalance + underlyingResidual`
      *      - explicit assumption (for scalar path only): `1 aToken == 1 underlying`
      *
      *      Unsupported token queries return 0 without reverting.
      */
-    function principalBearingExposure(address token) external view override returns (uint256 exposure) {
+    function strategyExposure(address token) external view override returns (uint256 exposure) {
         if (token != underlying) return 0;
         return IERC20(aToken).balanceOf(address(this)) + IERC20(underlying).balanceOf(address(this));
     }
@@ -295,7 +299,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
         aavePool.supply(token, amount, address(this), 0);
         uint256 afterUnderlying = IERC20(token).balanceOf(address(this));
         if (afterUnderlying > beforeUnderlying) {
-            revert ResidualUnderlyingAfterSupply(beforeUnderlying, afterUnderlying);
+            revert UninvestedTokenAfterSupply(beforeUnderlying, afterUnderlying);
         }
         IERC20(token).forceApprove(address(aavePool), 0);
 
@@ -344,17 +348,17 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
 
     function _deallocateAndSweep(uint256 requested) internal returns (uint256 received) {
         received = aavePool.withdraw(underlying, requested, vault);
-        uint256 swept = _sweepResidualUnderlyingToVault();
+        uint256 swept = _sweepUninvestedTokenToVault();
         if (swept != 0) received += swept;
         emit Deallocated(underlying, requested, received);
     }
 
     /// @dev Transfers any strategy-held underlying dust to vault and emits sweep telemetry.
-    function _sweepResidualUnderlyingToVault() internal returns (uint256 swept) {
+    function _sweepUninvestedTokenToVault() internal returns (uint256 swept) {
         swept = IERC20(underlying).balanceOf(address(this));
         if (swept == 0) return 0;
         IERC20(underlying).safeTransfer(vault, swept);
-        emit ResidualUnderlyingSwept(underlying, swept);
+        emit UninvestedTokenSwept(underlying, swept);
     }
 
     function _requireUnderlyingToken(address token) internal view {

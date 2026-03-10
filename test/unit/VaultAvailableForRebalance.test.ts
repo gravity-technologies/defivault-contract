@@ -83,10 +83,7 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
     const token = await deployToken();
 
     await token.write.mint([vault.address, 123n]);
-    await vault.write.setPrincipalTokenConfig([
-      token.address,
-      { supported: true },
-    ]);
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
 
     assert.equal(
       await vault.read.availableErc20ForRebalance([token.address]),
@@ -98,10 +95,7 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
     const vault = await deployVault();
     const token = await deployToken();
 
-    await vault.write.setPrincipalTokenConfig([
-      token.address,
-      { supported: true },
-    ]);
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
 
     assert.equal(
       await vault.read.availableErc20ForRebalance([token.address]),
@@ -109,11 +103,11 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
     );
   });
 
-  it("reverts setPrincipalTokenConfig for EOA token addresses", async function () {
+  it("reverts setVaultTokenConfig for EOA token addresses", async function () {
     const vault = await deployVault();
 
     await assert.rejects(
-      vault.write.setPrincipalTokenConfig([
+      vault.write.setVaultTokenConfig([
         admin.account.address,
         { supported: true },
       ]),
@@ -121,15 +115,12 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
     );
   });
 
-  it("reverts setPrincipalTokenConfig for non-ERC20 contracts", async function () {
+  it("reverts setVaultTokenConfig for non-ERC20 contracts", async function () {
     const vault = await deployVault();
     const nonErc20 = await deployNonErc20Contract();
 
     await assert.rejects(
-      vault.write.setPrincipalTokenConfig([
-        nonErc20.address,
-        { supported: true },
-      ]),
+      vault.write.setVaultTokenConfig([nonErc20.address, { supported: true }]),
       /InvalidParam/,
     );
   });

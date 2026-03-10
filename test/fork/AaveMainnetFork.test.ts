@@ -56,13 +56,10 @@ describeFork("Aave v3 mainnet fork integration", async function () {
     return wallet.account.address;
   }
 
-  function componentTotal(breakdown: {
-    components: ReadonlyArray<{ amount: bigint }>;
-  }): bigint {
-    return breakdown.components.reduce(
-      (sum, component) => sum + component.amount,
-      0n,
-    );
+  function componentTotal(
+    components: ReadonlyArray<{ amount: bigint }>,
+  ): bigint {
+    return components.reduce((sum, component) => sum + component.amount, 0n);
   }
 
   async function usdtBalanceOf(account: `0x${string}`) {
@@ -207,14 +204,14 @@ describeFork("Aave v3 mainnet fork integration", async function () {
       addr(rebalancerWallet),
     ]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       USDT,
       {
         supported: true,
       },
     ]);
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       USDT,
       strategy.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -231,21 +228,21 @@ describeFork("Aave v3 mainnet fork integration", async function () {
       },
     );
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       USDT,
       strategy.address,
       50_000_000n,
     ]);
 
     await vault.write.pause();
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       USDT,
       {
         supported: false,
       },
     ]);
 
-    await vaultAsAllocator.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
       USDT,
       strategy.address,
     ]);
@@ -255,7 +252,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
     );
     assert.ok(strategyAssets <= 2n);
 
-    const status = await vault.read.totalExactAssetsStatus([USDT]);
+    const status = await vault.read.tokenTotalsConservative([USDT]);
     assert.equal(status.skippedStrategies, 0n);
     assert.ok(status.total > 0n);
 

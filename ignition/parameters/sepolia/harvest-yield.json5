@@ -3,7 +3,7 @@
     // Existing deployed vault proxy
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Harvest request:
-    // - token is canonical principal token key (ERC20), never address(0)
+    // - token is canonical vault token key (ERC20), never address(0)
     // - if token == wrappedNativeToken, payout is native ETH to yield recipient
     token: "0x0000000000000000000000000000000000000000",
     strategy: "0x0000000000000000000000000000000000000000",

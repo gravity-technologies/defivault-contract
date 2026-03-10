@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { encodeFunctionData, keccak256, stringToHex } from "viem";
 
-import { expectEventOnce } from "../helpers/events.js";
+import { expectEventCount, expectEventOnce } from "../helpers/events.js";
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
@@ -185,16 +185,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await vault.write.grantRole([await vault.read.PAUSER_ROLE(), addr(pauser)]);
 
-    await vault.write.setPrincipalTokenConfig([
-      token.address,
-      { supported: true },
-    ]);
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
 
     const stratA = await viem.deployContract("MockYieldStrategy", [
       vault.address,
       "STRAT_A",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: true, active: false, cap: 2_000_000n },
@@ -251,17 +248,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     };
   }
 
-  it("tracks principal and harvests strategy yield to treasury", async function () {
+  it("tracks cost basis and harvests strategy yield to treasury", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       400_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       400_000n,
     );
 
@@ -284,7 +281,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const treasuryAfter = (await token.read.balanceOf([treasury])) as bigint;
     assert.equal(treasuryAfter - treasuryBefore, 30_000n);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       400_000n,
     );
     assert.equal(
@@ -293,11 +290,84 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
+  it("uses measured allocation spend for cost basis and harvest math when strategy under-pulls", async function () {
+    const { vault, vaultAsAllocator, token, stratA } = await deployBase();
+
+    await stratA.write.setAllocatePullAmount([token.address, 300_000n]);
+    const hash = await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      stratA.address,
+      400_000n,
+    ]);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+    const allocationEvent = expectEventOnce(
+      receipt,
+      vault,
+      "VaultTokenAllocatedToStrategy",
+    );
+    assert.equal(allocationEvent.amount, 400_000n);
+
+    const mismatchEvent = expectEventOnce(
+      receipt,
+      vault,
+      "VaultTokenAllocationSpentMismatch",
+    );
+    assert.equal(mismatchEvent.requested, 400_000n);
+    assert.equal(mismatchEvent.actualSpent, 300_000n);
+    expectEventCount(receipt, vault, "VaultTokenAllocationSpentMismatch", 1);
+
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
+      300_000n,
+    );
+
+    await stratA.write.setAssets([token.address, 360_000n]);
+    assert.equal(
+      await vault.read.harvestableYield([token.address, stratA.address]),
+      60_000n,
+    );
+  });
+
+  it("keeps cost basis at zero and emits mismatch telemetry when allocation spends nothing", async function () {
+    const { vault, vaultAsAllocator, token, stratA } = await deployBase();
+
+    await stratA.write.setAllocatePullAmount([token.address, 0n]);
+    const hash = await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      stratA.address,
+      400_000n,
+    ]);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+    const allocationEvent = expectEventOnce(
+      receipt,
+      vault,
+      "VaultTokenAllocatedToStrategy",
+    );
+    assert.equal(allocationEvent.amount, 400_000n);
+
+    const mismatchEvent = expectEventOnce(
+      receipt,
+      vault,
+      "VaultTokenAllocationSpentMismatch",
+    );
+    assert.equal(mismatchEvent.requested, 400_000n);
+    assert.equal(mismatchEvent.actualSpent, 0n);
+    expectEventCount(receipt, vault, "VaultTokenAllocationSpentMismatch", 1);
+
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
+      0n,
+    );
+    assert.equal(await stratA.read.strategyExposure([token.address]), 0n);
+  });
+
   it("enforces harvest bounds, slippage guard, and pause gating", async function () {
     const { vaultAsAllocator, vaultAsAdmin, vaultAsPauser, token, stratA } =
       await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       300_000n,
@@ -339,10 +409,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("uses scalar exposure (not reporting components) for harvestable yield", async function () {
+  it("uses strategy exposure (not reporting components) for harvestable yield", async function () {
     const { vault, vaultAsAllocator, token, stratA } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       200_000n,
@@ -359,8 +429,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       token.address,
       stratA.address,
     ]);
-    assert.equal(breakdown.components.length, 1);
-    assert.equal(breakdown.components[0].amount, 10_000n);
+    assert.equal(breakdown.length, 1);
+    assert.equal(breakdown[0].amount, 10_000n);
 
     assert.equal(
       await vault.read.harvestableYield([token.address, stratA.address]),
@@ -372,7 +442,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       100_000n,
@@ -400,7 +470,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       { supported: true },
     ]);
@@ -408,7 +478,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vault.address,
       "WETH_STRAT",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       wrappedNative.address,
       wethStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -416,7 +486,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     await wrappedNative.write.deposit({ value: 500_000n });
     await wrappedNative.write.transfer([vault.address, 500_000n]);
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       wrappedNative.address,
       wethStrategy.address,
       400_000n,
@@ -450,7 +520,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
     assert.equal(
-      (harvested.principalToken as string).toLowerCase(),
+      (harvested.vaultToken as string).toLowerCase(),
       wrappedNative.address.toLowerCase(),
     );
     assert.equal(
@@ -465,7 +535,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       { supported: true },
     ]);
@@ -473,7 +543,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vault.address,
       "WETH_STRAT",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       wrappedNative.address,
       wethStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -481,7 +551,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     await wrappedNative.write.deposit({ value: 500_000n });
     await wrappedNative.write.transfer([vault.address, 500_000n]);
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       wrappedNative.address,
       wethStrategy.address,
       400_000n,
@@ -516,7 +586,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       { supported: true },
     ]);
@@ -524,7 +594,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vault.address,
       "WETH_STRAT",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       wrappedNative.address,
       wethStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -532,7 +602,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     await wrappedNative.write.deposit({ value: 500_000n });
     await wrappedNative.write.transfer([vault.address, 500_000n]);
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       wrappedNative.address,
       wethStrategy.address,
       400_000n,
@@ -564,7 +634,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       { supported: true },
     ]);
@@ -572,7 +642,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vault.address,
       "WETH_STRAT",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       wrappedNative.address,
       wethStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -580,7 +650,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     await wrappedNative.write.deposit({ value: 500_000n });
     await wrappedNative.write.transfer([vault.address, 500_000n]);
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       wrappedNative.address,
       wethStrategy.address,
       400_000n,
@@ -633,13 +703,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const edgeStrategy = await viem.deployContract("MockHarvestEdgeStrategy", [
       vault.address,
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       edgeStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       edgeStrategy.address,
       100_000n,
@@ -663,19 +733,19 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("does not auto-write-down principal when harvest leaves exposure below tracked principal", async function () {
+  it("does not auto-write-down cost basis when harvest leaves exposure below tracked cost basis", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token } = await deployBase();
 
     const edgeStrategy = await viem.deployContract("MockHarvestEdgeStrategy", [
       vault.address,
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       edgeStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       edgeStrategy.address,
       400_000n,
@@ -689,20 +759,20 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       20_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, edgeStrategy.address]),
+      await vault.read.strategyCostBasis([token.address, edgeStrategy.address]),
       400_000n,
     );
     assert.equal(
-      await edgeStrategy.read.principalBearingExposure([token.address]),
+      await edgeStrategy.read.strategyExposure([token.address]),
       400_000n,
     );
   });
 
-  it("supports sequential harvests without changing tracked principal", async function () {
+  it("supports sequential harvests without changing tracked cost basis", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       300_000n,
@@ -716,7 +786,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       20_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       300_000n,
     );
     assert.equal(
@@ -731,7 +801,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       30_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       300_000n,
     );
     assert.equal(
@@ -740,7 +810,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("resyncs tracked token state after harvest payout transfer-out", async function () {
+  it("keeps declared TVL tokens tracked after harvest payout until the strategy pair is removed", async function () {
     const { vault, vaultAsAdmin, token: baseToken } = await deployBase();
 
     const token = await viem.deployContract("MockERC20", [
@@ -753,30 +823,24 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       "HARVEST_ONLY",
     ]);
 
-    await vault.write.setPrincipalTokenConfig([
-      token.address,
-      { supported: true },
-    ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       strategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    // Seed strategy-held principal token without increasing tracked principal;
+    // Seed strategy-held vault token without increasing tracked cost basis;
     // this models yield-only harvestable balance.
     await token.write.mint([strategy.address, 50_000n]);
     await strategy.write.setAssets([token.address, 50_000n]);
 
     // Disable token support while exposure still exists; token remains tracked.
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       { supported: false },
     ]);
-    assert.equal(
-      await vault.read.isTrackedPrincipalToken([token.address]),
-      true,
-    );
+    assert.equal(await vault.read.isTrackedTvlToken([token.address]), true);
 
     const treasury = (await vault.read.yieldRecipient()) as `0x${string}`;
     const treasuryBefore = (await token.read.balanceOf([treasury])) as bigint;
@@ -791,22 +855,25 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const treasuryAfter = (await token.read.balanceOf([treasury])) as bigint;
     assert.equal(treasuryAfter - treasuryBefore, 50_000n);
 
-    // Post-payout sync should remove unsupported token once both idle and strategy exposure are zero.
+    // Post-payout sync clears direct idle tracking, but the token remains tracked while the
+    // active strategy pair still declares it in the cached TVL-token list.
+    assert.equal(await vault.read.isTrackedTvlToken([token.address]), true);
     assert.equal(
-      await vault.read.isTrackedPrincipalToken([token.address]),
+      await vault.read.isSupportedVaultToken([token.address]),
       false,
     );
     assert.equal(await token.read.balanceOf([vault.address]), 0n);
-    assert.equal(
-      await strategy.read.principalBearingExposure([token.address]),
-      0n,
-    );
+    assert.equal(await strategy.read.strategyExposure([token.address]), 0n);
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: false, active: false, cap: 0n },
+    ]);
+    assert.equal(await vault.read.isTrackedTvlToken([token.address]), false);
 
     // Sanity check base fixture token stays unaffected.
-    assert.equal(
-      await vault.read.isTrackedPrincipalToken([baseToken.address]),
-      true,
-    );
+    assert.equal(await vault.read.isTrackedTvlToken([baseToken.address]), true);
   });
 
   it("updates treasury via configured timelock, not direct admin", async function () {
@@ -985,7 +1052,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("decreases principal on deallocate, deallocateAll, and emergency unwind", async function () {
+  it("decreases cost basis on deallocate, deallocateAll, and emergency unwind", async function () {
     const {
       vault,
       vaultAsAllocator,
@@ -995,41 +1062,41 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       bridge,
     } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       1_200_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       1_200_000n,
     );
 
-    await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
       token.address,
       stratA.address,
       200_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       1_000_000n,
     );
 
-    await vaultAsAllocator.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
       token.address,
       stratA.address,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       0n,
     );
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       1_600_000n,
     ]);
-    const principalBefore = (await vault.read.strategyPrincipal([
+    const costBasisBefore = (await vault.read.strategyCostBasis([
       token.address,
       stratA.address,
     ])) as bigint;
@@ -1037,42 +1104,25 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 500_000n]);
     assert.equal(await bridge.read.lastAmount(), 500_000n);
 
-    const principalAfter = (await vault.read.strategyPrincipal([
+    const costBasisAfter = (await vault.read.strategyCostBasis([
       token.address,
       stratA.address,
     ])) as bigint;
-    assert.equal(principalBefore - principalAfter, 100_000n);
+    assert.equal(costBasisBefore - costBasisAfter, 100_000n);
   });
 
-  it("emits new treasury/harvest/principal events with expected args", async function () {
+  it("emits new treasury and harvest events with expected args", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault);
 
-    const allocHash = await vaultAsAllocator.write.allocatePrincipalToStrategy([
-      token.address,
-      stratA.address,
-      200_000n,
-    ]);
-    const allocReceipt = await publicClient.waitForTransactionReceipt({
+    const allocHash = await vaultAsAllocator.write.allocateVaultTokenToStrategy(
+      [token.address, stratA.address, 200_000n],
+    );
+    await publicClient.waitForTransactionReceipt({
       hash: allocHash,
     });
-    const principalEvent = expectEventOnce(
-      allocReceipt,
-      vault,
-      "StrategyPrincipalUpdated",
-    );
-    assert.equal(
-      (principalEvent.principalToken as string).toLowerCase(),
-      token.address.toLowerCase(),
-    );
-    assert.equal(
-      (principalEvent.strategy as string).toLowerCase(),
-      stratA.address.toLowerCase(),
-    );
-    assert.equal(principalEvent.previousPrincipal, 0n);
-    assert.equal(principalEvent.newPrincipal, 200_000n);
 
     await stratA.write.setAssets([token.address, 230_000n]);
     const treasuryBefore = (await vault.read.yieldRecipient()) as `0x${string}`;
@@ -1091,7 +1141,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       "YieldHarvested",
     );
     assert.equal(
-      (harvestEvent.principalToken as string).toLowerCase(),
+      (harvestEvent.vaultToken as string).toLowerCase(),
       token.address.toLowerCase(),
     );
     assert.equal(
@@ -1137,13 +1187,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       [vault.address],
     );
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       overreporting.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       overreporting.address,
       200_000n,
@@ -1222,32 +1272,32 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("caps principal decrease at zero when received exceeds tracked principal", async function () {
+  it("caps cost-basis decrease at zero when received exceeds tracked cost basis", async function () {
     const { vault, vaultAsAllocator, token } = await deployBase();
 
     const edgeStrategy = await viem.deployContract("MockHarvestEdgeStrategy", [
       vault.address,
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       edgeStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       edgeStrategy.address,
       50_000n,
     ]);
 
     await edgeStrategy.write.setDeallocateBonus([token.address, 70_000n]);
-    await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
       token.address,
       edgeStrategy.address,
       50_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, edgeStrategy.address]),
+      await vault.read.strategyCostBasis([token.address, edgeStrategy.address]),
       0n,
     );
   });
@@ -1256,19 +1306,19 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       300_000n,
     ]);
     await stratA.write.setAssets([token.address, 340_000n]);
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: false, active: false, cap: 0n },
     ]);
-    const cfg = (await vault.read.getPrincipalStrategyConfig([
+    const cfg = (await vault.read.getVaultTokenStrategyConfig([
       token.address,
       stratA.address,
     ])) as { whitelisted: boolean; active: boolean; cap: bigint };
@@ -1288,31 +1338,31 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(after - before, 20_000n);
   });
 
-  it("resets principal to zero when strategy is removed from registry", async function () {
+  it("resets cost basis to zero when strategy is removed from registry", async function () {
     const { vault, vaultAsAllocator, token, stratA } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       200_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       200_000n,
     );
 
     await stratA.write.setAssets([token.address, 0n]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: false, active: false, cap: 0n },
     ]);
 
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
       0n,
     );
-    const list = (await vault.read.getPrincipalTokenStrategies([
+    const list = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.equal(

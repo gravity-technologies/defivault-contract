@@ -122,7 +122,7 @@ describe("AaveV3Strategy", async function () {
     );
   });
 
-  it("splits exact-token balances from principal-domain breakdowns", async function () {
+  it("splits exact-token balances from position breakdowns", async function () {
     const { strategy, underlying, aToken, otherToken } = await deploySystem();
 
     await underlying.write.mint([vault.account.address, 100n]);
@@ -130,32 +130,32 @@ describe("AaveV3Strategy", async function () {
     await strategy.write.allocate([underlying.address, 100n]);
 
     let breakdown = await strategy.read.positionBreakdown([underlying.address]);
-    assert.equal(breakdown.components.length, 1);
+    assert.equal(breakdown.length, 1);
     assert.equal(
-      breakdown.components[0].token.toLowerCase(),
+      breakdown[0].token.toLowerCase(),
       aToken.address.toLowerCase(),
     );
-    assert.equal(breakdown.components[0].amount, 100n);
-    assert.equal(BigInt(breakdown.components[0].kind), 0n);
+    assert.equal(breakdown[0].amount, 100n);
+    assert.equal(BigInt(breakdown[0].kind), 0n);
 
     await underlying.write.mint([strategy.address, 7n], {
       account: outsider.account,
     });
 
     breakdown = await strategy.read.positionBreakdown([underlying.address]);
-    assert.equal(breakdown.components.length, 2);
+    assert.equal(breakdown.length, 2);
     assert.equal(
-      breakdown.components[0].token.toLowerCase(),
+      breakdown[0].token.toLowerCase(),
       aToken.address.toLowerCase(),
     );
-    assert.equal(breakdown.components[0].amount, 100n);
-    assert.equal(BigInt(breakdown.components[0].kind), 0n);
+    assert.equal(breakdown[0].amount, 100n);
+    assert.equal(BigInt(breakdown[0].kind), 0n);
     assert.equal(
-      breakdown.components[1].token.toLowerCase(),
+      breakdown[1].token.toLowerCase(),
       underlying.address.toLowerCase(),
     );
-    assert.equal(breakdown.components[1].amount, 7n);
-    assert.equal(BigInt(breakdown.components[1].kind), 1n);
+    assert.equal(breakdown[1].amount, 7n);
+    assert.equal(BigInt(breakdown[1].kind), 1n);
 
     assert.equal(await strategy.read.exactTokenBalance([aToken.address]), 100n);
     assert.equal(
@@ -169,15 +169,15 @@ describe("AaveV3Strategy", async function () {
     const aTokenUnsupportedBreakdown = await strategy.read.positionBreakdown([
       aToken.address,
     ]);
-    assert.equal(aTokenUnsupportedBreakdown.components.length, 0);
+    assert.equal(aTokenUnsupportedBreakdown.length, 0);
 
     const unsupported = await strategy.read.positionBreakdown([
       otherToken.address,
     ]);
-    assert.equal(unsupported.components.length, 0);
+    assert.equal(unsupported.length, 0);
   });
 
-  it("returns principal-bearing scalar in underlying domain and 0 for unsupported domains", async function () {
+  it("returns strategy-side exposure for the underlying token and 0 for unsupported queries", async function () {
     const { strategy, underlying, otherToken } = await deploySystem();
 
     await underlying.write.mint([vault.account.address, 50n]);
@@ -188,11 +188,11 @@ describe("AaveV3Strategy", async function () {
     });
 
     assert.equal(
-      await strategy.read.principalBearingExposure([underlying.address]),
+      await strategy.read.strategyExposure([underlying.address]),
       52n,
     );
     assert.equal(
-      await strategy.read.principalBearingExposure([otherToken.address]),
+      await strategy.read.strategyExposure([otherToken.address]),
       0n,
     );
   });
@@ -208,7 +208,7 @@ describe("AaveV3Strategy", async function () {
       account: outsider.account,
     });
     assert.equal(
-      await strategy.read.principalBearingExposure([underlying.address]),
+      await strategy.read.strategyExposure([underlying.address]),
       103n,
     );
 
@@ -227,11 +227,11 @@ describe("AaveV3Strategy", async function () {
     assert.equal(await aToken.read.balanceOf([strategy.address]), 60n);
     assert.equal(await underlying.read.balanceOf([strategy.address]), 0n);
     assert.equal(
-      await strategy.read.principalBearingExposure([underlying.address]),
+      await strategy.read.strategyExposure([underlying.address]),
       60n,
     );
     const sweptPartial = deallocateLogs.find(
-      (log) => log.eventName === "ResidualUnderlyingSwept",
+      (log) => log.eventName === "UninvestedTokenSwept",
     );
     const deallocatedPartial = findDecodedEvent(deallocateLogs, "Deallocated");
     assert.ok(sweptPartial);
@@ -264,11 +264,11 @@ describe("AaveV3Strategy", async function () {
     assert.equal(await aToken.read.balanceOf([strategy.address]), 0n);
     assert.equal(await underlying.read.balanceOf([strategy.address]), 0n);
     assert.equal(
-      await strategy.read.principalBearingExposure([underlying.address]),
+      await strategy.read.strategyExposure([underlying.address]),
       0n,
     );
     const sweptAll = deallocateAllLogs.find(
-      (log) => log.eventName === "ResidualUnderlyingSwept",
+      (log) => log.eventName === "UninvestedTokenSwept",
     );
     const deallocatedAll = findDecodedEvent(deallocateAllLogs, "Deallocated");
     assert.ok(sweptAll);

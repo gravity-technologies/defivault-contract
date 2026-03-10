@@ -393,15 +393,15 @@ async function main() {
     aToken.address,
   );
 
-  const principalTokenStrategyParamsPath = writeModuleParams(
-    "principal-token-strategy.temp.json",
-    "PrincipalTokenStrategyModule",
+  const vaultTokenStrategyParamsPath = writeModuleParams(
+    "vault-token-strategy.temp.json",
+    "VaultTokenStrategyModule",
     {
       vaultProxy,
       strategyProxy,
-      principalToken: underlyingToken.address,
-      principalTokenSupported: true,
-      principalStrategyWhitelisted: true,
+      vaultToken: underlyingToken.address,
+      vaultTokenSupported: true,
+      vaultTokenStrategyWhitelisted: true,
       strategyCap: `${strategyCap}n`,
     },
   );
@@ -427,45 +427,44 @@ async function main() {
     },
   );
 
-  const principalTokenStrategyDeploymentId = `smoke-principal-token-strategy-${smokeRunId}`;
+  const vaultTokenStrategyDeploymentId = `smoke-vault-token-strategy-${smokeRunId}`;
   await runIgnitionDeploy(
-    "ignition-principal-token-strategy",
-    "./ignition/modules/PrincipalTokenStrategy.ts",
-    principalTokenStrategyParamsPath,
-    principalTokenStrategyDeploymentId,
-    "principal-token-strategy-deployed-addresses.json",
+    "ignition-vault-token-strategy",
+    "./ignition/modules/VaultTokenStrategy.ts",
+    vaultTokenStrategyParamsPath,
+    vaultTokenStrategyDeploymentId,
+    "vault-token-strategy-deployed-addresses.json",
   );
 
-  const principalTokenConfig = await vault.read.getPrincipalTokenConfig([
+  const vaultTokenConfig = await vault.read.getVaultTokenConfig([
     underlyingToken.address,
   ]);
-  const principalStrategyConfig = await vault.read.getPrincipalStrategyConfig([
-    underlyingToken.address,
-    strategyProxy,
-  ]);
+  const vaultTokenStrategyConfig = await vault.read.getVaultTokenStrategyConfig(
+    [underlyingToken.address, strategyProxy],
+  );
   recordEq(
     assertions,
-    "principalTokenConfig.supported",
-    principalTokenConfig.supported,
+    "vaultTokenConfig.supported",
+    vaultTokenConfig.supported,
     true,
   );
   recordEq(
     assertions,
-    "principalStrategyConfig.whitelisted",
-    principalStrategyConfig.whitelisted,
+    "vaultTokenStrategyConfig.whitelisted",
+    vaultTokenStrategyConfig.whitelisted,
     true,
   );
   // whitelisted=true always transitions strategy to active=true in vault lifecycle rules.
   recordEq(
     assertions,
-    "principalStrategyConfig.active",
-    principalStrategyConfig.active,
+    "vaultTokenStrategyConfig.active",
+    vaultTokenStrategyConfig.active,
     true,
   );
   recordEq(
     assertions,
-    "principalStrategyConfig.cap",
-    principalStrategyConfig.cap,
+    "vaultTokenStrategyConfig.cap",
+    vaultTokenStrategyConfig.cap,
     strategyCap,
   );
 

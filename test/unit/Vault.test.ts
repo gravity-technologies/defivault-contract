@@ -18,13 +18,10 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     return wallet.account.address;
   }
 
-  function componentTotal(breakdown: {
-    components: ReadonlyArray<{ amount: bigint }>;
-  }): bigint {
-    return breakdown.components.reduce(
-      (sum, component) => sum + component.amount,
-      0n,
-    );
+  function componentTotal(
+    components: ReadonlyArray<{ amount: bigint }>,
+  ): bigint {
+    return components.reduce((sum, component) => sum + component.amount, 0n);
   }
 
   async function deployBase() {
@@ -77,16 +74,13 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     ]);
     await vault.write.grantRole([await vault.read.PAUSER_ROLE(), addr(pauser)]);
 
-    await vault.write.setPrincipalTokenConfig([
-      token.address,
-      { supported: true },
-    ]);
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
 
     const stratA = await viem.deployContract("MockYieldStrategy", [
       vault.address,
       "STRAT_A",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: true, active: false, cap: 2_000_000n },
@@ -195,7 +189,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       bridge,
     } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       500_000n,
@@ -203,7 +197,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     await vaultAsPauser.write.pause();
 
     await viem.assertions.revertWithCustomError(
-      vaultAsAllocator.write.allocatePrincipalToStrategy([
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
         token.address,
         stratA.address,
         1n,
@@ -217,7 +211,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "Paused",
     );
 
-    await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
       token.address,
       stratA.address,
       100_000n,
@@ -237,18 +231,18 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       bridge,
     } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       600_000n,
     ]);
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       { supported: false },
     ]);
 
     await viem.assertions.revertWithCustomError(
-      vaultAsAllocator.write.allocatePrincipalToStrategy([
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
         token.address,
         stratA.address,
         1n,
@@ -262,7 +256,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "TokenNotSupported",
     );
 
-    await vaultAsAdmin.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAdmin.write.deallocateAllVaultTokenFromStrategy([
       token.address,
       stratA.address,
     ]);
@@ -280,12 +274,12 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       stratA,
     } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       400_000n,
     ]);
-    await vaultAsAdmin.write.deallocatePrincipalFromStrategy([
+    await vaultAsAdmin.write.deallocateVaultTokenFromStrategy([
       token.address,
       stratA.address,
       150_000n,
@@ -300,7 +294,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       250_000n,
     );
 
-    await vaultAsAdmin.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAdmin.write.deallocateAllVaultTokenFromStrategy([
       token.address,
       stratA.address,
     ]);
@@ -315,7 +309,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
 
     await viem.assertions.revertWithCustomError(
-      vaultAsOther.write.deallocatePrincipalFromStrategy([
+      vaultAsOther.write.deallocateVaultTokenFromStrategy([
         token.address,
         stratA.address,
         1n,
@@ -325,22 +319,56 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
+  it("keeps cap enforcement conservative on requested amount after under-spend", async function () {
+    const { vault, vaultAsAllocator, token, stratA } = await deployBase();
+
+    await stratA.write.setAllocatePullBps([token.address, 5_000]);
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      stratA.address,
+      { whitelisted: true, active: false, cap: 100_000n },
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      stratA.address,
+      60_000n,
+    ]);
+    assert.equal(await stratA.read.strategyExposure([token.address]), 30_000n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, stratA.address]),
+      30_000n,
+    );
+
+    // The mock would only spend 40_000 on this second request, but cap enforcement
+    // intentionally remains conservative on the requested allocation amount.
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
+        token.address,
+        stratA.address,
+        80_000n,
+      ]),
+      vaultAsAllocator,
+      "CapExceeded",
+    );
+  });
+
   it("keeps de-whitelisted strategies in withdraw-only mode until empty", async function () {
     const { vault, vaultAsAllocator, token, stratA } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       300_000n,
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: false, active: false, cap: 0n },
     ]);
 
     await viem.assertions.revertWithCustomError(
-      vaultAsAllocator.write.allocatePrincipalToStrategy([
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
         token.address,
         stratA.address,
         1n,
@@ -349,17 +377,17 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "StrategyNotWhitelisted",
     );
 
-    await vaultAsAllocator.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
       token.address,
       stratA.address,
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: false, active: false, cap: 0n },
     ]);
 
-    const list = (await vault.read.getPrincipalTokenStrategies([
+    const list = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.equal(
@@ -370,16 +398,16 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
-  it("keeps strategy withdraw-only when de-listing assets probe reverts", async function () {
+  it("keeps strategy withdraw-only when de-listing token probe reverts", async function () {
     const { vault, token } = await deployBase();
     const reverting = await viem.deployContract("MockRevertingStrategy");
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       reverting.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    const hash = await vault.write.setPrincipalStrategyWhitelist([
+    const hash = await vault.write.setVaultTokenStrategyConfig([
       token.address,
       reverting.address,
       { whitelisted: false, active: false, cap: 0n },
@@ -392,7 +420,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "StrategyRemovalCheckFailed",
     );
     assert.equal(
-      (removalCheck.token as string).toLowerCase(),
+      (removalCheck.vaultToken as string).toLowerCase(),
       token.address.toLowerCase(),
     );
     assert.equal(
@@ -400,14 +428,14 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       reverting.address.toLowerCase(),
     );
 
-    const cfg = (await vault.read.getPrincipalStrategyConfig([
+    const cfg = (await vault.read.getVaultTokenStrategyConfig([
       token.address,
       reverting.address,
     ])) as { whitelisted: boolean; active: boolean; cap: bigint };
     assert.equal(cfg.whitelisted, false);
     assert.equal(cfg.active, true);
 
-    const list = (await vault.read.getPrincipalTokenStrategies([
+    const list = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.equal(
@@ -418,7 +446,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
-  it("validates setPrincipalStrategyWhitelist auth and input constraints", async function () {
+  it("validates setVaultTokenStrategyConfig auth and input constraints", async function () {
     const { vault, vaultAsOther, token } = await deployBase();
     const zeroAddress = "0x0000000000000000000000000000000000000000";
     const strategy = await viem.deployContract("MockYieldStrategy", [
@@ -432,7 +460,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     ]);
 
     await viem.assertions.revertWithCustomError(
-      vaultAsOther.write.setPrincipalStrategyWhitelist([
+      vaultAsOther.write.setVaultTokenStrategyConfig([
         token.address,
         strategy.address,
         { whitelisted: true, active: false, cap: 0n },
@@ -441,7 +469,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "Unauthorized",
     );
     await viem.assertions.revertWithCustomError(
-      vault.write.setPrincipalStrategyWhitelist([
+      vault.write.setVaultTokenStrategyConfig([
         zeroAddress,
         strategy.address,
         { whitelisted: true, active: false, cap: 0n },
@@ -450,7 +478,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "InvalidParam",
     );
     await viem.assertions.revertWithCustomError(
-      vault.write.setPrincipalStrategyWhitelist([
+      vault.write.setVaultTokenStrategyConfig([
         token.address,
         zeroAddress,
         { whitelisted: true, active: false, cap: 0n },
@@ -459,7 +487,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "InvalidParam",
     );
     await viem.assertions.revertWithCustomError(
-      vault.write.setPrincipalStrategyWhitelist([
+      vault.write.setVaultTokenStrategyConfig([
         unsupportedToken.address,
         strategy.address,
         { whitelisted: true, active: false, cap: 0n },
@@ -472,18 +500,18 @@ describe("GRVTL1TreasuryVault core flows", async function () {
   it("enforces strategy-set bounds and avoids duplicate membership entries", async function () {
     const { vault, token, stratA } = await deployBase();
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: true, active: false, cap: 1_111_111n },
     ]);
-    let list = (await vault.read.getPrincipalTokenStrategies([
+    let list = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.equal(list.length, 1);
     assert.equal(
       (
-        (await vault.read.getPrincipalStrategyConfig([
+        (await vault.read.getVaultTokenStrategyConfig([
           token.address,
           stratA.address,
         ])) as { whitelisted: boolean; active: boolean; cap: bigint }
@@ -498,13 +526,13 @@ describe("GRVTL1TreasuryVault core flows", async function () {
         `EXTRA_${i}`,
       ]);
       extraStrategies.push(strategy);
-      await vault.write.setPrincipalStrategyWhitelist([
+      await vault.write.setVaultTokenStrategyConfig([
         token.address,
         strategy.address,
         { whitelisted: true, active: false, cap: 0n },
       ]);
     }
-    list = (await vault.read.getPrincipalTokenStrategies([
+    list = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.equal(list.length, 8);
@@ -514,7 +542,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "EXTRA_8",
     ]);
     await viem.assertions.revertWithCustomError(
-      vault.write.setPrincipalStrategyWhitelist([
+      vault.write.setVaultTokenStrategyConfig([
         token.address,
         ninth.address,
         { whitelisted: true, active: false, cap: 0n },
@@ -523,17 +551,17 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "CapExceeded",
     );
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       extraStrategies[0].address,
       { whitelisted: false, active: false, cap: 0n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       ninth.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    list = (await vault.read.getPrincipalTokenStrategies([
+    list = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.equal(list.length, 8);
@@ -553,23 +581,23 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     ]);
     const reverting = await viem.deployContract("MockRevertingStrategy");
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       healthy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       reverting.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       healthy.address,
       200_000n,
     ]);
 
-    const status = await vault.read.totalExactAssetsStatus([token.address]);
+    const status = await vault.read.tokenTotalsConservative([token.address]);
     const idle = await vault.read.idleTokenBalance([token.address]);
     const healthyAssets = componentTotal(
       await vault.read.strategyPositionBreakdown([
@@ -591,10 +619,10 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       token.address,
       inactive.address,
     ]);
-    assert.equal(inactiveBreakdown.components.length, 0);
+    assert.equal(inactiveBreakdown.length, 0);
 
     const reverting = await viem.deployContract("MockRevertingStrategy");
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       reverting.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -619,12 +647,12 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
-  it("validates setPrincipalTokenConfig auth and token address", async function () {
+  it("validates setVaultTokenConfig auth and token address", async function () {
     const { vault, vaultAsOther } = await deployBase();
     const token = await viem.deployContract("MockERC20", ["Other", "OTH", 6]);
 
     await viem.assertions.revertWithCustomError(
-      vaultAsOther.write.setPrincipalTokenConfig([
+      vaultAsOther.write.setVaultTokenConfig([
         token.address,
         { supported: true },
       ]),
@@ -632,7 +660,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "Unauthorized",
     );
     await viem.assertions.revertWithCustomError(
-      vault.write.setPrincipalTokenConfig([addr(other), { supported: true }]),
+      vault.write.setVaultTokenConfig([addr(other), { supported: true }]),
       vault,
       "InvalidParam",
     );
@@ -721,7 +749,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       bridge,
     } = await deployBase();
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       stratA.address,
       1_700_000n,

@@ -4,11 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {
-    StrategyAssetBreakdown,
-    TokenAmountComponent,
-    TokenAmountComponentKind
-} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent, PositionComponentKind} from "../interfaces/IVaultReportingTypes.sol";
 
 interface IMintableERC20 {
     function mint(address to, uint256 amount) external;
@@ -69,19 +65,24 @@ contract MockHarvestEdgeStrategy is IYieldStrategy {
         return _trackedAssets[token];
     }
 
-    function positionBreakdown(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
-        uint256 tracked = _trackedAssets[token];
-        if (tracked == 0) return breakdown;
+    function tvlTokens(address vaultToken) external pure override returns (address[] memory tokens) {
+        tokens = new address[](1);
+        tokens[0] = vaultToken;
+    }
 
-        breakdown.components = new TokenAmountComponent[](1);
-        breakdown.components[0] = TokenAmountComponent({
+    function positionBreakdown(address token) external view override returns (PositionComponent[] memory components) {
+        uint256 tracked = _trackedAssets[token];
+        if (tracked == 0) return components;
+
+        components = new PositionComponent[](1);
+        components[0] = PositionComponent({
             token: token,
             amount: tracked,
-            kind: TokenAmountComponentKind.InvestedPrincipal
+            kind: PositionComponentKind.InvestedPosition
         });
     }
 
-    function principalBearingExposure(address token) external view override returns (uint256 exposure) {
+    function strategyExposure(address token) external view override returns (uint256 exposure) {
         if (exposureOverrideSet[token]) return exposureOverride[token];
         return _trackedAssets[token];
     }

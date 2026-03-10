@@ -24,7 +24,7 @@ function readStrategyParameters(filePath: string): StrategyDeployParams {
   const raw = readJson5Object(filePath) as
     | { StrategyCoreModule?: Record<string, unknown> }
     | { StrategyCoreDeploy?: Record<string, unknown> }
-    | { PrincipalTokenStrategyModule?: Record<string, unknown> }
+    | { VaultTokenStrategyModule?: Record<string, unknown> }
     | Record<string, unknown>;
 
   let payload: Record<string, unknown> | undefined;
@@ -42,11 +42,11 @@ function readStrategyParameters(filePath: string): StrategyDeployParams {
     ) {
       payload = raw.StrategyCoreDeploy as Record<string, unknown>;
     } else if (
-      "PrincipalTokenStrategyModule" in raw &&
-      raw.PrincipalTokenStrategyModule !== undefined &&
-      raw.PrincipalTokenStrategyModule !== null
+      "VaultTokenStrategyModule" in raw &&
+      raw.VaultTokenStrategyModule !== undefined &&
+      raw.VaultTokenStrategyModule !== null
     ) {
-      payload = raw.PrincipalTokenStrategyModule as Record<string, unknown>;
+      payload = raw.VaultTokenStrategyModule as Record<string, unknown>;
     } else {
       payload = raw as Record<string, unknown>;
     }

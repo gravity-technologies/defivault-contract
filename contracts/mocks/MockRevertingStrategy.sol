@@ -2,11 +2,11 @@
 pragma solidity 0.8.34;
 
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {StrategyAssetBreakdown} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
 
 /**
  * @dev Strategy mock that always reverts on operational methods.
- * Used to test degraded-mode accounting and emergency unwind skip behavior.
+ * Used to test best-effort accounting and emergency unwind skip behavior.
  */
 contract MockRevertingStrategy is IYieldStrategy {
     function name() external pure returns (string memory) {
@@ -17,11 +17,15 @@ contract MockRevertingStrategy is IYieldStrategy {
         revert("ASSETS_REVERT");
     }
 
-    function positionBreakdown(address) external pure returns (StrategyAssetBreakdown memory) {
+    function tvlTokens(address) external pure returns (address[] memory) {
         revert("ASSETS_REVERT");
     }
 
-    function principalBearingExposure(address) external pure returns (uint256) {
+    function positionBreakdown(address) external pure returns (PositionComponent[] memory) {
+        revert("ASSETS_REVERT");
+    }
+
+    function strategyExposure(address) external pure returns (uint256) {
         revert("EXPOSURE_REVERT");
     }
 
