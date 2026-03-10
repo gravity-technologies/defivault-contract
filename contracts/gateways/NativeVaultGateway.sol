@@ -6,11 +6,16 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 
 /**
- * @title NativeToWrappedIngress
- * @notice Canonical native ingress path that wraps ETH and forwards wrapped-native tokens to the vault.
- * @dev This contract is intended to be the single planned external ETH ingress path for the vault system.
+ * @title NativeVaultGateway
+ * @notice Canonical external native-asset entrypoint that wraps ETH and forwards wrapped-native tokens to the vault.
+ * @dev Why this exists:
+ *      - The vault's accounting domain is ERC20-only; native exposure is modeled as wrapped-native internally.
+ *      - The vault intentionally rejects arbitrary ETH sends, so external native inflow must be normalized before it
+ *        reaches vault custody.
+ *      - This contract stays intentionally stateless in normal flow and should not retain persistent ETH or
+ *        wrapped-native.
  */
-contract NativeToWrappedIngress {
+contract NativeVaultGateway {
     using SafeERC20 for IERC20;
 
     error InvalidParam();
@@ -24,7 +29,7 @@ contract NativeToWrappedIngress {
     /// @notice Emitted when native ETH is wrapped and forwarded to the vault.
     /// @param sender External caller that provided native ETH.
     /// @param amount Native ETH amount wrapped and forwarded.
-    event NativeIngressProcessed(address indexed sender, uint256 amount);
+    event NativeDepositedToVault(address indexed sender, uint256 amount);
 
     /**
      * @param wrappedNativeToken_ Wrapped-native token contract address.
@@ -39,17 +44,17 @@ contract NativeToWrappedIngress {
 
     /**
      * @notice Wraps `msg.value` ETH and forwards wrapped-native tokens to the vault.
-     * @dev Reverts on zero-value ingress.
+     * @dev Reverts on zero-value sends.
      */
-    function ingress() external payable {
-        _processIngress(msg.sender, msg.value);
+    function depositToVault() external payable {
+        _depositToVault(msg.sender, msg.value);
     }
 
     /**
      * @notice Convenience receive path for plain ETH transfers.
      */
     receive() external payable {
-        _processIngress(msg.sender, msg.value);
+        _depositToVault(msg.sender, msg.value);
     }
 
     /**
@@ -64,12 +69,12 @@ contract NativeToWrappedIngress {
      * @param sender External sender used for telemetry.
      * @param amount Native ETH amount to wrap.
      */
-    function _processIngress(address sender, uint256 amount) internal {
+    function _depositToVault(address sender, uint256 amount) internal {
         if (amount == 0) revert InvalidParam();
 
         IWrappedNative(wrappedNativeToken).deposit{value: amount}();
         IERC20(wrappedNativeToken).safeTransfer(vault, amount);
 
-        emit NativeIngressProcessed(sender, amount);
+        emit NativeDepositedToVault(sender, amount);
     }
 }

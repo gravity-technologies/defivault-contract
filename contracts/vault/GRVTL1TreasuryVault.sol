@@ -6,14 +6,17 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {IL1ZkSyncBridgeHub} from "../external/IL1ZkSyncBridgeHub.sol";
+import {IGRVTBaseTokenMintable} from "../external/IGRVTBaseTokenMintable.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
+import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {StrategyAssetBreakdown, VaultTokenStatus, VaultTokenTotals} from "../interfaces/IVaultReportingTypes.sol";
 import {VaultBridgeLib} from "./VaultBridgeLib.sol";
 import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
 
 /**
- *  GRVTL1TreasuryVault
+ * @title GRVTL1TreasuryVault
  * @notice Upgradeable L1 treasury vault for GRVT that manages three flows:
  *         (1) hold idle ERC20 liquidity,
  *         (2) allocate via whitelisted strategies and deallocate via withdrawable strategy entries, and
@@ -35,10 +38,10 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *         contracts (e.g. Aave V3). Balance accounting always uses on-chain balance deltas on
  *         the return path, not strategy-reported values, to defend against incorrect return data.
  *
- *      3. **L1 → L2 bridge** – REBALANCER calls split native/ERC20 rebalance paths, which bridge through
- *         BridgeHub's two-bridges path. The vault mints base token for `mintValue`.
- *         ERC20 bridge requests use `msg.value == 0`; native-intent requests unwrap
- *         wrapped native and forward native value to BridgeHub.
+ *      3. **L1 → L2 bridge** – REBALANCER calls split native/ERC20 rebalance paths.
+ *         ERC20 bridge requests are submitted directly through BridgeHub's two-bridges path.
+ *         Native-intent requests route through `NativeBridgeGateway`, which becomes the zkSync
+ *         deposit sender so failed native deposits can be reclaimed without sending ETH back to the vault.
  *
  *      ### Pause semantics
  *      Pausing (via PAUSER_ROLE or VAULT_ADMIN_ROLE) blocks *risk-taking* actions:
@@ -84,7 +87,7 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *      `try/catch` calls. Iteration is bounded by `MAX_STRATEGIES_PER_TOKEN`.
  *
  *      ### Upgrade safety
- *      50 reserved `__gap` slots follow all state variables to allow future layout additions
+ *      49 reserved `__gap` slots follow all state variables to allow future layout additions
  *      without colliding with proxy storage.
  */
 contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable, IL1TreasuryVault {
@@ -117,6 +120,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /// @dev Canonical wrapped-native ERC20 token used for internal accounting and strategy calls.
     address private _wrappedNativeToken;
+
+    /// @dev Native bridge gateway used for L1 -> L2 native sends and failed-deposit recovery.
+    address private _nativeBridgeGateway;
 
     /// @dev Native dust/forced-send sweep yield recipient.
     address private _yieldRecipient;
@@ -161,8 +167,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /// @dev Timelock controller authorized to update yield recipient.
     address private _yieldRecipientTimelockController;
 
-    /// @dev Reserved storage gap for upgrade-safe layout extension (50 × 32 bytes).
-    uint256[50] private __gap;
+    /// @dev Reserved storage gap for upgrade-safe layout extension (49 × 32 bytes).
+    uint256[49] private __gap;
 
     // =============================================== Events ===================================================
     /// @notice Emitted when the vault enters the paused state.
@@ -221,7 +227,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      *      remaining operational roles. The `admin` address receives DEFAULT_ADMIN_ROLE,
      *      VAULT_ADMIN_ROLE, and PAUSER_ROLE — operational roles (REBALANCER, ALLOCATOR) must
      *      be granted separately. Yield sweep recipient is configured independently and must not
-     *      be the same as `admin`.
+     *      be the same as `admin`. Native bridge gateway is configured separately after deployment
+     *      because it depends on the deployed vault proxy address.
      * @param admin                Initial governance admin account.
      * @param bridgeHub_           Initial BridgeHub address. Must be non-zero.
      * @param baseToken_           Initial mintable base token address. Must be non-zero.
@@ -350,6 +357,11 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
+    function nativeBridgeGateway() external view override returns (address) {
+        return _nativeBridgeGateway;
+    }
+
+    /// @inheritdoc IL1TreasuryVault
     function paused() external view override returns (bool) {
         return _paused;
     }
@@ -420,6 +432,19 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address previousYieldRecipient = _yieldRecipient;
         _yieldRecipient = newYieldRecipient;
         emit YieldRecipientUpdated(previousYieldRecipient, newYieldRecipient);
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function setNativeBridgeGateway(address newNativeBridgeGateway) external override onlyVaultAdmin {
+        if (
+            newNativeBridgeGateway == address(0) ||
+            newNativeBridgeGateway == address(this) ||
+            newNativeBridgeGateway.code.length == 0
+        ) revert InvalidParam();
+
+        address previousNativeBridgeGateway = _nativeBridgeGateway;
+        _nativeBridgeGateway = newNativeBridgeGateway;
+        emit NativeBridgeGatewayUpdated(previousNativeBridgeGateway, newNativeBridgeGateway);
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -986,7 +1011,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             VaultBridgeLib.ensureStandardBridgeOut(request, _principalTokenConfigs[token].supported);
         }
 
-        bytes32 txHash = VaultBridgeLib.bridgeToL2TwoBridges(request);
+        bytes32 txHash = isNativeIntent
+            ? _bridgeNativeToL2ThroughGateway(amount)
+            : VaultBridgeLib.bridgeToL2TwoBridges(request);
         VaultBridgeLib.emitBridgeEvent(
             token,
             amount,
@@ -998,6 +1025,40 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             emergency
         );
         _reconcileTrackedPrincipalToken(token);
+    }
+
+    /**
+     * @notice Bridges wrapped-native to L2 through the configured native bridge gateway.
+     * @dev The vault mints base token to itself, transfers wrapped-native and base token into the gateway,
+     *      and lets the gateway become the zkSync deposit sender so failed native deposits can be reclaimed
+     *      without sending ETH directly back to the vault.
+     * @param amount Wrapped-native amount to bridge as native ETH.
+     * @return txHash Canonical L2 transaction hash returned by BridgeHub.
+     */
+    function _bridgeNativeToL2ThroughGateway(uint256 amount) internal returns (bytes32 txHash) {
+        address gateway = _nativeBridgeGateway;
+        if (gateway == address(0)) revert NativeBridgeGatewayNotSet();
+
+        uint256 baseCost = IL1ZkSyncBridgeHub(_bridgeHub).l2TransactionBaseCost(
+            _l2ChainId,
+            tx.gasprice,
+            L2_TX_GAS_LIMIT,
+            L2_TX_GAS_PER_PUBDATA_BYTE
+        );
+
+        IGRVTBaseTokenMintable(_baseToken).mint(address(this), baseCost);
+        IERC20(_wrappedNativeToken).safeTransfer(gateway, amount);
+        IERC20(_baseToken).safeTransfer(gateway, baseCost);
+
+        txHash = INativeBridgeGateway(gateway).bridgeNativeToL2(
+            _l2ChainId,
+            L2_TX_GAS_LIMIT,
+            L2_TX_GAS_PER_PUBDATA_BYTE,
+            _l2ExchangeRecipient,
+            _l2ExchangeRecipient,
+            amount,
+            baseCost
+        );
     }
 
     /**
