@@ -31,11 +31,11 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ).write.setYieldRecipient([newYieldRecipient]);
   }
 
-  async function configureYieldRecipientTimelock(
+  async function configureYieldRecipientTimelockController(
     vault: {
       address: `0x${string}`;
       write: {
-        setYieldRecipientTimelock: (
+        setYieldRecipientTimelockController: (
           args: [`0x${string}`],
         ) => Promise<`0x${string}`>;
       };
@@ -49,7 +49,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       [addr(admin)],
       addr(admin),
     ]);
-    await vault.write.setYieldRecipientTimelock([timelock.address]);
+    await vault.write.setYieldRecipientTimelockController([timelock.address]);
     return { timelock, minDelay };
   }
 
@@ -339,9 +339,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("uses scalar exposure (not reporting components) for harvestable yield and principal sync", async function () {
-    const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
-      await deployBase();
+  it("uses scalar exposure (not reporting components) for harvestable yield", async function () {
+    const { vault, vaultAsAllocator, token, stratA } = await deployBase();
 
     await vaultAsAllocator.write.allocatePrincipalToStrategy([
       token.address,
@@ -356,7 +355,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await stratA.write.setExposure([token.address, 240_000n]);
 
-    const breakdown = await vault.read.strategyAssetBreakdown([
+    const breakdown = await vault.read.strategyPositionBreakdown([
       token.address,
       stratA.address,
     ]);
@@ -367,18 +366,9 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       await vault.read.harvestableYield([token.address, stratA.address]),
       40_000n,
     );
-
-    await vaultAsAdmin.write.syncStrategyPrincipal([
-      token.address,
-      stratA.address,
-    ]);
-    assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
-      240_000n,
-    );
   });
 
-  it("uses InvalidStrategyExposureRead for exposure-read failures in harvest/principal paths", async function () {
+  it("uses InvalidStrategyExposureRead for exposure-read failures in harvest paths", async function () {
     const { vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
 
@@ -391,11 +381,6 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     await viem.assertions.revertWithCustomError(
       vaultAsAdmin.read.harvestableYield([token.address, stratA.address]),
-      vaultAsAdmin,
-      "InvalidStrategyExposureRead",
-    );
-    await viem.assertions.revertWithCustomError(
-      vaultAsAdmin.write.syncStrategyPrincipal([token.address, stratA.address]),
       vaultAsAdmin,
       "InvalidStrategyExposureRead",
     );
@@ -438,10 +423,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(
-      vault,
-      0n,
-    );
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
@@ -508,10 +491,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const nonPayableTreasury = await viem.deployContract(
       "TestNonPayableTreasury",
     );
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(
-      vault,
-      0n,
-    );
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
@@ -558,10 +539,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(
-      vault,
-      0n,
-    );
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
@@ -621,10 +600,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     });
     await reentrantTreasury.write.configureReentry([attackCalldata]);
 
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(
-      vault,
-      0n,
-    );
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
@@ -686,7 +663,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("applies principal write-down when harvest deallocation leaves exposure below tracked principal", async function () {
+  it("does not auto-write-down principal when harvest leaves exposure below tracked principal", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token } = await deployBase();
 
     const edgeStrategy = await viem.deployContract("MockHarvestEdgeStrategy", [
@@ -704,30 +681,20 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       400_000n,
     ]);
     await edgeStrategy.write.setExposure([token.address, 420_000n]);
-    await edgeStrategy.write.setExposureDropOnDeallocate([
-      token.address,
-      100_000n,
-    ]);
 
-    const hash = await vaultAsAdmin.write.harvestYieldFromStrategy([
+    await vaultAsAdmin.write.harvestYieldFromStrategy([
       token.address,
       edgeStrategy.address,
       20_000n,
       20_000n,
     ]);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-    const writeDown = expectEventOnce(
-      receipt,
-      vault,
-      "StrategyPrincipalWrittenDown",
-    );
-    assert.equal(writeDown.previousPrincipal, 400_000n);
-    assert.equal(writeDown.exposureAfter, 300_000n);
-    assert.equal(writeDown.newPrincipal, 300_000n);
     assert.equal(
       await vault.read.strategyPrincipal([token.address, edgeStrategy.address]),
-      300_000n,
+      400_000n,
+    );
+    assert.equal(
+      await edgeStrategy.read.principalBearingExposure([token.address]),
+      400_000n,
     );
   });
 
@@ -844,7 +811,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
   it("updates treasury via configured timelock, not direct admin", async function () {
     const { vault, vaultAsAdmin, vaultAsOther } = await deployBase();
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(vault);
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
 
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsOther, addr(other)),
@@ -870,58 +838,22 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("allows repeated principal sync as exposure changes", async function () {
-    const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
-      await deployBase();
-
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
-      token.address,
-      stratA.address,
-      200_000n,
-    ]);
-    await stratA.write.setAssets([token.address, 150_000n]);
-
-    await vaultAsAdmin.write.syncStrategyPrincipal([
-      token.address,
-      stratA.address,
-    ]);
-    assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
-      150_000n,
-    );
-
-    await stratA.write.setAssets([token.address, 180_000n]);
-    assert.equal(
-      await vault.read.harvestableYield([token.address, stratA.address]),
-      30_000n,
-    );
-
-    await vaultAsAdmin.write.syncStrategyPrincipal([
-      token.address,
-      stratA.address,
-    ]);
-    assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
-      180_000n,
-    );
-  });
-
-  it("enforces RBAC on treasury, harvest, and principal-sync admin controls", async function () {
+  it("enforces RBAC on treasury and harvest admin controls", async function () {
     const { vault, vaultAsAdmin, vaultAsOther, token, stratA } =
       await deployBase();
 
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsOther, addr(other)),
       vaultAsOther,
-      "YieldRecipientTimelockNotSet",
+      "YieldRecipientTimelockControllerNotSet",
     );
     await viem.assertions.revertWithCustomError(
-      vaultAsOther.write.setYieldRecipientTimelock([addr(other)]),
+      vaultAsOther.write.setYieldRecipientTimelockController([addr(other)]),
       vaultAsOther,
       "Unauthorized",
     );
 
-    await configureYieldRecipientTimelock(vault);
+    await configureYieldRecipientTimelockController(vault);
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsAdmin, addr(other)),
       vaultAsAdmin,
@@ -942,11 +874,6 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vaultAsOther,
       "Unauthorized",
     );
-    await viem.assertions.revertWithCustomError(
-      vaultAsOther.write.syncStrategyPrincipal([token.address, stratA.address]),
-      vaultAsOther,
-      "Unauthorized",
-    );
   });
 
   it("validates treasury-set edge cases", async function () {
@@ -954,12 +881,12 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const zeroAddress = "0x0000000000000000000000000000000000000000";
 
     await viem.assertions.revertWithCustomError(
-      vaultAsAdmin.write.setYieldRecipientTimelock([zeroAddress]),
+      vaultAsAdmin.write.setYieldRecipientTimelockController([zeroAddress]),
       vaultAsAdmin,
       "InvalidParam",
     );
     await viem.assertions.revertWithCustomError(
-      vaultAsAdmin.write.setYieldRecipientTimelock([addr(other)]),
+      vaultAsAdmin.write.setYieldRecipientTimelockController([addr(other)]),
       vaultAsAdmin,
       "InvalidParam",
     );
@@ -967,12 +894,15 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsAdmin, addr(other)),
       vaultAsAdmin,
-      "YieldRecipientTimelockNotSet",
+      "YieldRecipientTimelockControllerNotSet",
     );
 
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(vault);
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
     await viem.assertions.revertWithCustomError(
-      vaultAsAdmin.write.setYieldRecipientTimelock([timelock.address]),
+      vaultAsAdmin.write.setYieldRecipientTimelockController([
+        timelock.address,
+      ]),
       vaultAsAdmin,
       "InvalidParam",
     );
@@ -1005,7 +935,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("validates harvest/sync input constraints and withdrawable-strategy checks", async function () {
+  it("validates harvest input constraints and withdrawable-strategy checks", async function () {
     const { vault, vaultAsAdmin, token, stratA } = await deployBase();
     const zeroAddress = "0x0000000000000000000000000000000000000000";
     const inactive = await viem.deployContract("MockYieldStrategy", [
@@ -1013,14 +943,6 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       "INACTIVE",
     ]);
 
-    await viem.assertions.revertWithCustomError(
-      vaultAsAdmin.write.syncStrategyPrincipal([
-        token.address,
-        inactive.address,
-      ]),
-      vaultAsAdmin,
-      "StrategyNotWhitelisted",
-    );
     await viem.assertions.revertWithCustomError(
       vaultAsAdmin.write.harvestYieldFromStrategy([
         token.address,
@@ -1030,11 +952,6 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       ]),
       vaultAsAdmin,
       "StrategyNotWhitelisted",
-    );
-    await viem.assertions.revertWithCustomError(
-      vaultAsAdmin.write.syncStrategyPrincipal([zeroAddress, stratA.address]),
-      vaultAsAdmin,
-      "InvalidParam",
     );
     await viem.assertions.revertWithCustomError(
       vaultAsAdmin.write.harvestYieldFromStrategy([
@@ -1130,7 +1047,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
   it("emits new treasury/harvest/principal events with expected args", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
-    const { timelock, minDelay } = await configureYieldRecipientTimelock(vault);
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
 
     const allocHash = await vaultAsAllocator.write.allocatePrincipalToStrategy([
       token.address,
@@ -1271,7 +1189,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       addr(admin),
     ]);
 
-    await vault.write.setYieldRecipientTimelock([timelock.address]);
+    await vault.write.setYieldRecipientTimelockController([timelock.address]);
 
     const newYieldRecipient = addr(other);
     const data = encodeFunctionData({
@@ -1305,33 +1223,31 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
   });
 
   it("caps principal decrease at zero when received exceeds tracked principal", async function () {
-    const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
-      await deployBase();
+    const { vault, vaultAsAllocator, token } = await deployBase();
+
+    const edgeStrategy = await viem.deployContract("MockHarvestEdgeStrategy", [
+      vault.address,
+    ]);
+    await vault.write.setPrincipalStrategyWhitelist([
+      token.address,
+      edgeStrategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
 
     await vaultAsAllocator.write.allocatePrincipalToStrategy([
       token.address,
-      stratA.address,
-      400_000n,
-    ]);
-
-    await stratA.write.setAssets([token.address, 50_000n]);
-    await vaultAsAdmin.write.syncStrategyPrincipal([
-      token.address,
-      stratA.address,
-    ]);
-    assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      edgeStrategy.address,
       50_000n,
-    );
+    ]);
 
-    await stratA.write.setAssets([token.address, 300_000n]);
+    await edgeStrategy.write.setDeallocateBonus([token.address, 70_000n]);
     await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
       token.address,
-      stratA.address,
-      120_000n,
+      edgeStrategy.address,
+      50_000n,
     ]);
     assert.equal(
-      await vault.read.strategyPrincipal([token.address, stratA.address]),
+      await vault.read.strategyPrincipal([token.address, edgeStrategy.address]),
       0n,
     );
   });

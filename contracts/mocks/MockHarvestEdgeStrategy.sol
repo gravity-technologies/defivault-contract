@@ -17,8 +17,8 @@ interface IMintableERC20 {
 /**
  * @title MockHarvestEdgeStrategy
  * @notice Test-only strategy mock for harvest edge-case coverage.
- * @dev Supports configurable deallocate bonus and exposure drops to exercise
- *      vault guard rails around yield accounting and principal write-downs.
+ * @dev Supports configurable deallocate bonus and exposure overrides to exercise
+ *      vault guard rails around yield accounting.
  */
 contract MockHarvestEdgeStrategy is IYieldStrategy {
     using SafeERC20 for IERC20;
@@ -32,7 +32,6 @@ contract MockHarvestEdgeStrategy is IYieldStrategy {
     mapping(address token => bool enabled) public exposureOverrideSet;
     mapping(address token => uint256 value) public exposureOverride;
     mapping(address token => uint256 value) public deallocateBonus;
-    mapping(address token => uint256 value) public exposureDropOnDeallocate;
 
     constructor(address vault_) {
         if (vault_ == address(0)) revert InvalidParam();
@@ -66,11 +65,11 @@ contract MockHarvestEdgeStrategy is IYieldStrategy {
         deallocateBonus[token] = bonus;
     }
 
-    function setExposureDropOnDeallocate(address token, uint256 drop) external {
-        exposureDropOnDeallocate[token] = drop;
+    function exactTokenBalance(address token) external view override returns (uint256) {
+        return _trackedAssets[token];
     }
 
-    function assets(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
+    function positionBreakdown(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
         uint256 tracked = _trackedAssets[token];
         if (tracked == 0) return breakdown;
 
@@ -119,20 +118,9 @@ contract MockHarvestEdgeStrategy is IYieldStrategy {
 
         uint256 afterVault = IERC20(token).balanceOf(vault);
         received = afterVault - beforeVault;
-        _applyExposureAfterDeallocate(token, received);
-    }
-
-    function _applyExposureAfterDeallocate(address token, uint256 received) internal {
-        uint256 drop = exposureDropOnDeallocate[token];
         if (exposureOverrideSet[token]) {
             uint256 current = exposureOverride[token];
-            uint256 totalDrop = received + drop;
-            exposureOverride[token] = current > totalDrop ? current - totalDrop : 0;
-            return;
+            exposureOverride[token] = current > received ? current - received : 0;
         }
-
-        if (drop == 0) return;
-        uint256 tracked = _trackedAssets[token];
-        _trackedAssets[token] = tracked > drop ? tracked - drop : 0;
     }
 }

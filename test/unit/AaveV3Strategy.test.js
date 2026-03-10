@@ -122,14 +122,14 @@ describe("AaveV3Strategy", async function () {
     );
   });
 
-  it("reports structured components for underlying and aToken query domains", async function () {
+  it("splits exact-token balances from principal-domain breakdowns", async function () {
     const { strategy, underlying, aToken, otherToken } = await deploySystem();
 
     await underlying.write.mint([vault.account.address, 100n]);
     await underlying.write.approve([strategy.address, 100n]);
     await strategy.write.allocate([underlying.address, 100n]);
 
-    let breakdown = await strategy.read.assets([underlying.address]);
+    let breakdown = await strategy.read.positionBreakdown([underlying.address]);
     assert.equal(breakdown.components.length, 1);
     assert.equal(
       breakdown.components[0].token.toLowerCase(),
@@ -142,7 +142,7 @@ describe("AaveV3Strategy", async function () {
       account: outsider.account,
     });
 
-    breakdown = await strategy.read.assets([underlying.address]);
+    breakdown = await strategy.read.positionBreakdown([underlying.address]);
     assert.equal(breakdown.components.length, 2);
     assert.equal(
       breakdown.components[0].token.toLowerCase(),
@@ -157,15 +157,23 @@ describe("AaveV3Strategy", async function () {
     assert.equal(breakdown.components[1].amount, 7n);
     assert.equal(BigInt(breakdown.components[1].kind), 1n);
 
-    const aTokenBreakdown = await strategy.read.assets([aToken.address]);
-    assert.equal(aTokenBreakdown.components.length, 1);
+    assert.equal(await strategy.read.exactTokenBalance([aToken.address]), 100n);
     assert.equal(
-      aTokenBreakdown.components[0].token.toLowerCase(),
-      aToken.address.toLowerCase(),
+      await strategy.read.exactTokenBalance([underlying.address]),
+      7n,
     );
-    assert.equal(aTokenBreakdown.components[0].amount, 100n);
+    assert.equal(
+      await strategy.read.exactTokenBalance([otherToken.address]),
+      0n,
+    );
+    const aTokenUnsupportedBreakdown = await strategy.read.positionBreakdown([
+      aToken.address,
+    ]);
+    assert.equal(aTokenUnsupportedBreakdown.components.length, 0);
 
-    const unsupported = await strategy.read.assets([otherToken.address]);
+    const unsupported = await strategy.read.positionBreakdown([
+      otherToken.address,
+    ]);
     assert.equal(unsupported.components.length, 0);
   });
 

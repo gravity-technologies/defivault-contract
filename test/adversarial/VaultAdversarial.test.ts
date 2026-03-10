@@ -266,7 +266,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     ]);
 
     const stratAssets = componentTotal(
-      await vault.read.strategyAssetBreakdown([
+      await vault.read.strategyPositionBreakdown([
         feeToken.address,
         strategy.address,
       ]),
@@ -485,7 +485,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     // Idle before emergency = 100_000, so exactly 250_000 should be pulled from strategy.
     assert.equal(
       componentTotal(
-        await vault.read.strategyAssetBreakdown([
+        await vault.read.strategyPositionBreakdown([
           token.address,
           healthyStrategy.address,
         ]),

@@ -69,15 +69,16 @@ For this repository, model sUSDe as:
 
 Recommended adapter behavior:
 
-- `assets(USDe)`:
+- `positionBreakdown(USDe)`:
   - include `sUSDe` as `InvestedPrincipal`,
   - optionally include residual `USDe` as `ResidualUnderlying`.
-- `assets(sUSDe)`:
-  - include `sUSDe` component for exact-token query support.
+- `exactTokenBalance(sUSDe)`:
+  - include `sUSDe` balance for exact-token query support.
 - `principalBearingExposure(USDe)`:
   - use `previewRedeem(sUSDeBalance)` (or equivalent) + residual `USDe`.
 - unsupported tokens:
-  - `assets(token)` returns empty,
+  - `exactTokenBalance(token)` returns `0`,
+  - `positionBreakdown(token)` returns empty,
   - `principalBearingExposure(token)` returns `0` and does not revert.
 - canonical token boundary:
   - strategy APIs use canonical ERC20 token keys.
@@ -131,7 +132,7 @@ Tradeoff:
 2. Accounting correctness:
 
 - Pending cooldown claims must be represented in exposure accounting.
-- Otherwise strategy removal/principal write-down flows can misinterpret exposure as zero.
+- Otherwise strategy removal and availability decisions can misinterpret exposure as zero.
 
 3. Emergency behavior:
 
@@ -150,9 +151,8 @@ Tradeoff:
 
 - Continue exact-token reporting and keep reward tokens out of scope.
 - Residual USDe dust should be reported when non-zero for cleaner strict reads.
-- Tracked-token sync behavior:
-  - write-time sync preserves prior non-principal registration if strategy `assets(tokenDomain)` read fails.
-  - if strategy reports multiple distinct non-principal tokens, vault emits `StrategyPositionTokenShapeUnsupported` and uses the first non-principal token for registry sync.
+- Tracked-principal discovery remains principal-token-only.
+- Breakdown shape should stay principal-domain and deterministic for diagnostics.
 
 ## Potential Direction of Change
 

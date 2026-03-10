@@ -81,7 +81,7 @@ Native ingress path via NativeWrap (`NativeToWrappedIngress`) into canonical wra
   Example: native bridge paths operate on wrapped-native principal key internally.
 - **Token-strategy binding**: one `(token, strategy)` pair with independent lifecycle and cap.
   Example: `(USDT, AaveUsdtStrategy)` is one binding with its own permission state.
-- **TokenAmountComponent**: one exact-token line item returned by `strategy.assets(token)`.
+- **TokenAmountComponent**: one exact-token line item returned inside `strategy.positionBreakdown(principalToken)`.
   Example: `{ token: aUSDT, amount: 100e6 }`.
 - **Tracked principal token**: principal token included in `getTrackedPrincipalTokens()` for TVL ingestion.
   Example: tracked set includes principal tokens such as `USDT` and `WETH`.
@@ -119,7 +119,8 @@ totalExactAssets(token) = idleAssets(token) + sum(component.amount where compone
 Where:
 
 - `idleAssets(token)` is the vault's direct ERC20 balance.
-- `strategy.assets(token)` returns exact-token components; components may be underlying or non-principal position-token units.
+- `strategy.exactTokenBalance(token)` returns the strategy-held amount for that exact token only.
+- `strategy.positionBreakdown(principalToken)` is a separate diagnostic surface that can show principal-domain shape such as receipt token plus residual underlying.
 - The vault never converts amounts across token denominations while reporting.
 
 The vault maintains a token registry for TVL discovery:
@@ -130,7 +131,7 @@ The vault maintains a token registry for TVL discovery:
 - Principal tokens remain tracked while they still have exposure, even if `principalToken.supported` is disabled.
 - A principal token is removed from tracking only when unsupported and fully unwound.
 - Tracker sync happens on vault write paths (for example `setPrincipalTokenConfig`, strategy whitelist changes, allocate/deallocate, rebalance/emergency sends).
-- Read paths (`getTrackedPrincipalTokens`/`isTrackedPrincipalToken`) are storage-backed and do not call `strategy.assets(...)`.
+- Read paths (`getTrackedPrincipalTokens`/`isTrackedPrincipalToken`) are storage-backed and do not call strategy reporting methods.
 - Component tokens are not auto-registered in this discovery list.
 - Exact-token component reporting remains available through `totalExactAssets*` scans over global active strategies.
 
@@ -148,7 +149,7 @@ For accurate on-chain TVL ingestion:
    - `statuses[i].skippedStrategies > 0` means total is a conservative lower bound (one or more strategies could not be read safely).
 4. (Optional) For diagnostics, inspect:
    - `getPrincipalTokenStrategies(token)` for token-keyed active entries.
-   - `strategyAssetBreakdown(token, strategy)` for any active strategy when you need per-strategy component details.
+   - `strategyPositionBreakdown(token, strategy)` for any active strategy when you need per-strategy principal-domain details.
 
 Notes:
 
@@ -304,9 +305,10 @@ Operational notes:
 
 ### Token-Separated Strategy Reporting
 
-- `IYieldStrategy.assets(token)` returns `StrategyAssetBreakdown` with exact-token components only.
+- `IYieldStrategy.exactTokenBalance(token)` returns the strategy-held amount for that exact token address only.
+- `IYieldStrategy.positionBreakdown(principalToken)` returns a principal-domain `StrategyAssetBreakdown` for diagnostics.
 - Component amounts remain in each component token's native units; no cross-token conversion is done in reporting.
-- Unsupported token queries return an empty component array.
+- Unsupported exact-token / principal-domain queries return `0` / empty components.
 - `totalExactAssets(token)` / status variants scan global active strategies, so component-token queries (for example `aUSDT`) are supported even when strategy registration is keyed by a different underlying token.
 - `IL1TreasuryVault.totalExactAssets(token)` returns strict exact-token totals and reverts on invalid strategy reads.
 - `IL1TreasuryVault.totalExactAssetsStatus(token)` and batch status variants skip invalid strategies and report `skippedStrategies`.
@@ -333,16 +335,17 @@ The strategy interface is protocol-agnostic. Adapters must unify principal-beari
 
 - Aave V3 style rebasing receipt token:
   - implemented in `AaveV3Strategy` in this repo.
-  - components can include `aUSDT` as invested principal and `USDT` residual when queried in USDT domain.
+  - `exactTokenBalance(aUSDT)` reports invested receipt-token units.
+  - `positionBreakdown(USDT)` can include `aUSDT` as invested principal and `USDT` residual.
   - scalar example: `principalBearingExposure(USDT) = aUSDT + USDT`, using assumption `1 aUSDT = 1 USDT` (scalar path only).
   - `deallocate`/`deallocateAll` sweep residual strategy-held underlying to vault to avoid dust-lock exposure.
   - unsupported scalar domains return `0` (non-reverting).
 - Compound III style index-based accounting:
-  - components remain exact token units only (typically base token domain).
-  - non-underlying receipt-token reporting may be empty where accounting is purely index-based.
+  - `exactTokenBalance(baseToken)` reports exact token units only.
+  - `positionBreakdown(principalToken)` may be simple or empty where accounting is purely index-based.
   - scalar is derived from principal plus index accrual in base-token domain.
 - Morpho/ERC4626 share-vault style accounting:
-  - components can include vault share token invested principal plus underlying residual.
+  - `positionBreakdown(principalToken)` can include vault share token invested principal plus underlying residual.
   - scalar is derived by share-to-asset conversion in underlying domain (`convertToAssets` style).
 
 These examples are theoretical adapter patterns; this scope does not add new Compound or Morpho strategy contracts.

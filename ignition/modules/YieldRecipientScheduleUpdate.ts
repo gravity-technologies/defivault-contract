@@ -4,12 +4,12 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * YieldRecipientScheduleUpdateModule
  *
  * Purpose:
- * - Attach to existing vault + yield-recipient timelock.
+ * - Attach to existing vault + yield-recipient timelock controller.
  * - Schedule a timelocked yield-recipient update.
  *
  * Parameters (YieldRecipientScheduleUpdateModule.*):
  * - vaultProxy: GRVTL1TreasuryVault proxy address.
- * - yieldRecipientTimelock: configured yield-recipient timelock address.
+ * - yieldRecipientTimelockController: configured yield-recipient timelock controller address.
  * - newYieldRecipient: proposed new yield recipient.
  * - predecessor: predecessor operation id (bytes32), usually zero hash.
  * - salt: operation salt (bytes32).
@@ -17,8 +17,8 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  */
 export default buildModule("YieldRecipientScheduleUpdateModule", (m) => {
   const vaultProxy = m.getParameter("vaultProxy");
-  const yieldRecipientTimelockAddress = m.getParameter(
-    "yieldRecipientTimelock",
+  const yieldRecipientTimelockControllerAddress = m.getParameter(
+    "yieldRecipientTimelockController",
   );
   const newYieldRecipient = m.getParameter("newYieldRecipient");
   const predecessor = m.getParameter(
@@ -34,7 +34,7 @@ export default buildModule("YieldRecipientScheduleUpdateModule", (m) => {
   const vault = m.contractAt("GRVTL1TreasuryVault", vaultProxy);
   const timelock = m.contractAt(
     "TimelockController",
-    yieldRecipientTimelockAddress,
+    yieldRecipientTimelockControllerAddress,
   );
   const setYieldRecipientCalldata = m.encodeFunctionCall(
     vault,

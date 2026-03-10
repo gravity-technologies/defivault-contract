@@ -32,8 +32,8 @@ interface IL1TreasuryVault {
     error SlippageExceeded();
     /// @dev Requested harvest exceeds currently harvestable amount.
     error YieldNotAvailable();
-    /// @dev Yield-recipient timelock is not configured.
-    error YieldRecipientTimelockNotSet();
+    /// @dev Yield-recipient timelock controller is not configured.
+    error YieldRecipientTimelockControllerNotSet();
 
     // --------- Roles (RBAC) ---------
     /// @notice Role allowed to configure vault policy and privileged controls.
@@ -71,7 +71,7 @@ interface IL1TreasuryVault {
     function yieldRecipient() external view returns (address);
 
     /// @notice Timelock controller authorized to update yield recipient.
-    function yieldRecipientTimelock() external view returns (address);
+    function yieldRecipientTimelockController() external view returns (address);
 
     /// @notice Returns true when vault is paused.
     function paused() external view returns (bool);
@@ -86,7 +86,7 @@ interface IL1TreasuryVault {
 
     /// @notice Sets one-time timelock authority for yield-recipient updates.
     /// @param newTimelock Timelock controller address.
-    function setYieldRecipientTimelock(address newTimelock) external;
+    function setYieldRecipientTimelockController(address newTimelock) external;
 
     /// @notice Updates configured yield recipient via timelock governance.
     /// @param newYieldRecipient New recipient address.
@@ -142,10 +142,10 @@ interface IL1TreasuryVault {
     /// @notice Returns idle balance held directly by vault for `token`.
     function idleTokenBalance(address token) external view returns (uint256);
 
-    /// @notice Returns exact-token component breakdown reported by `strategy` for `queryToken`.
-    /// @dev Exact-token means no denomination conversion is implied by the vault.
-    function strategyAssetBreakdown(
-        address queryToken,
+    /// @notice Returns principal-domain position breakdown reported by `strategy` for `principalToken`.
+    /// @dev Components remain in exact token units; no denomination conversion is implied by the vault.
+    function strategyPositionBreakdown(
+        address principalToken,
         address strategy
     ) external view returns (StrategyAssetBreakdown memory);
 
@@ -202,18 +202,6 @@ interface IL1TreasuryVault {
         uint256 actual
     );
 
-    /// @notice Emitted when tracked principal is clamped down to post-unwind scalar exposure.
-    event StrategyPrincipalWrittenDown(
-        address indexed principalToken,
-        address indexed strategy,
-        uint256 previousPrincipal,
-        uint256 newPrincipal,
-        uint256 exposureAfter
-    );
-
-    /// @notice Emitted when principal write-down is skipped due to exposure read failure.
-    event StrategyPrincipalWriteDownSkipped(address indexed principalToken, address indexed strategy);
-
     /// @notice Emitted when tracked principal value changes for a `(token, strategy)` pair.
     event StrategyPrincipalUpdated(
         address indexed principalToken,
@@ -234,8 +222,8 @@ interface IL1TreasuryVault {
         uint256 received
     );
 
-    /// @notice Emitted when yield-recipient timelock is configured.
-    event YieldRecipientTimelockUpdated(address indexed previousTimelock, address indexed newTimelock);
+    /// @notice Emitted when yield-recipient timelock controller is configured.
+    event YieldRecipientTimelockControllerUpdated(address indexed previousTimelock, address indexed newTimelock);
 
     /// @notice Emitted when yield recipient is updated via timelock.
     event YieldRecipientUpdated(address indexed previousYieldRecipient, address indexed newYieldRecipient);
@@ -282,9 +270,6 @@ interface IL1TreasuryVault {
         uint256 amount,
         uint256 minReceived
     ) external returns (uint256 received);
-
-    /// @notice Re-syncs tracked principal to strategy scalar exposure for one pair.
-    function syncStrategyPrincipal(address principalToken, address strategy) external;
 
     /// @notice Sets break-glass tracked-principal override for one token.
     function setTrackedPrincipalOverride(address principalToken, bool enabled, bool forceTrack) external;

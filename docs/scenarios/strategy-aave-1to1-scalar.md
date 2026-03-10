@@ -19,11 +19,12 @@ Deployment is single-market:
 
 Reporting model:
 
-- `assets(underlying)` reports:
+- `exactTokenBalance(underlying)` reports residual underlying only.
+- `exactTokenBalance(aToken)` reports invested aToken balance only.
+- `positionBreakdown(underlying)` reports:
   - `aToken` as `InvestedPrincipal` (if non-zero),
   - `underlying` as `ResidualUnderlying` (if non-zero).
-- `assets(aToken)` reports `aToken` only.
-- unsupported token queries return empty components.
+- unsupported exact-token / principal-domain queries return `0` / empty components.
 
 Scalar model:
 
@@ -53,6 +54,7 @@ Scalar model:
 ## Debug Checklist
 
 - Is caller querying `principalBearingExposure` in underlying domain (not aToken domain)?
-- Do `assets(underlying)` components show expected aToken + residual split?
+- Does `positionBreakdown(underlying)` show the expected aToken + residual split?
+- Do exact-token queries return residual underlying vs invested aToken on the correct token addresses?
 - Is residual dust being swept after deallocate/deallocateAll?
 - If cap/harvest seems off, check whether 1:1 assumption still holds economically.

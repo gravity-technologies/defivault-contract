@@ -13,7 +13,11 @@ contract MockRevertingStrategy is IYieldStrategy {
         return "REVERTING_STRATEGY";
     }
 
-    function assets(address) external pure returns (StrategyAssetBreakdown memory) {
+    function exactTokenBalance(address) external pure returns (uint256) {
+        revert("ASSETS_REVERT");
+    }
+
+    function positionBreakdown(address) external pure returns (StrategyAssetBreakdown memory) {
         revert("ASSETS_REVERT");
     }
 

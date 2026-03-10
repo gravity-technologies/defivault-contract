@@ -8,28 +8,30 @@ Why this fits:
 
 - Adapter API is token-domain based and does not assume a specific receipt mechanism (`contracts/interfaces/IYieldStrategy.sol`).
 - Cap/exposure logic uses strategy scalar (`principalBearingExposure`) independent of reporting structure.
-- Tracked-token registry is principal-token-only for discovery (`getTrackedTokens`/`isTrackedToken`).
+- Tracked-token registry is principal-token-only for discovery (`getTrackedPrincipalTokens`/`isTrackedPrincipalToken`).
 - Receipt-token exact totals remain available through `totalExactAssets(receiptToken)` via global active-strategy scans.
 - Strategy token domain is canonical ERC20 only (`address(0)` is not a strategy token key).
 
 ## Option A: Compound III (Comet, index-based)
 
 - Typical shape: no receipt ERC20 token for supply position.
-- `assets(baseToken)`:
+- `exactTokenBalance(baseToken)`:
   - report base-token exact units only (invested + residual as applicable).
+- `positionBreakdown(baseToken)`:
+  - optionally report base-token principal-domain breakdown.
 - `principalBearingExposure(baseToken)`:
   - return principal-token exposure scalar from Comet accounting.
-- `assets(otherToken)` and `principalBearingExposure(otherToken)`:
-  - return empty / zero.
+- `exactTokenBalance(otherToken)`, `positionBreakdown(otherToken)`, and `principalBearingExposure(otherToken)`:
+  - return `0` / empty / zero.
 
 ## Option B: Compound II (cToken)
 
 - Typical shape: one non-principal receipt token (`cToken`) plus optional underlying residual.
-- `assets(principalToken)`:
+- `positionBreakdown(principalToken)`:
   - include `cToken` invested component (exact `cToken` units),
   - include principal-token residual when present.
-- `assets(cToken)`:
-  - include `cToken` component for exact-token query support.
+- `exactTokenBalance(cToken)`:
+  - report `cToken` balance for exact-token query support.
 - `principalBearingExposure(principalToken)`:
   - return principal-token-domain scalar using current exchange-rate conversion plus residual principal token.
 
@@ -38,10 +40,11 @@ Why this fits:
 Adapter must satisfy:
 
 - Unsupported queries:
-  - `assets(token)` => empty components.
+  - `exactTokenBalance(token)` => `0`.
+  - `positionBreakdown(token)` => empty components.
   - `principalBearingExposure(token)` => `0` (no unsupported-token revert).
 - Canonical token boundary:
-  - strategy APIs (`assets`, `principalBearingExposure`, `allocate`, `deallocate`, `deallocateAll`) use canonical ERC20 principal token keys.
+  - strategy APIs (`exactTokenBalance`, `positionBreakdown`, `principalBearingExposure`, `allocate`, `deallocate`, `deallocateAll`) use canonical ERC20 principal token keys.
   - native sentinel `address(0)` is not valid for strategy token inputs.
 - `allocate(token, amount)`:
   - vault-only caller,
@@ -68,7 +71,7 @@ Adapter must satisfy:
    - `deallocatePrincipalFromStrategy(tokenDomain, adapter, partialAmount)`,
    - `deallocateAllPrincipalFromStrategy(tokenDomain, adapter)`.
 4. Validate reporting:
-   - `strategyAssets(tokenDomain, adapter)`,
+   - `strategyPositionBreakdown(tokenDomain, adapter)`,
    - `totalExactAssets(tokenDomain)`,
    - if receipt token exists, `totalExactAssets(receiptToken)`,
    - `getTrackedPrincipalTokens()` remains principal-token-only after allocate/deallocate hooks.

@@ -159,7 +159,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     mapping(address token => bool enabled) private _trackedPrincipalOverrideEnabled;
     mapping(address token => bool forceTrack) private _trackedPrincipalOverrideValue;
     /// @dev Timelock controller authorized to update yield recipient.
-    address private _yieldRecipientTimelock;
+    address private _yieldRecipientTimelockController;
 
     /// @dev Reserved storage gap for upgrade-safe layout extension (50 × 32 bytes).
     uint256[50] private __gap;
@@ -192,7 +192,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /**
      * @notice Emitted during emergency unwind when a strategy's funds cannot be retrieved.
      * @dev Skipping is non-fatal; the emergency flow continues with the next strategy.
-     *      Causes include: `assets()` revert, `deallocate()` revert, or balance decreased after call.
+     *      Causes include: reporting read revert, `deallocate()` revert, or balance decreased after call.
      */
     event EmergencyStrategySkipped(address indexed token, address indexed strategy);
 
@@ -365,8 +365,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
-    function yieldRecipientTimelock() external view override returns (address) {
-        return _yieldRecipientTimelock;
+    function yieldRecipientTimelockController() external view override returns (address) {
+        return _yieldRecipientTimelockController;
     }
 
     /// @dev Reject unexpected calldata-bearing native sends.
@@ -396,19 +396,21 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
-    function setYieldRecipientTimelock(address newTimelock) external override onlyVaultAdmin {
-        if (newTimelock == address(0) || newTimelock.code.length == 0 || _yieldRecipientTimelock != address(0)) {
+    function setYieldRecipientTimelockController(address newTimelock) external override onlyVaultAdmin {
+        if (
+            newTimelock == address(0) || newTimelock.code.length == 0 || _yieldRecipientTimelockController != address(0)
+        ) {
             revert InvalidParam();
         }
-        address previousTimelock = _yieldRecipientTimelock;
-        _yieldRecipientTimelock = newTimelock;
-        emit YieldRecipientTimelockUpdated(previousTimelock, newTimelock);
+        address previousTimelock = _yieldRecipientTimelockController;
+        _yieldRecipientTimelockController = newTimelock;
+        emit YieldRecipientTimelockControllerUpdated(previousTimelock, newTimelock);
     }
 
     /// @inheritdoc IL1TreasuryVault
     function setYieldRecipient(address newYieldRecipient) external override {
-        address timelock = _yieldRecipientTimelock;
-        if (timelock == address(0)) revert YieldRecipientTimelockNotSet();
+        address timelock = _yieldRecipientTimelockController;
+        if (timelock == address(0)) revert YieldRecipientTimelockControllerNotSet();
         if (msg.sender != timelock) revert Unauthorized();
         if (
             newYieldRecipient == address(0) ||
@@ -499,13 +501,13 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      * @dev Returns an empty component list if the strategy is not globally active.
      *      Strategy call failures are normalized to `InvalidStrategyAssetsRead`.
      */
-    function strategyAssetBreakdown(
-        address token,
+    function strategyPositionBreakdown(
+        address principalToken,
         address strategy
     ) external view override returns (StrategyAssetBreakdown memory breakdown) {
-        if (token == address(0) || strategy == address(0)) revert InvalidParam();
+        if (principalToken == address(0) || strategy == address(0)) revert InvalidParam();
         if (!_isGloballyActiveStrategy(strategy)) return breakdown;
-        return VaultStrategyOpsLib.readStrategyAssetsOrRevert(token, strategy);
+        return VaultStrategyOpsLib.readStrategyPositionBreakdownOrRevert(principalToken, strategy);
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -517,7 +519,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
         address[] storage list = _activeStrategies;
         for (uint256 i = 0; i < list.length; ++i) {
-            (bool ok, uint256 amount) = VaultStrategyOpsLib.readStrategyExactComponent(token, list[i]);
+            (bool ok, uint256 amount) = VaultStrategyOpsLib.readStrategyExactTokenBalance(token, list[i]);
             if (!ok) revert InvalidStrategyAssetsRead(token, list[i]);
             if (amount > type(uint256).max - totals.strategy) {
                 revert InvalidStrategyAssetsRead(token, list[i]);
@@ -776,21 +778,6 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /**
-     * @notice Re-syncs tracked principal for one `(principalToken, strategy)` pair to current scalar exposure.
-     * @param token Canonical principal token key (ERC20).
-     * @param strategy Strategy address.
-     */
-    function syncStrategyPrincipal(address token, address strategy) external override onlyVaultAdmin {
-        address canonicalToken = _requirePrincipalToken(token);
-        if (strategy == address(0)) revert InvalidParam();
-        if (!_canWithdrawPrincipalFromStrategy(canonicalToken, strategy)) revert StrategyNotWhitelisted();
-
-        uint256 exposure = VaultStrategyOpsLib.readStrategyExposureOrRevert(canonicalToken, strategy);
-        _setStrategyPrincipal(canonicalToken, strategy, exposure);
-        _reconcileTrackedPrincipalToken(canonicalToken);
-    }
-
-    /**
      * @inheritdoc IL1TreasuryVault
      * @dev Enforces standard rebalance policy for native path. Blocked when paused.
      */
@@ -886,7 +873,6 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         }
         if (reducePrincipal) _decreaseStrategyPrincipal(token, strategy, received);
         emit PrincipalDeallocatedFromStrategy(token, strategy, requested, received);
-        _applyPrincipalWriteDown(token, strategy);
         if (syncPrincipalTracking) _reconcileTrackedPrincipalToken(token);
         return received;
     }
@@ -1012,25 +998,6 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             emergency
         );
         _reconcileTrackedPrincipalToken(token);
-    }
-
-    /**
-     * @notice Clamps stored principal to current strategy exposure after unwind.
-     * @dev Emits telemetry and never reverts unwind path on exposure read failure.
-     */
-    function _applyPrincipalWriteDown(address token, address strategy) internal {
-        uint256 previousPrincipal = _strategyPrincipal[token][strategy];
-        if (previousPrincipal == 0) return;
-
-        (bool ok, uint256 exposureAfter) = VaultStrategyOpsLib.readStrategyExposure(token, strategy);
-        if (!ok) {
-            emit StrategyPrincipalWriteDownSkipped(token, strategy);
-            return;
-        }
-
-        if (previousPrincipal <= exposureAfter) return;
-        _setStrategyPrincipal(token, strategy, exposureAfter);
-        emit StrategyPrincipalWrittenDown(token, strategy, previousPrincipal, exposureAfter, exposureAfter);
     }
 
     /**
@@ -1211,7 +1178,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /**
      * @notice Builds degraded totals for a canonical token key.
      * @dev Scans global active strategies so non-underlying component-token queries are complete.
-     * Invalid strategy reads or malformed component payloads are skipped and counted.
+     * Invalid exact-token balance reads are skipped and counted.
      */
     function _buildTokenStatus(address canonicalToken) internal view returns (VaultTokenStatus memory status) {
         status.idle = idleTokenBalance(canonicalToken);
@@ -1219,7 +1186,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
         address[] storage list = _activeStrategies;
         for (uint256 i = 0; i < list.length; ++i) {
-            (bool ok, uint256 amount) = VaultStrategyOpsLib.readStrategyExactComponent(canonicalToken, list[i]);
+            (bool ok, uint256 amount) = VaultStrategyOpsLib.readStrategyExactTokenBalance(canonicalToken, list[i]);
             if (!ok || amount > type(uint256).max - status.strategy || amount > type(uint256).max - status.total) {
                 unchecked {
                     ++status.skippedStrategies;

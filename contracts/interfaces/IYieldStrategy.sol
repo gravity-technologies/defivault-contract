@@ -9,31 +9,38 @@ import {StrategyAssetBreakdown} from "./IVaultReportingTypes.sol";
  * @dev Vault centralizes protocol communication through whitelisted adapters.
  *
  * Reporting model:
- * - `assets(token)` returns token-address exact components only.
- * - Unsupported token queries must return an empty component array.
+ * - `exactTokenBalance(token)` returns only the strategy-held amount for that exact token address.
+ * - `positionBreakdown(principalToken)` returns the full principal-domain component shape for diagnostics.
+ * - Unsupported token/breakdown queries must return `0` / empty components without reverting solely because
+ *   the query is unsupported.
  * - Harvest/cap scalar is provided separately via `principalBearingExposure(token)`.
  * - Unsupported `principalBearingExposure(token)` queries must return 0 and must not revert.
  *
  * Protocol-agnostic adapter examples:
- * - Aave-style adapters can report receipt + residual components and expose a scalar in underlying domain.
- * - Compound-style adapters can report index-model accounting in exact token units.
- * - Morpho/ERC4626-style adapters can report share-token + residual components while exposing scalar assets.
+ * - Aave-style adapters can expose aToken and residual underlying via `positionBreakdown(underlying)`, while
+ *   still reporting exact-token balances independently.
+ * - Compound-style adapters can expose exact balances directly and optionally provide a principal-domain breakdown.
+ * - Morpho/ERC4626-style adapters can expose share-token + residual components while exposing scalar assets.
  */
 interface IYieldStrategy {
     /// @notice Human-readable strategy identifier.
     function name() external view returns (string memory);
 
+    /// @notice Returns the strategy-held balance for one exact token address.
+    /// @dev Must not perform denomination conversion. Unsupported token queries return `0`.
+    function exactTokenBalance(address token) external view returns (uint256);
+
     /**
-     * @notice Returns exact-token reporting components attributable to the vault.
-     * @param token Canonical token-domain query key.
-     * @return breakdown Token-address exact component breakdown for the queried token domain.
+     * @notice Returns the full principal-domain breakdown attributable to the vault.
+     * @param principalToken Canonical principal token-domain query key.
+     * @return breakdown Structured principal-domain component breakdown.
      *
      * @dev Requirements:
      * - Component amounts are denominated in each component token's native units.
      * - Implementations must not convert one token amount into another token denomination.
-     * - Unsupported token queries return `components.length == 0`.
+     * - Unsupported principal-token queries return `components.length == 0`.
      */
-    function assets(address token) external view returns (StrategyAssetBreakdown memory);
+    function positionBreakdown(address principalToken) external view returns (StrategyAssetBreakdown memory);
 
     /**
      * @notice Returns principal-bearing exposure in the queried token domain.
@@ -41,7 +48,7 @@ interface IYieldStrategy {
      * @return exposure Principal-bearing exposure scalar in the queried token domain.
      *
      * @dev This scalar is used by vault harvest/cap logic and is intentionally independent from
-     * exact-token reporting components returned by `assets(token)`.
+     * exact-token reporting and principal-domain breakdowns.
      * Unsupported token queries must return `0` and must not revert solely due to token unsupported status.
      */
     function principalBearingExposure(address token) external view returns (uint256);

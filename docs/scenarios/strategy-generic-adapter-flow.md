@@ -13,24 +13,26 @@ Primary users:
 ## Vault-Adapter Contract (Must Hold)
 
 - Strategy domain is canonical ERC20 token keys.
-- `assets(token)` is reporting-only, exact-token components.
+- `exactTokenBalance(token)` is exact-token accounting only.
+- `positionBreakdown(principalToken)` is diagnostic principal-domain reporting only.
 - `principalBearingExposure(token)` is scalar-only for cap/harvest math.
 - Unsupported token behavior is non-reverting:
-  - empty assets components,
+  - zero exact-token balance,
+  - empty principal-domain breakdown,
   - zero principal-bearing exposure.
 
-## Tracking Assumptions (Current Simplified Model)
+## Tracking Assumptions
 
-- For each `(tokenDomain, strategy)`, vault tracking assumes at most one non-principal receipt token.
-- Residual underlying (`component.token == tokenDomain`) is root exposure, not separate component-tracked token.
-- Reward/incentive tokens are ignored by tracked-token registry and current cap/harvest/reporting math.
+- Tracked-token discovery is principal-token only.
+- Non-principal receipt/share tokens are not auto-discovered in `getTrackedPrincipalTokens()`.
+- Reward/incentive tokens are ignored by tracked-principal registry and current cap/harvest/reporting math.
 
 ## Most Common Flow (Day-to-Day)
 
 1. Admin whitelists strategy for a principal token domain.
 2. Vault allocates/deallocates principal token units.
-3. Write hooks sync tracked-token membership from strategy assets shape.
-4. Read paths (`getTrackedTokens`, `isTrackedToken`) remain storage-backed.
+3. Vault reads `exactTokenBalance(token)` for exact-token aggregation and `principalBearingExposure(token)` for cap/harvest logic.
+4. Read paths (`getTrackedPrincipalTokens`, `isTrackedPrincipalToken`) remain storage-backed.
 
 Example shapes this supports:
 
@@ -40,11 +42,8 @@ Example shapes this supports:
 
 ## Edge Behavior (Liveness-First)
 
-- If strategy assets read fails during sync, vault preserves previous receipt-token registration.
-- If strategy returns multiple distinct non-principal tokens, vault treats shape as unsupported for sync:
-  - emits telemetry,
-  - preserves liveness,
-  - uses the first discovered non-principal token as registration candidate.
+- If strategy exact-token reads fail, strict totals revert and degraded totals increment `skippedStrategies`.
+- If strategy principal-domain breakdown reads fail, `strategyPositionBreakdown` normalizes the failure to `InvalidStrategyAssetsRead`.
 
 ## Why This Is Complex
 
@@ -53,7 +52,7 @@ Example shapes this supports:
 
 ## Debug Checklist
 
-- Does adapter keep assets/scalar concerns separated?
-- Does adapter honor unsupported-token non-reverting behavior?
-- Does component shape fit single-receipt tracking assumption?
-- If tracking seems stale, did a write hook execute after strategy state changed?
+- Does adapter keep exact-token, breakdown, and scalar concerns separated?
+- Does adapter honor unsupported-token non-reverting behavior on all three read surfaces?
+- Does `positionBreakdown(principalToken)` reflect the expected principal-domain shape?
+- If TVL looks wrong, are callers using `exactTokenBalance`/`totalExactAssets` rather than interpreting breakdown components as converted value?

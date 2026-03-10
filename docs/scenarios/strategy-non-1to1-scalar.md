@@ -19,18 +19,21 @@ Use this when strategy exposure requires conversion logic, for example:
 
 ## Required Adapter Behavior
 
-- Keep `assets(token)` exact-token and conversion-free.
+- Keep `exactTokenBalance(token)` exact-token and conversion-free.
+- Keep `positionBreakdown(principalToken)` principal-domain and conversion-free.
 - Put conversion/index logic only in `principalBearingExposure(token)`.
 - Unsupported token queries:
-  - `assets(token)` => empty components,
+  - `exactTokenBalance(token)` => `0`,
+  - `positionBreakdown(principalToken)` => empty components,
   - `principalBearingExposure(token)` => `0`.
 
 ## Most Common Flow (Day-to-Day)
 
 1. Adapter reports components in native token units.
-2. Adapter computes scalar exposure via conversion/index path.
-3. Vault uses scalar for cap/harvest math only.
-4. Vault never converts components itself.
+2. Adapter reports exact-token balances without conversion.
+3. Adapter computes scalar exposure via conversion/index path.
+4. Vault uses scalar for cap/harvest math only.
+5. Vault never converts reporting components itself.
 
 ## Design Notes on Conversion Source
 
@@ -46,7 +49,8 @@ Use this when strategy exposure requires conversion logic, for example:
 
 ## Debug Checklist
 
-- Are `assets(token)` outputs still exact-token without conversion?
+- Are `exactTokenBalance(token)` outputs still exact-token without conversion?
+- Does `positionBreakdown(principalToken)` stay principal-domain and conversion-free?
 - Is scalar conversion logic deterministic and bounded?
 - Are unsupported token domains non-reverting?
 - Are conversion assumptions documented for operators/reviewers?

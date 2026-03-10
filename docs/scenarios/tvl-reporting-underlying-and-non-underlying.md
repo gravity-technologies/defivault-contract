@@ -38,20 +38,18 @@ Key point:
 ### 2) Tracked token lifecycle
 
 - Root token tracking comes from support/exposure signals.
-- Non-principal token tracking comes from write-time component discovery.
-- `getTrackedTokens` / `isTrackedToken` are storage-backed reads only.
+- Registry scope is principal tokens only.
+- `getTrackedPrincipalTokens` / `isTrackedPrincipalToken` are storage-backed reads only.
 
 ### 3) Unsupported multi-non-principal shape
 
-- If strategy reports multiple distinct non-principal tokens in one domain:
-  - vault emits `StrategyPositionTokenShapeUnsupported`
-  - vault tracks first non-principal token for registry sync
-  - flow stays non-reverting
+- Non-principal breakdown shape can still be inspected through `strategyPositionBreakdown(principalToken, strategy)`.
+- It does not change tracked-principal discovery.
 
 ### 4) Read-failure pinning
 
 - Conservative behavior can keep tokens tracked when strategy reads fail.
-- Break-glass admin control: `setRootTrackingOverride(token, enabled, forceTrack)`.
+- Break-glass admin control: `setTrackedPrincipalOverride(token, enabled, forceTrack)`.
 
 ## Why This Is Complex
 
@@ -65,5 +63,5 @@ These goals conflict, so the system provides strict and degraded paths.
 
 - Are you querying strict (`totalAssets`) or degraded (`totalAssetsStatus`) surface?
 - Are component tokens being confused with valuation-converted totals?
-- Is tracked-token membership stale due to missing write hook since strategy shape change?
+- Is tracked-principal membership stale because support/exposure changed without the expected write path?
 - Did strategy read failures pin root tracking conservatively?

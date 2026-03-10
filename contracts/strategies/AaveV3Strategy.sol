@@ -32,11 +32,15 @@ import {
  *      aToken addresses (e.g. wrong asset or wrong pool) revert with `InvalidATokenConfig`
  *      at init time rather than silently producing incorrect TVL accounting.
  *
- *      ### assets() reporting shape
- *      `assets(token)` returns structured exact-token components:
- *      - for `token == underlying`: report `aToken` invested principal + `underlying` residual
- *      - for `token == aToken`: report `aToken` invested principal only
- *      - for unsupported tokens: return `components.length == 0` (non-reverting)
+ *      ### Split reporting surfaces
+ *      `exactTokenBalance(token)` returns exact-token balances only:
+ *      - for `token == underlying`: report residual `underlying` held directly by the strategy
+ *      - for `token == aToken`: report invested `aToken` balance
+ *      - for unsupported tokens: return `0` (non-reverting)
+ *
+ *      `positionBreakdown(principalToken)` returns structured principal-domain components:
+ *      - for `principalToken == underlying`: report `aToken` invested principal + `underlying` residual
+ *      - for unsupported principal domains: return `components.length == 0` (non-reverting)
  *
  *      The aToken balance accrues yield continuously (Aave's rebasing mechanism).
  *      The underlying balance is normally near-zero between calls, but residual dust can exist.
@@ -47,8 +51,8 @@ import {
  *      cap/harvest/exposure math by avoiding index-based conversion logic in this scope.
  *
  *      Implications:
- *      - TVL reporting is still exact-token and assumption-free: `assets(token)` returns
- *        separate `TokenAmountComponent` entries (aUSDT and residual USDT) and does not merge
+ *      - TVL reporting is still exact-token and assumption-free: `exactTokenBalance(token)` and
+ *        `positionBreakdown(principalToken)` keep aUSDT and residual USDT separate and do not merge
  *        or convert denominations.
  *      - `allocate` / `deallocate` / `deallocateAll` remain exact ERC20 operations against Aave
  *        supply/withdraw flows; they do not rely on this scalar assumption for token movement.
@@ -57,7 +61,6 @@ import {
  *          - scalar too high: cap can block allocation early; harvest can over-request and revert
  *            on vault-side measured bounds (`YieldNotAvailable` in vault path).
  *          - scalar too low: cap can allow excess allocation; harvest can under-extract yield.
- *          - loss recognition timing can shift because principal write-down uses scalar exposure.
  *      - Even under scalar drift, exact-token reporting (`assets`) and actual transfer outcomes
  *        remain denomination-correct because vault measures real balance deltas on unwind.
  *
@@ -206,28 +209,30 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
 
     /**
      * @inheritdoc IYieldStrategy
-     * @dev Structured exact-token reporting:
-     *      - `token == underlying`: reports up to two components:
+     * @dev Exact-token reporting:
+     *      - `token == underlying`: reports residual underlying only
+     *      - `token == aToken`: reports invested aToken balance only
+     *      - otherwise: returns `0`
+     */
+    function exactTokenBalance(address token) external view override returns (uint256) {
+        if (token == underlying || token == aToken) return IERC20(token).balanceOf(address(this));
+        return 0;
+    }
+
+    /**
+     * @inheritdoc IYieldStrategy
+     * @dev Principal-domain breakdown reporting:
+     *      - `principalToken == underlying`: reports up to two components:
      *          1. `aToken` (InvestedPrincipal)
      *          2. `underlying` (ResidualUnderlying)
-     *      - `token == aToken`: reports `aToken` (InvestedPrincipal) only.
-     *      - otherwise: returns empty components (unsupported token path).
+     *      - otherwise: returns empty components (unsupported principal-domain path).
      */
-    function assets(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
-        if (token != underlying && token != aToken) return breakdown;
+    function positionBreakdown(
+        address principalToken
+    ) external view override returns (StrategyAssetBreakdown memory breakdown) {
+        if (principalToken != underlying) return breakdown;
 
         uint256 invested = IERC20(aToken).balanceOf(address(this));
-        if (token == aToken) {
-            if (invested == 0) return breakdown;
-            breakdown.components = new TokenAmountComponent[](1);
-            breakdown.components[0] = TokenAmountComponent({
-                token: aToken,
-                amount: invested,
-                kind: TokenAmountComponentKind.InvestedPrincipal
-            });
-            return breakdown;
-        }
-
         uint256 residual = IERC20(underlying).balanceOf(address(this));
         uint256 len = (invested == 0 ? 0 : 1) + (residual == 0 ? 0 : 1);
         if (len == 0) return breakdown;

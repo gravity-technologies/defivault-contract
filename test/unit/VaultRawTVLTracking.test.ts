@@ -535,7 +535,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     );
   });
 
-  it("keeps strategyAssetBreakdown consistent with global totalExactAssets for component-token queries", async function () {
+  it("keeps strategyPositionBreakdown consistent with global totalExactAssets for component-token queries", async function () {
     const { vault } = await deploySystem();
     const underlying = await deployToken("SKY");
     const receiptToken = await deployToken("SRC");
@@ -552,7 +552,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     ]);
     await strategy.write.setAssets([receiptToken.address, 6n]);
 
-    const breakdown = await vault.read.strategyAssetBreakdown([
+    const breakdown = await vault.read.strategyPositionBreakdown([
       receiptToken.address,
       strategy.address,
     ]);
@@ -568,7 +568,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     assert.equal(totals.total, 6n);
   });
 
-  it("normalizes strategyAssetBreakdown read failures to InvalidStrategyAssetsRead", async function () {
+  it("normalizes strategyPositionBreakdown read failures to InvalidStrategyAssetsRead", async function () {
     const { vault } = await deploySystem();
     const token = await deployToken("ERR");
     const strategy = await deployStrategy(vault);
@@ -585,7 +585,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
     await strategy.write.setRevertAssets([token.address, true]);
 
     await viem.assertions.revertWithCustomError(
-      vault.read.strategyAssetBreakdown([token.address, strategy.address]),
+      vault.read.strategyPositionBreakdown([token.address, strategy.address]),
       vault,
       "InvalidStrategyAssetsRead",
     );
