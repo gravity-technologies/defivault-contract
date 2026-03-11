@@ -57,6 +57,10 @@ This file defines non-negotiable standards for any agent contributing Solidity c
 - Keep functions small and single-purpose.
 - Prefer explicit naming (`depositAssets`, `withdrawShares`) over ambiguous names.
 - Document all external/public functions with NatSpec including assumptions and failure modes.
+- Comment style:
+  - Use `/** ... */` for multiline documentation comments.
+  - For external/public APIs, events, errors, and structs, use NatSpec-style `/** ... */` with clear `@notice`, params, assumptions, and failure modes where relevant.
+  - For short local implementation notes, `//` is acceptable; avoid verbose or redundant comments that only restate code.
 - Remove dead code and unused state variables.
 - No inline assembly unless strictly necessary; if used, document safety assumptions and add focused tests.
 
@@ -93,6 +97,18 @@ This file defines non-negotiable standards for any agent contributing Solidity c
 - Allowed types include `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, `build`, and `ci`.
 - Format: `type(scope): short summary` (example: `feat(vault): add capped deposit guard`).
 - Keep each commit small, focused, and human-reviewable.
+- Prefer long-form commit messages for non-trivial changes:
+  - Subject line: Conventional Commit summary.
+  - Body sections (recommended order):
+    - `Context` (what problem this commit solves now).
+    - `Why` (risk/ops/audit reason; why this approach).
+    - `What changed` (concrete API/storage/event/test/doc changes).
+    - `Behavioral impact` (user/operator-visible behavior changes).
+    - `Security/compatibility` (invariants, trust assumptions, breaking changes).
+    - `Validation` (exact commands run and notable coverage).
+  - Mention concrete surfaces: function names, event names, files/modules touched.
+  - If behavior changes, explicitly call out before/after semantics.
+  - Keep language concrete and auditable.
 
 ## PR Acceptance Gate
 - A change is not production-ready unless all items below are true:
