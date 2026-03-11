@@ -62,7 +62,7 @@ Adapter must satisfy:
    - optional receipt token address (`cToken`) for Compound II model.
 2. Configure vault:
    - `setPrincipalTokenConfig(tokenDomain, {supported: true})`,
-   - `whitelistStrategy(tokenDomain, adapter, {whitelisted: true, cap})`.
+   - `setPrincipalStrategyWhitelist(tokenDomain, adapter, {whitelisted: true, cap, active: false})`.
 3. Run smoke lifecycle:
    - `allocatePrincipalToStrategy(tokenDomain, adapter, amount)`,
    - `deallocatePrincipalFromStrategy(tokenDomain, adapter, partialAmount)`,

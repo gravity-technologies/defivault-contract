@@ -416,7 +416,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
-  it("validates whitelistStrategy auth and input constraints", async function () {
+  it("validates setPrincipalStrategyWhitelist auth and input constraints", async function () {
     const { vault, vaultAsOther, token } = await deployBase();
     const zeroAddress = "0x0000000000000000000000000000000000000000";
     const strategy = await viem.deployContract("MockYieldStrategy", [
@@ -614,7 +614,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
-  it("validates setTokenConfig auth and token address", async function () {
+  it("validates setPrincipalTokenConfig auth and token address", async function () {
     const { vault, vaultAsOther } = await deployBase();
     const token = await viem.deployContract("MockERC20", ["Other", "OTH", 6]);
 

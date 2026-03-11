@@ -64,7 +64,7 @@ The adapter should satisfy all of the following:
    - optional share token (ERC4626 path).
 2. In vault admin flow:
    - `setPrincipalTokenConfig(principalToken, {supported: true})`,
-   - `whitelistStrategy(principalToken, adapter, {whitelisted: true, cap})`.
+   - `setPrincipalStrategyWhitelist(principalToken, adapter, {whitelisted: true, cap, active: false})`.
 3. Grant allocator role and run a smoke flow:
    - `allocatePrincipalToStrategy(principalToken, adapter, amount)`,
    - `deallocatePrincipalFromStrategy(principalToken, adapter, smallAmount)`.

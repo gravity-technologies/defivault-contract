@@ -68,7 +68,7 @@ import {
  *           Reached when `IYieldStrategy.principalBearingExposure(token)` returns 0 at de-whitelist time, or
  *           after a full manual deallocation.
  *
- *      Transition from (2) to (3)/(4) is triggered by calling `whitelistStrategy` with
+ *      Transition from (2) to (3)/(4) is triggered by calling `setPrincipalStrategyWhitelist` with
  *      `cfg.whitelisted == false`. The vault immediately enters withdraw-only mode and probes
  *      `strategy.principalBearingExposure(token)` to decide whether it can advance to (4) in the same call.
  *
@@ -203,9 +203,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     event EmergencyStrategySkipped(address indexed token, address indexed strategy);
 
     /**
-     * @notice Emitted during `whitelistStrategy` de-listing when exposure probe call reverts.
+     * @notice Emitted during `setPrincipalStrategyWhitelist` de-listing when exposure probe call reverts.
      * @dev The strategy remains in withdraw-only mode (still in `_principalTokenStrategies`) until its
-     *      balance reaches zero and `whitelistStrategy` is called again to complete removal.
+     *      balance reaches zero and `setPrincipalStrategyWhitelist` is called again to complete removal.
      */
     event StrategyRemovalCheckFailed(address indexed token, address indexed strategy);
 

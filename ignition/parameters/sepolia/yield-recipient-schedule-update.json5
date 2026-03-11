@@ -1,0 +1,14 @@
+{
+  YieldRecipientScheduleUpdateModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Configured vault yield-recipient timelock
+    yieldRecipientTimelock: "0x0000000000000000000000000000000000000000",
+    // Proposed yield recipient
+    newYieldRecipient: "0x0000000000000000000000000000000000000000",
+    // Timelock operation linkage
+    predecessor: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    delay: "86400n",
+  },
+}

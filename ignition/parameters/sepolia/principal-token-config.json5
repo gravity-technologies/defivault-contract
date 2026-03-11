@@ -1,0 +1,10 @@
+{
+  VaultPrincipalTokenConfigModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Principal token to configure
+    principalToken: "0x0000000000000000000000000000000000000000",
+    // Support flag passed to setPrincipalTokenConfig(token, { supported })
+    supported: true,
+  },
+}

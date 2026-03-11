@@ -19,6 +19,9 @@
 # Hardhat coverage reports
 /coverage
 
+# Local Solidity JS compiler download artifacts
+soljson-latest.js
+
 # Local working docs scratchpad
 docs/tmp/
 

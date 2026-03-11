@@ -1,4 +1,4 @@
-# GRVT L1 DeFi Vault Operations Runbook
+# GRVT L1 Treasury Vault Operations Runbook
 
 ## Purpose
 
@@ -13,21 +13,21 @@ It covers deployment, role/bootstrap operations, normal operations, emergency ha
 
 ### Policy Matrix
 
-| Function                    | Allowed caller(s)                       | Blocked by `pause()` | Requires `token.supported == true` |
-| --------------------------- | --------------------------------------- | -------------------- | ---------------------------------- |
-| `allocateToStrategy`        | `ALLOCATOR_ROLE`                        | Yes                  | Yes                                |
-| `deallocateFromStrategy`    | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                 |
-| `deallocateAllFromStrategy` | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                 |
-| `harvestYieldFromStrategy`  | `VAULT_ADMIN_ROLE`                      | Yes                  | No                                 |
-| `rebalanceToL2`             | `REBALANCER_ROLE`                       | Yes                  | Yes                                |
-| `emergencySendToL2`         | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No                   | No                                 |
+| Function                                     | Allowed caller(s)                       | Blocked by `pause()` | Requires `principalToken.supported == true` |
+| -------------------------------------------- | --------------------------------------- | -------------------- | ------------------------------------------- |
+| `allocatePrincipalToStrategy`                | `ALLOCATOR_ROLE`                        | Yes                  | Yes                                         |
+| `deallocatePrincipalFromStrategy`            | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                          |
+| `deallocateAllPrincipalFromStrategy`         | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                          |
+| `harvestYieldFromStrategy`                   | `VAULT_ADMIN_ROLE`                      | Yes                  | No                                          |
+| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                       | Yes                  | Yes                                         |
+| `emergencyNativeToL2` / `emergencyErc20ToL2` | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No                   | No                                          |
 
 ### Bridge Fee Model
 
-- `rebalanceToL2` and `emergencySendToL2` require `msg.value == 0`.
+- `rebalanceErc20ToL2` and `emergencyErc20ToL2` require `msg.value == 0`.
 - Vault mints base token and submits a BridgeHub two-bridges request.
-- Native bridge intent uses boundary token `address(0)` (sentinel), canonicalized to wrapped native token internally.
-- Passing wrapped native token directly to rebalance/emergency write APIs is invalid boundary input.
+- Native bridge intent uses explicit native methods (`rebalanceNativeToL2`, `emergencyNativeToL2`).
+- Passing wrapped native token to ERC20 rebalance/emergency methods is invalid boundary input.
 
 ### Strategy Token Domain
 
@@ -38,10 +38,10 @@ It covers deployment, role/bootstrap operations, normal operations, emergency ha
 
 ### Emergency Behavior
 
-- `emergencySendToL2` can be called while paused.
+- `emergencyNativeToL2` and `emergencyErc20ToL2` can be called while paused.
 - If idle balance is insufficient, it performs best-effort strategy unwinds (bounded by max strategy count).
 - If funds are still insufficient after unwind attempts, call reverts.
-- Break-glass token tracking recovery is available via `setRootTrackingOverride(token, enabled, forceTrack)`.
+- Break-glass token tracking recovery is available via `setTrackedPrincipalOverride(token, enabled, forceTrack)`.
   Use only for strategy-read-failure pinning scenarios with explicit operator rationale.
 
 ## Roles and Responsibilities
@@ -147,7 +147,7 @@ Output to record:
 
 Prepare:
 
-- `ignition/parameters/<env>/token-config.json5` with:
+- `ignition/parameters/<env>/principal-token-config.json5` with:
   - `vaultProxy`
   - `token`
   - `supported`
@@ -155,16 +155,16 @@ Prepare:
 Command:
 
 ```bash
-npm run config:token -- \
+npm run config:principal-token -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/token-config.json5
+  --parameters ignition/parameters/<env>/principal-token-config.json5
 ```
 
 ### Step 4: Onboard Strategy in Vault Registry
 
 Prepare:
 
-- `ignition/parameters/<env>/token-strategy.json5` with:
+- `ignition/parameters/<env>/principal-token-strategy.json5` with:
   - `vaultProxy`
   - `strategyProxy`
   - `underlyingToken` (canonical principal token key)
@@ -175,9 +175,9 @@ Prepare:
 Command:
 
 ```bash
-npm run deploy:token-strategy -- \
+npm run deploy:principal-token-strategy -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/token-strategy.json5
+  --parameters ignition/parameters/<env>/principal-token-strategy.json5
 ```
 
 ### Step 5: Bootstrap Initial Roles
@@ -200,11 +200,11 @@ npm run roles:bootstrap -- \
 
 For additional role members, run the roles module again with a new deployment ID and updated parameter file.
 
-### Step 6: Bootstrap Treasury Timelock Governance
+### Step 6: Bootstrap Yield-Recipient Timelock Governance
 
 Prepare:
 
-- `ignition/parameters/<env>/treasury-bootstrap.json5` with:
+- `ignition/parameters/<env>/yield-recipient-bootstrap.json5` with:
   - `vaultProxy`
   - `minDelay`
   - `proposers`
@@ -216,7 +216,7 @@ Command:
 ```bash
 npm run deploy:yield-recipient-timelock -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/treasury-bootstrap.json5
+  --parameters ignition/parameters/<env>/yield-recipient-bootstrap.json5
 ```
 
 Operational notes:
@@ -263,7 +263,7 @@ npm run upgrade:strategy -- \
 1. Confirm `paused() == false`.
 2. Confirm expected role holders for all roles.
 3. Confirm `bridgeHub/baseToken/l2ChainId/l2ExchangeRecipient` match intended values.
-4. Confirm token support and strategy whitelist state.
+4. Confirm principal-token support and principal-strategy whitelist state.
 5. Confirm Ignition deployment outputs (implementation + proxy + tx hashes) are attached to deployment record.
 6. Confirm per-proxy `ProxyAdmin` addresses are attached to deployment record.
 
@@ -280,14 +280,14 @@ Operator rules:
 - Do not allocate unless token is supported and strategy is whitelisted.
 - Use `totalExactAssetsStatus(token)`; non-zero `skippedStrategies` indicates degraded reporting.
 
-### Treasury Governance Operations
+### Yield-Recipient Governance Operations
 
 Schedule yield recipient update (timelock queue):
 
 ```bash
 npm run yield-recipient:schedule-update -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/treasury-schedule-update.json5
+  --parameters ignition/parameters/<env>/yield-recipient-schedule-update.json5
 ```
 
 Execute queued yield recipient update:
@@ -295,18 +295,18 @@ Execute queued yield recipient update:
 ```bash
 npm run yield-recipient:execute-update -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/treasury-execute-update.json5
+  --parameters ignition/parameters/<env>/yield-recipient-execute-update.json5
 ```
 
 Operator rules:
 
-- `newTreasury` must match between schedule and execute payloads.
+- `newYieldRecipient` must match between schedule and execute payloads.
 - `predecessor`/`salt` must also match between schedule and execute.
 - Do not treat direct admin `setYieldRecipient` calls as a valid production path once timelock is set.
 
 ### Yield Harvest Operations
 
-Harvest yield from strategy to current treasury:
+Harvest yield from strategy to current yield recipient:
 
 ```bash
 npm run ops:harvest-yield -- \
@@ -321,14 +321,14 @@ Operator rules:
 - Harvest token input is canonical principal token key (ERC20); `address(0)` is invalid for strategy-domain harvest.
 - Harvest/cap math uses `principalBearingExposure(token)` scalar (not reporting component sums).
 - Payout asset is principal-token based:
-  - non-wrapped-native principal token -> ERC20 transfer to treasury,
-  - wrapped-native principal token -> unwrap in vault then native ETH transfer to treasury.
+  - non-wrapped-native principal token -> ERC20 transfer to yield recipient,
+  - wrapped-native principal token -> unwrap in vault then native ETH transfer to yield recipient.
 - `YieldHarvested.principalToken` remains the principal token key (wrapped-native for native-payout branch).
 - Harvest unwind emits both `PrincipalDeallocatedFromStrategy` and `YieldHarvested` in the same transaction:
   - `PrincipalDeallocatedFromStrategy.received` is vault-side measured strategy unwind delta.
-  - `YieldHarvested.received` is treasury-side net receipt used for `minReceived`.
-- Use `minReceived` to enforce treasury-side net receipt constraints.
-- Wrapped-native harvest enforces `minReceived` on treasury native balance delta.
+  - `YieldHarvested.received` is yield-recipient-side net receipt used for `minReceived`.
+- Use `minReceived` to enforce yield-recipient-side net receipt constraints.
+- Wrapped-native harvest enforces `minReceived` on yield-recipient native balance delta.
 - Never default `minReceived` to `0` unless explicitly operating without slippage protection.
 - Native payout failure reverts with `NativeTransferFailed`.
 - Handle `YieldNotAvailable` and `SlippageExceeded` as expected operational guards.
@@ -342,36 +342,37 @@ Operator rules:
 
 Use:
 
-- `rebalanceErc20ToL2(token, amount)`
+1. ERC20 path: `rebalanceErc20ToL2(erc20Token, amount)`
+2. Native path: `rebalanceNativeToL2(amount)` with `msg.value` funding bridge fees.
 
 Checks:
 
 - caller has `REBALANCER_ROLE`
 - vault not paused
-- token supported
-- `msg.value == 0`
-- native intent uses `token = address(0)` sentinel
-- explicit wrapped-native token boundary input is invalid
-- amount within current `availableErc20ForRebalance(token)`
+- principal token supported
+- ERC20 path requires `msg.value == 0`
+- ERC20 path rejects explicit wrapped-native boundary input
+- native path uses wrapped-native internal availability
+- amount within current `availableErc20ForRebalance(erc20Token)` or `availableNativeForRebalance()`
 
 ## Incident Response Playbooks
 
 ### A) Market/protocol stress
 
 1. `pause()`.
-2. Stop risk-on operations (`allocateToStrategy`, `rebalanceToL2`).
-3. Pull funds from strategies (`deallocateFromStrategy` / `deallocateAllFromStrategy`).
+2. Stop risk-on operations (`allocatePrincipalToStrategy`, `rebalanceNativeToL2`, `rebalanceErc20ToL2`).
+3. Pull funds from strategies (`deallocatePrincipalFromStrategy` / `deallocateAllPrincipalFromStrategy`).
 4. If urgent L2 liquidity is needed, execute `emergencyErc20ToL2(...)`.
 5. Reconcile balances and document each action.
 
 ### B) Token de-support during incident
 
-1. Set `token.supported = false`.
+1. Set `principalToken.supported = false`.
 2. Continue defensive exits:
 
-- `deallocateFromStrategy`
-- `deallocateAllFromStrategy`
-- `emergencySendToL2`
+- `deallocatePrincipalFromStrategy`
+- `deallocateAllPrincipalFromStrategy`
+- `emergencyNativeToL2` / `emergencyErc20ToL2`
 
 3. Re-enable only after root-cause resolution.
 
@@ -384,7 +385,7 @@ Checks:
 
 ## Emergency Send Checklist
 
-Before each `emergencySendToL2`:
+Before each `emergencyNativeToL2` or `emergencyErc20ToL2`:
 
 1. Incident ticket/reference exists.
 2. Caller has `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE`.
