@@ -126,7 +126,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
       const idle = (await vault.read.idleTokenBalance([
         token.address,
       ])) as bigint;
-      const breakdown = await vault.read.strategyAssetBreakdown([
+      const breakdown = await vault.read.strategyPositionBreakdown([
         token.address,
         strategy.address,
       ]);

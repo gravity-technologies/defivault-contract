@@ -14,7 +14,7 @@ Use them when you ask:
 ## Scenario Index
 
 - `native-eth-weth-handling.md`: native-intent boundary rules, wrapped-native ingress invariant, bridge/harvest ETH conversion points.
-- `yield-harvesting.md`: yield extraction path, treasury payout semantics, slippage checks, write-down side effects.
+- `yield-harvesting.md`: yield extraction path, treasury payout semantics, and slippage checks.
 - `tvl-reporting-underlying-and-non-underlying.md`: exact-token reporting model and how root/component queries differ.
 - `strategy-generic-adapter-flow.md`: vault-level adapter contract and tracking assumptions that apply to all protocols.
 - `strategy-aave-1to1-scalar.md`: concrete behavior of current `AaveV3Strategy` (including explicit 1:1 scalar assumption).
@@ -51,14 +51,14 @@ For each scenario file, read in this order:
   Example: native intent canonicalizes to `wrappedNativeToken`.
 - **Root token**: token-domain key used for a strategy binding in vault registry.
   Example: `USDT` for `(USDT, AaveStrategy)`.
-- **Component token**: token returned inside `assets(token).components`.
+- **Component token**: token returned inside `positionBreakdown(principalToken).components`.
   Example: `aUSDT` and residual `USDT`.
 - **Receipt token**: non-principal component token representing invested position.
   Example: `aUSDT`.
 - **Principal-bearing exposure**: scalar used for cap/harvest math.
   Example: `principalBearingExposure(USDT)`.
-- **Tracked token**: token included in on-chain tracked token registry.
-  Example: principal token + discovered non-principal receipt token.
+- **Tracked principal token**: principal token included in on-chain tracked-principal registry.
+  Example: `USDT`.
 
 ## Important Distinction (Harvest)
 

@@ -37,7 +37,11 @@ contract MockReentrantStrategy is IYieldStrategy {
         return "MOCK_REENTRANT";
     }
 
-    function assets(address) external pure returns (StrategyAssetBreakdown memory breakdown) {
+    function exactTokenBalance(address) external pure returns (uint256 exposure) {
+        return exposure;
+    }
+
+    function positionBreakdown(address) external pure returns (StrategyAssetBreakdown memory breakdown) {
         return breakdown;
     }
 

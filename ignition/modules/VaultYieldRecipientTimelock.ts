@@ -6,7 +6,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * Purpose:
  * - Attach to an existing vault.
  * - Deploy an OZ TimelockController.
- * - Set vault yield-recipient timelock (one-time bootstrap).
+ * - Set vault yield-recipient timelock controller (one-time bootstrap).
  *
  * Parameters (VaultYieldRecipientTimelockModule.*):
  * - vaultProxy: existing GRVTL1TreasuryVault proxy address.
@@ -23,14 +23,16 @@ export default buildModule("VaultYieldRecipientTimelockModule", (m) => {
   const admin = m.getParameter("admin");
 
   const vault = m.contractAt("GRVTL1TreasuryVault", vaultProxy);
-  const yieldRecipientTimelock = m.contract("TimelockController", [
+  const yieldRecipientTimelockController = m.contract("TimelockController", [
     minDelay,
     proposers,
     executors,
     admin,
   ]);
 
-  m.call(vault, "setYieldRecipientTimelock", [yieldRecipientTimelock]);
+  m.call(vault, "setYieldRecipientTimelockController", [
+    yieldRecipientTimelockController,
+  ]);
 
-  return { vault, yieldRecipientTimelock };
+  return { vault, yieldRecipientTimelockController };
 });

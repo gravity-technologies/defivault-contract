@@ -148,7 +148,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
         ])) as bigint;
         const strategy = strategies[Math.floor(rng() * strategies.length)];
         const current = componentTotal(
-          await vault.read.strategyAssetBreakdown([token.address, strategy]),
+          await vault.read.strategyPositionBreakdown([token.address, strategy]),
         );
         const remainingCap = 2_000_000n > current ? 2_000_000n - current : 0n;
         let amount = idle / 10n;
@@ -163,7 +163,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
       } else if (action === 1) {
         const strategy = strategies[Math.floor(rng() * strategies.length)];
         const sAssets = componentTotal(
-          await vault.read.strategyAssetBreakdown([token.address, strategy]),
+          await vault.read.strategyPositionBreakdown([token.address, strategy]),
         );
         const amount = sAssets / 2n;
         if (amount > 0n) {
@@ -191,13 +191,13 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
         token.address,
       ])) as bigint;
       const sA = componentTotal(
-        await vault.read.strategyAssetBreakdown([
+        await vault.read.strategyPositionBreakdown([
           token.address,
           stratA.address,
         ]),
       );
       const sB = componentTotal(
-        await vault.read.strategyAssetBreakdown([
+        await vault.read.strategyPositionBreakdown([
           token.address,
           stratB.address,
         ]),
@@ -253,7 +253,10 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
     const status = await vault.read.totalExactAssetsStatus([token.address]);
     const idle = await vault.read.idleTokenBalance([token.address]);
     const healthyAssets = componentTotal(
-      await vault.read.strategyAssetBreakdown([token.address, healthy.address]),
+      await vault.read.strategyPositionBreakdown([
+        token.address,
+        healthy.address,
+      ]),
     );
 
     assert.ok(status.skippedStrategies > 0n);

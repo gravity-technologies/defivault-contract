@@ -292,7 +292,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     ]);
     assert.equal(
       componentTotal(
-        await vault.read.strategyAssetBreakdown([
+        await vault.read.strategyPositionBreakdown([
           token.address,
           stratA.address,
         ]),
@@ -306,7 +306,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     ]);
     assert.equal(
       componentTotal(
-        await vault.read.strategyAssetBreakdown([
+        await vault.read.strategyPositionBreakdown([
           token.address,
           stratA.address,
         ]),
@@ -572,7 +572,10 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     const status = await vault.read.totalExactAssetsStatus([token.address]);
     const idle = await vault.read.idleTokenBalance([token.address]);
     const healthyAssets = componentTotal(
-      await vault.read.strategyAssetBreakdown([token.address, healthy.address]),
+      await vault.read.strategyPositionBreakdown([
+        token.address,
+        healthy.address,
+      ]),
     );
     assert.ok(status.skippedStrategies > 0n);
     assert.equal(status.total, idle + healthyAssets);
@@ -584,7 +587,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       vault.address,
       "INACTIVE",
     ]);
-    const inactiveBreakdown = await vault.read.strategyAssetBreakdown([
+    const inactiveBreakdown = await vault.read.strategyPositionBreakdown([
       token.address,
       inactive.address,
     ]);
@@ -597,7 +600,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       { whitelisted: true, active: false, cap: 0n },
     ]);
     await assert.rejects(
-      vault.read.strategyAssetBreakdown([token.address, reverting.address]),
+      vault.read.strategyPositionBreakdown([token.address, reverting.address]),
     );
   });
 
@@ -728,7 +731,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     assert.equal(await bridge.read.lastAmount(), 500_000n);
     assert.ok(
       componentTotal(
-        await vault.read.strategyAssetBreakdown([
+        await vault.read.strategyPositionBreakdown([
           token.address,
           stratA.address,
         ]),

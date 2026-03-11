@@ -6,7 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {StrategyAssetBreakdown, TokenAmountComponent} from "../interfaces/IVaultReportingTypes.sol";
+import {StrategyAssetBreakdown} from "../interfaces/IVaultReportingTypes.sol";
 
 library VaultStrategyOpsLib {
     using SafeERC20 for IERC20;
@@ -114,45 +114,38 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Reads the exact-token component amount reported by a strategy for one query token.
-     * @dev Returns `(false, 0)` on strategy read failure, malformed component payloads, or overflow.
-     * @param token Exact token to aggregate from strategy components.
+     * @notice Reads the exact-token balance reported by a strategy for one exact token query.
+     * @dev Returns `(false, 0)` on strategy read failure.
+     * @param token Exact token to aggregate.
      * @param strategy Strategy to query.
-     * @return ok True when the read completed with a valid component payload.
-     * @return amount Sum of matching component amounts for `token`.
+     * @return ok True when the read completed successfully.
+     * @return amount Exact token balance returned by the strategy.
      */
-    function readStrategyExactComponent(address token, address strategy) public view returns (bool ok, uint256 amount) {
-        StrategyAssetBreakdown memory breakdown;
-        try IYieldStrategy(strategy).assets(token) returns (StrategyAssetBreakdown memory data) {
-            breakdown = data;
+    function readStrategyExactTokenBalance(
+        address token,
+        address strategy
+    ) public view returns (bool ok, uint256 amount) {
+        try IYieldStrategy(strategy).exactTokenBalance(token) returns (uint256 value) {
+            return (true, value);
         } catch {
             return (false, 0);
         }
-
-        TokenAmountComponent[] memory components = breakdown.components;
-        for (uint256 i = 0; i < components.length; ++i) {
-            if (components[i].token == address(0)) return (false, 0);
-            if (components[i].token != token) continue;
-            if (components[i].amount > type(uint256).max - amount) return (false, 0);
-            amount += components[i].amount;
-        }
-        return (true, amount);
     }
 
     /**
-     * @notice Reads the full strategy asset breakdown and normalizes failure to the vault's custom error.
-     * @param token Query token passed into the strategy.
+     * @notice Reads the full strategy principal-domain breakdown and normalizes failure to the vault's custom error.
+     * @param principalToken Principal token-domain query passed into the strategy.
      * @param strategy Strategy to query.
      * @return breakdown Full strategy asset breakdown.
      */
-    function readStrategyAssetsOrRevert(
-        address token,
+    function readStrategyPositionBreakdownOrRevert(
+        address principalToken,
         address strategy
     ) public view returns (StrategyAssetBreakdown memory breakdown) {
-        try IYieldStrategy(strategy).assets(token) returns (StrategyAssetBreakdown memory data) {
+        try IYieldStrategy(strategy).positionBreakdown(principalToken) returns (StrategyAssetBreakdown memory data) {
             return data;
         } catch {
-            revert IL1TreasuryVault.InvalidStrategyAssetsRead(token, strategy);
+            revert IL1TreasuryVault.InvalidStrategyAssetsRead(principalToken, strategy);
         }
     }
 

@@ -44,20 +44,10 @@ Flow:
 - Vault pre-reads `maxYield`.
 - If measured withdrawn amount exceeds pre-read bound, harvest reverts with `YieldNotAvailable`.
 
-### 3) Loss-side write-down on deallocation
-
-- Harvest itself does not directly decrement principal.
-- But post-unwind exposure check can clamp principal down and emit `StrategyPrincipalWrittenDown`.
-
-### 4) Exposure read failure after unwind
-
-- Vault does not revert unwind just because post-read fails.
-- Emits `StrategyPrincipalWriteDownSkipped`.
-
-### 5) Sequential harvests
+### 3) Sequential harvests
 
 - Multiple harvests are expected.
-- Principal stays stable across yield-only harvests unless write-down conditions are met.
+- Principal stays stable across yield-only harvests.
 
 ## Why This Is Complex
 
@@ -75,4 +65,4 @@ Those domains intentionally differ to resist malformed strategy returns and fee-
 - Is strategy in withdrawable lifecycle state?
 - Did `minReceived` match treasury-side net receipt expectations?
 - Are indexers handling both `PrincipalDeallocatedFromStrategy` and `YieldHarvested` in same tx?
-- If principal moved unexpectedly, check write-down events.
+- If principal moved unexpectedly, inspect allocation/deallocation flows and tracked principal updates.

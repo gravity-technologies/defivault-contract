@@ -333,11 +333,6 @@ Operator rules:
 - Native payout failure reverts with `NativeTransferFailed`.
 - Handle `YieldNotAvailable` and `SlippageExceeded` as expected operational guards.
 
-### Principal Sync Operations
-
-- `syncStrategyPrincipal(token, strategy)` is a vault-admin reconciliation control.
-- Execute principal sync only as an incident reconciliation action with ticketed rationale.
-
 ### L1 -> L2 Top-Up
 
 Use:

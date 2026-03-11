@@ -138,10 +138,10 @@ describeFork("Aave v3 mainnet fork integration", async function () {
     const afterAllocateVault = await usdtBalanceOf(addr(vaultWallet));
     assert.equal(beforeVault - afterAllocateVault, amount);
 
-    const strategyAssetsAfterAllocate = componentTotal(
-      await strategy.read.assets([USDT]),
-    );
-    assert.ok(strategyAssetsAfterAllocate >= amount - 1n);
+    const strategyATokenAfterAllocate = await strategy.read.exactTokenBalance([
+      AUSDT,
+    ]);
+    assert.ok(strategyATokenAfterAllocate >= amount - 1n);
 
     const beforeHalfWithdrawVault = await usdtBalanceOf(addr(vaultWallet));
     await strategyAsVault.write.deallocate([USDT, amount / 2n]);
@@ -154,10 +154,10 @@ describeFork("Aave v3 mainnet fork integration", async function () {
 
     await strategyAsVault.write.deallocateAll([USDT]);
 
-    const strategyAssetsAfterAll = componentTotal(
-      await strategy.read.assets([USDT]),
-    );
-    assert.ok(strategyAssetsAfterAll <= 2n);
+    const strategyATokenAfterAll = await strategy.read.exactTokenBalance([
+      AUSDT,
+    ]);
+    assert.ok(strategyATokenAfterAll <= 2n);
 
     const finalVault = await usdtBalanceOf(addr(vaultWallet));
     assert.ok(finalVault >= beforeVault - 2n);
@@ -251,7 +251,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
     ]);
 
     const strategyAssets = componentTotal(
-      await vault.read.strategyAssetBreakdown([USDT, strategy.address]),
+      await vault.read.strategyPositionBreakdown([USDT, strategy.address]),
     );
     assert.ok(strategyAssets <= 2n);
 

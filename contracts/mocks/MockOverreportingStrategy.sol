@@ -46,7 +46,11 @@ contract MockOverreportingStrategy is IYieldStrategy {
         return "OVERREPORTING_STRATEGY";
     }
 
-    function assets(address token) external view returns (StrategyAssetBreakdown memory breakdown) {
+    function exactTokenBalance(address token) external view returns (uint256) {
+        return _trackedAssets[token];
+    }
+
+    function positionBreakdown(address token) external view returns (StrategyAssetBreakdown memory breakdown) {
         uint256 amount = _trackedAssets[token];
         if (amount == 0) return breakdown;
 

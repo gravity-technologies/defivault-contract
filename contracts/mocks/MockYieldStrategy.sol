@@ -35,7 +35,7 @@ contract MockYieldStrategy is IYieldStrategy {
     mapping(address token => bool value) public maxAssets;
     mapping(address token => bool value) public exposureOverrideSet;
     mapping(address token => uint256 value) public exposureOverride;
-    mapping(address queryToken => MockComponent[] components) private _mockedComponents;
+    mapping(address principalToken => MockComponent[] components) private _mockedComponents;
 
     constructor(address vault_, string memory strategyName_) {
         if (vault_ == address(0) || bytes(strategyName_).length == 0) revert InvalidParam();
@@ -53,26 +53,26 @@ contract MockYieldStrategy is IYieldStrategy {
         return _name;
     }
 
-    /// @notice Sets scalar exposure and default single-token asset component for `token`.
+    /// @notice Sets exact-token balance, scalar exposure default, and default single-token breakdown for `token`.
     function setAssets(address token, uint256 amount) external {
         delete _mockedComponents[token];
         _trackedAssets[token] = amount;
     }
 
-    /// @notice Sets explicit component payload returned by `assets(queryToken)`.
-    function setComponents(address queryToken, address[] calldata tokens, uint256[] calldata amounts) external {
+    /// @notice Sets explicit principal-domain breakdown payload returned by `positionBreakdown(principalToken)`.
+    function setComponents(address principalToken, address[] calldata tokens, uint256[] calldata amounts) external {
         if (tokens.length != amounts.length) revert InvalidParam();
-        delete _mockedComponents[queryToken];
+        delete _mockedComponents[principalToken];
 
-        uint256 total;
+        uint256 exactPrincipalBalance;
         for (uint256 i = 0; i < tokens.length; ++i) {
-            _mockedComponents[queryToken].push(MockComponent({token: tokens[i], amount: amounts[i]}));
-            total += amounts[i];
+            _mockedComponents[principalToken].push(MockComponent({token: tokens[i], amount: amounts[i]}));
+            if (tokens[i] == principalToken) exactPrincipalBalance += amounts[i];
         }
-        _trackedAssets[queryToken] = total;
+        _trackedAssets[principalToken] = exactPrincipalBalance;
     }
 
-    /// @notice Configures `assets(token)` to revert for tests.
+    /// @notice Configures exact-token, breakdown, and exposure reads for `token` to revert in tests.
     function setRevertAssets(address token, bool value) external {
         revertAssets[token] = value;
     }
@@ -95,7 +95,14 @@ contract MockYieldStrategy is IYieldStrategy {
     }
 
     /// @inheritdoc IYieldStrategy
-    function assets(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
+    function exactTokenBalance(address token) external view override returns (uint256) {
+        if (revertAssets[token]) revert("ASSETS_REVERT");
+        uint256 amount = maxAssets[token] ? type(uint256).max : _trackedAssets[token];
+        return amount;
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function positionBreakdown(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
         if (revertAssets[token]) revert("ASSETS_REVERT");
 
         MockComponent[] storage mocked = _mockedComponents[token];
