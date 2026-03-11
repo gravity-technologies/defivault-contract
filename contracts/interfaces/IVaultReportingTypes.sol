@@ -24,7 +24,7 @@ struct StrategyAssetBreakdown {
     TokenAmountComponent[] components;
 }
 
-/// @notice Strict exact-token totals for `totalAssets(token)`.
+/// @notice Strict exact-token totals for `totalExactAssets(token)`.
 struct VaultTokenTotals {
     /// @notice Idle balance held directly by vault.
     uint256 idle;
