@@ -58,7 +58,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     mapping(bytes32 bridgeTxHash => NativeBridgeRecord record) public nativeBridgeRecords;
 
     /// @dev Reserved storage gap for upgrade-safe layout extension.
-    uint256[45] private __gap;
+    uint256[50] private __gap;
 
     /// @notice Emitted when native ETH is bridged out through BridgeHub.
     event NativeBridgedToL2(

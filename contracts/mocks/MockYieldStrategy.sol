@@ -4,11 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {
-    TokenAmountComponent,
-    TokenAmountComponentKind,
-    StrategyAssetBreakdown
-} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent, PositionComponentKind} from "../interfaces/IVaultReportingTypes.sol";
 
 /**
  * @title MockYieldStrategy
@@ -18,6 +14,7 @@ import {
  */
 contract MockYieldStrategy is IYieldStrategy {
     using SafeERC20 for IERC20;
+    uint16 private constant BPS_SCALE = 10_000;
 
     struct MockComponent {
         address token;
@@ -35,7 +32,12 @@ contract MockYieldStrategy is IYieldStrategy {
     mapping(address token => bool value) public maxAssets;
     mapping(address token => bool value) public exposureOverrideSet;
     mapping(address token => uint256 value) public exposureOverride;
-    mapping(address principalToken => MockComponent[] components) private _mockedComponents;
+    mapping(address token => bool value) public allocatePullBpsSet;
+    mapping(address token => uint16 value) public allocatePullBps;
+    mapping(address token => bool value) public allocatePullAmountOverrideSet;
+    mapping(address token => uint256 value) public allocatePullAmountOverride;
+    mapping(address token => uint256 value) public allocateRefundToVault;
+    mapping(address vaultToken => MockComponent[] components) private _mockedComponents;
 
     constructor(address vault_, string memory strategyName_) {
         if (vault_ == address(0) || bytes(strategyName_).length == 0) revert InvalidParam();
@@ -53,23 +55,23 @@ contract MockYieldStrategy is IYieldStrategy {
         return _name;
     }
 
-    /// @notice Sets exact-token balance, scalar exposure default, and default single-token breakdown for `token`.
+    /// @notice Sets exact-token balance, default exposure value, and default single-token breakdown for `token`.
     function setAssets(address token, uint256 amount) external {
         delete _mockedComponents[token];
         _trackedAssets[token] = amount;
     }
 
-    /// @notice Sets explicit principal-domain breakdown payload returned by `positionBreakdown(principalToken)`.
-    function setComponents(address principalToken, address[] calldata tokens, uint256[] calldata amounts) external {
+    /// @notice Sets explicit position breakdown payload returned by `positionBreakdown(vaultToken)`.
+    function setComponents(address vaultToken, address[] calldata tokens, uint256[] calldata amounts) external {
         if (tokens.length != amounts.length) revert InvalidParam();
-        delete _mockedComponents[principalToken];
+        delete _mockedComponents[vaultToken];
 
-        uint256 exactPrincipalBalance;
+        uint256 exactAccountingBalance;
         for (uint256 i = 0; i < tokens.length; ++i) {
-            _mockedComponents[principalToken].push(MockComponent({token: tokens[i], amount: amounts[i]}));
-            if (tokens[i] == principalToken) exactPrincipalBalance += amounts[i];
+            _mockedComponents[vaultToken].push(MockComponent({token: tokens[i], amount: amounts[i]}));
+            if (tokens[i] == vaultToken) exactAccountingBalance += amounts[i];
         }
-        _trackedAssets[principalToken] = exactPrincipalBalance;
+        _trackedAssets[vaultToken] = exactAccountingBalance;
     }
 
     /// @notice Configures exact-token, breakdown, and exposure reads for `token` to revert in tests.
@@ -82,16 +84,46 @@ contract MockYieldStrategy is IYieldStrategy {
         maxAssets[token] = value;
     }
 
-    /// @notice Overrides scalar exposure returned by `principalBearingExposure(token)`.
+    /// @notice Overrides the exposure value returned by `strategyExposure(token)`.
     function setExposure(address token, uint256 exposure) external {
         exposureOverrideSet[token] = true;
         exposureOverride[token] = exposure;
     }
 
-    /// @notice Clears scalar exposure override for `token`.
+    /// @notice Clears the exposure override for `token`.
     function clearExposure(address token) external {
         delete exposureOverrideSet[token];
         delete exposureOverride[token];
+    }
+
+    /// @notice Sets allocation pull fraction for `token` in basis points.
+    function setAllocatePullBps(address token, uint16 bps) external {
+        if (bps > BPS_SCALE) revert InvalidParam();
+        allocatePullBpsSet[token] = true;
+        allocatePullBps[token] = bps;
+    }
+
+    /// @notice Clears allocation pull fraction override for `token`.
+    function clearAllocatePullBps(address token) external {
+        delete allocatePullBpsSet[token];
+        delete allocatePullBps[token];
+    }
+
+    /// @notice Sets exact allocation pull amount override for `token`.
+    function setAllocatePullAmount(address token, uint256 amount) external {
+        allocatePullAmountOverrideSet[token] = true;
+        allocatePullAmountOverride[token] = amount;
+    }
+
+    /// @notice Clears exact allocation pull amount override for `token`.
+    function clearAllocatePullAmount(address token) external {
+        delete allocatePullAmountOverrideSet[token];
+        delete allocatePullAmountOverride[token];
+    }
+
+    /// @notice Sets same-call refund amount sent back to vault during `allocate`.
+    function setAllocateRefundToVault(address token, uint256 amount) external {
+        allocateRefundToVault[token] = amount;
     }
 
     /// @inheritdoc IYieldStrategy
@@ -102,35 +134,45 @@ contract MockYieldStrategy is IYieldStrategy {
     }
 
     /// @inheritdoc IYieldStrategy
-    function positionBreakdown(address token) external view override returns (StrategyAssetBreakdown memory breakdown) {
+    function tvlTokens(address vaultToken) external view override returns (address[] memory tokens) {
+        MockComponent[] storage mocked = _mockedComponents[vaultToken];
+        if (mocked.length != 0) {
+            tokens = new address[](mocked.length);
+            for (uint256 i = 0; i < mocked.length; ++i) {
+                tokens[i] = mocked[i].token;
+            }
+            return tokens;
+        }
+        tokens = new address[](1);
+        tokens[0] = vaultToken;
+    }
+
+    /// @inheritdoc IYieldStrategy
+    function positionBreakdown(address token) external view override returns (PositionComponent[] memory components) {
         if (revertAssets[token]) revert("ASSETS_REVERT");
 
         MockComponent[] storage mocked = _mockedComponents[token];
         if (mocked.length != 0) {
-            breakdown.components = new TokenAmountComponent[](mocked.length);
+            components = new PositionComponent[](mocked.length);
             for (uint256 i = 0; i < mocked.length; ++i) {
-                breakdown.components[i] = TokenAmountComponent({
+                components[i] = PositionComponent({
                     token: mocked[i].token,
                     amount: mocked[i].amount,
-                    kind: TokenAmountComponentKind.InvestedPrincipal
+                    kind: PositionComponentKind.InvestedPosition
                 });
             }
-            return breakdown;
+            return components;
         }
 
         uint256 amount = maxAssets[token] ? type(uint256).max : _trackedAssets[token];
-        if (amount == 0) return breakdown;
+        if (amount == 0) return components;
 
-        breakdown.components = new TokenAmountComponent[](1);
-        breakdown.components[0] = TokenAmountComponent({
-            token: token,
-            amount: amount,
-            kind: TokenAmountComponentKind.InvestedPrincipal
-        });
+        components = new PositionComponent[](1);
+        components[0] = PositionComponent({token: token, amount: amount, kind: PositionComponentKind.InvestedPosition});
     }
 
     /// @inheritdoc IYieldStrategy
-    function principalBearingExposure(address token) external view override returns (uint256 exposure) {
+    function strategyExposure(address token) external view override returns (uint256 exposure) {
         if (revertAssets[token]) revert("EXPOSURE_REVERT");
         if (maxAssets[token]) return type(uint256).max;
         if (exposureOverrideSet[token]) return exposureOverride[token];
@@ -141,10 +183,32 @@ contract MockYieldStrategy is IYieldStrategy {
     function allocate(address token, uint256 amount) external override onlyVault {
         if (token == address(0) || amount == 0) revert InvalidParam();
 
+        uint256 pullAmount = amount;
+        if (allocatePullAmountOverrideSet[token]) {
+            pullAmount = allocatePullAmountOverride[token];
+        } else if (allocatePullBpsSet[token]) {
+            pullAmount = (amount * allocatePullBps[token]) / BPS_SCALE;
+        }
+        if (pullAmount > amount) revert InvalidParam();
+
         uint256 beforeBal = IERC20(token).balanceOf(address(this));
-        IERC20(token).safeTransferFrom(vault, address(this), amount);
-        uint256 received = IERC20(token).balanceOf(address(this)) - beforeBal;
-        _trackedAssets[token] += received;
+        if (pullAmount != 0) {
+            IERC20(token).safeTransferFrom(vault, address(this), pullAmount);
+        }
+        uint256 afterPull = IERC20(token).balanceOf(address(this));
+        if (afterPull < beforeBal) revert InvalidParam();
+
+        uint256 refund = allocateRefundToVault[token];
+        if (refund != 0) {
+            uint256 refundBefore = afterPull;
+            IERC20(token).safeTransfer(vault, refund);
+            uint256 refundAfter = IERC20(token).balanceOf(address(this));
+            if (refundAfter > refundBefore) revert InvalidParam();
+            _trackedAssets[token] = refundAfter;
+            return;
+        }
+
+        _trackedAssets[token] = afterPull;
     }
 
     /// @inheritdoc IYieldStrategy

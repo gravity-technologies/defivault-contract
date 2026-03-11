@@ -1,0 +1,14 @@
+{
+  VaultTokenStrategyModule: {
+    // Existing deployed vault proxy
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Existing deployed strategy proxy
+    strategyProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token key for setVaultTokenConfig/setVaultTokenStrategyConfig
+    vaultToken: "0x0000000000000000000000000000000000000000",
+    // Vault registry settings
+    vaultTokenSupported: true,
+    vaultTokenStrategyWhitelisted: true,
+    strategyCap: "0n",
+  },
+}

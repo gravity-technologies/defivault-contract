@@ -9,13 +9,13 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  *
  * Parameters (VaultHarvestYieldModule.*):
  * - vaultProxy: GRVTL1TreasuryVault proxy address.
- * - token: canonical principal token key (ERC20) used for strategy-domain accounting.
+ * - token: canonical vault token key (ERC20) used for strategy-domain accounting.
  *   This is not a boundary-intent sentinel input and must not be `address(0)`.
- *   For wrapped-native principal harvest, pass wrapped-native token address (not `address(0)`).
+ *   For wrapped-native vault-token harvest, pass wrapped-native token address (not `address(0)`).
  * - strategy: whitelisted (or withdraw-only) strategy address.
  * - amount: requested yield withdrawal from strategy.
  * - minReceived: required minimum yield-recipient-side net receipt (no default).
- *   For wrapped-native principal harvest this applies to yield-recipient native ETH delta.
+ *   For wrapped-native vault-token harvest this applies to yield-recipient native ETH delta.
  */
 export default buildModule("VaultHarvestYieldModule", (m) => {
   const vaultProxy = m.getParameter("vaultProxy");

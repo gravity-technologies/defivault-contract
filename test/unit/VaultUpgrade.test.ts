@@ -225,13 +225,13 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       addr(rebalancer),
     ]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       {
         supported: true,
       },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       strategy.address,
       { whitelisted: true, active: false, cap: 800_000n },
@@ -252,7 +252,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       },
     );
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       strategy.address,
       300_000n,
@@ -265,10 +265,10 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     const expectedL2ChainId = await vault.read.l2ChainId();
     const expectedRecipient = await vault.read.l2ExchangeRecipient();
     const expectedPaused = await vault.read.paused();
-    const expectedTokenCfg = await vault.read.getPrincipalTokenConfig([
+    const expectedTokenCfg = await vault.read.getVaultTokenConfig([
       token.address,
     ]);
-    const expectedStrategyCfg = await vault.read.getPrincipalStrategyConfig([
+    const expectedStrategyCfg = await vault.read.getVaultTokenStrategyConfig([
       token.address,
       strategy.address,
     ]);
@@ -307,18 +307,18 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     );
     assert.equal(await vaultV2.read.paused(), expectedPaused);
 
-    const tokenCfgAfter = await vaultV2.read.getPrincipalTokenConfig([
+    const tokenCfgAfter = await vaultV2.read.getVaultTokenConfig([
       token.address,
     ]);
     assert.deepEqual(tokenCfgAfter, expectedTokenCfg);
 
-    const strategyCfgAfter = await vaultV2.read.getPrincipalStrategyConfig([
+    const strategyCfgAfter = await vaultV2.read.getVaultTokenStrategyConfig([
       token.address,
       strategy.address,
     ]);
     assert.deepEqual(strategyCfgAfter, expectedStrategyCfg);
 
-    const strategyList = (await vaultV2.read.getPrincipalTokenStrategies([
+    const strategyList = (await vaultV2.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.ok(
@@ -331,7 +331,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       await vaultV2.read.idleTokenBalance([token.address]),
       expectedIdle,
     );
-    const status = await vaultV2.read.totalExactAssetsStatus([token.address]);
+    const status = await vaultV2.read.tokenTotalsConservative([token.address]);
     assert.equal(status.skippedStrategies, 0n);
     assert.ok(status.total >= (expectedIdle as bigint));
 

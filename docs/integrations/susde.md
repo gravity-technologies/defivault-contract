@@ -30,7 +30,7 @@ From Ethena docs and verified code at the time of writing:
 - Cooldown duration is admin-configurable up to 90 days.
 - Staking contract includes restriction/blacklist roles (operational risk for treasury/adapter addresses).
 
-## Cooldown Mode Explained (why it matters)
+## Cooldown Mode Explained
 
 In `StakedUSDeV2`, cooldown mode turns unstaking into a two-step process:
 
@@ -42,9 +42,9 @@ In `StakedUSDeV2`, cooldown mode turns unstaking into a two-step process:
 
 For this vault architecture, the impact is direct:
 
-- current `deallocate`/`deallocateAll` accounting expects immediate USDe balance delta on the vault,
-- current emergency unwind path also expects immediate pullback,
-- therefore cooldown-on introduces async liquidity behavior that the current core flow does not model natively.
+- current `deallocate` and `deallocateAll` accounting expects USDe to return to the vault immediately,
+- the current emergency withdraw path also expects immediate pullback,
+- therefore cooldown-on adds delayed liquidity behavior that the current vault flow does not model directly.
 
 Concrete example:
 
@@ -63,25 +63,25 @@ Sources:
 
 For this repository, model sUSDe as:
 
-- principal token domain: `USDe`,
-- receipt/component token: `sUSDe` (non-principal token excluded from tracked-token discovery but available via exact-token reporting),
+- vault token: `USDe`,
+- receipt/component token: `sUSDe` (non-vault token excluded from tracked-token discovery but still available through per-token reporting),
 - reward tokens: excluded from V1 accounting/reporting.
 
 Recommended adapter behavior:
 
 - `positionBreakdown(USDe)`:
-  - include `sUSDe` as `InvestedPrincipal`,
-  - optionally include residual `USDe` as `ResidualUnderlying`.
+  - include `sUSDe` as `InvestedPosition`,
+  - optionally include residual `USDe` as `UninvestedToken`.
 - `exactTokenBalance(sUSDe)`:
   - include `sUSDe` balance for exact-token query support.
-- `principalBearingExposure(USDe)`:
+- `strategyExposure(USDe)`:
   - use `previewRedeem(sUSDeBalance)` (or equivalent) + residual `USDe`.
 - unsupported tokens:
   - `exactTokenBalance(token)` returns `0`,
   - `positionBreakdown(token)` returns empty,
-  - `principalBearingExposure(token)` returns `0` and does not revert.
-- canonical token boundary:
-  - strategy APIs use canonical ERC20 token keys.
+  - `strategyExposure(token)` returns `0` and does not revert.
+- vault-token rules:
+  - strategy APIs use ERC20 vault tokens.
   - native sentinel `address(0)` is not a strategy token key.
 
 ## Option A (Recommended): Cooldown-Off Only
@@ -100,7 +100,7 @@ Why this fits current vault:
 
 - vault deallocation accounting is immediate balance delta based,
 - emergency unwind expects immediate pullback,
-- no async pending-claim state required.
+- no pending-claim state is required.
 
 ## Option B: Cooldown-On Support (Async)
 
@@ -114,12 +114,12 @@ Adapter must add state machine logic:
 Additional requirements:
 
 - track pending cooldown claims,
-- include pending claim value in `principalBearingExposure(USDe)` to avoid false zero exposure,
+- include pending claim value in `strategyExposure(USDe)` to avoid false zero exposure,
 - handle repeated deallocate requests while cooldown is pending.
 
 Tradeoff:
 
-- significantly more logic and test surface,
+- significantly more logic and more testing,
 - emergency unwind semantics become weaker under active cooldown.
 
 ## Key Considerations Checklist
@@ -132,11 +132,11 @@ Tradeoff:
 2. Accounting correctness:
 
 - Pending cooldown claims must be represented in exposure accounting.
-- Otherwise strategy removal and availability decisions can misinterpret exposure as zero.
+- Otherwise strategy removal and availability decisions can treat real exposure as zero.
 
 3. Emergency behavior:
 
-- `emergencySendToL2` is best-effort unwind; cooldown-on can delay liquidity and reduce effectiveness.
+- `emergencySendToL2` tries to unwind positions, but cooldown-on can delay liquidity and reduce how effective that is.
 
 4. Operational dependency:
 
@@ -149,10 +149,10 @@ Tradeoff:
 
 6. Reporting stance:
 
-- Continue exact-token reporting and keep reward tokens out of scope.
-- Residual USDe dust should be reported when non-zero for cleaner strict reads.
-- Tracked-principal discovery remains principal-token-only.
-- Breakdown shape should stay principal-domain and deterministic for diagnostics.
+- Continue per-token reporting and keep reward tokens out of scope.
+- Residual USDe dust should be reported when non-zero so `tokenTotals` stays easier to reason about.
+- Tracked TVL-token discovery should include `USDe` plus any tokens the adapter declares in `tvlTokens(USDe)`.
+- Breakdown output should stay predictable and easy to inspect.
 
 ## Potential Direction of Change
 
@@ -172,7 +172,7 @@ Tradeoff:
 ### Direction C (intermediate): Adapter-only async shim without vault API changes
 
 - Keep vault APIs unchanged, but adapter handles cooldown start/claim and may return `0` on early deallocate calls.
-- Feasible but operationally fragile because it hides async behavior behind a sync-shaped interface.
+- Feasible but operationally fragile because it hides delayed behavior behind an interface that looks synchronous.
 - Prefer only as temporary bridge, not final design.
 
 ## Effort Estimate

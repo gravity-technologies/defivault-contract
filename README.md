@@ -53,7 +53,7 @@ Operator call path into the vault (`REBALANCER` / `PAUSER` workflows).
 
 ```
 
-Native vault-entry path via `NativeVaultGateway` into canonical wrapped-native vault balances.
+Native vault-entry path via `NativeVaultGateway` into wrapped-native vault balances.
 
 ```text
   +-------------------------+   external ETH   +---------------------------+  wrapped-native transfer
@@ -64,34 +64,82 @@ Native vault-entry path via `NativeVaultGateway` into canonical wrapped-native v
 
 ### Fund-Moving Policy Matrix
 
-| Function                                     | Required caller                         | Blocked by pause | Requires `principalToken.supported` |
-| -------------------------------------------- | --------------------------------------- | ---------------- | ----------------------------------- |
-| `allocatePrincipalToStrategy`                | `ALLOCATOR_ROLE`                        | Yes              | Yes                                 |
-| `deallocatePrincipalFromStrategy`            | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                                  |
-| `deallocateAllPrincipalFromStrategy`         | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                                  |
-| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                       | Yes              | Yes                                 |
-| `emergencyNativeToL2` / `emergencyErc20ToL2` | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No               | No                                  |
+| Function                                     | Required caller                         | Blocked by pause | Requires `vaultToken.supported` |
+| -------------------------------------------- | --------------------------------------- | ---------------- | ------------------------------- |
+| `allocateVaultTokenToStrategy`               | `ALLOCATOR_ROLE`                        | Yes              | Yes                             |
+| `deallocateVaultTokenFromStrategy`           | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                              |
+| `deallocateAllVaultTokenFromStrategy`        | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No               | No                              |
+| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                       | Yes              | Yes                             |
+| `emergencyNativeToL2` / `emergencyErc20ToL2` | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No               | No                              |
 
 ### Terminology
 
-- **Principal token key**: ERC20 token argument accepted by principal/accounting APIs.
-  Example: `allocatePrincipalToStrategy(USDT, strategy, amount)`.
+- **Vault token**: ERC20 token argument accepted by allocation, cap, and harvest APIs.
+  Example: `allocateVaultTokenToStrategy(USDT, strategy, amount)`.
+- **Supported vault token**: vault token currently enabled for normal risk-on operations.
+  Example: a supported vault token can be allocated to strategies and bridged through normal rebalance paths.
 - **Native path**: explicit native bridge methods (`rebalanceNativeToL2` / `emergencyNativeToL2`) that operate on wrapped-native internally and route bridge execution through `NativeBridgeGateway`.
-- **Canonical token key**: internal normalized ERC20 storage/accounting key.
-  Example: native bridge paths operate on wrapped-native principal key internally.
-- **Token-strategy binding**: one `(token, strategy)` pair with independent lifecycle and cap.
-  Example: `(USDT, AaveUsdtStrategy)` is one binding with its own permission state.
-- **TokenAmountComponent**: one exact-token line item returned inside `strategy.positionBreakdown(principalToken)`.
+- **Token-strategy pair**: one `(token, strategy)` entry with independent lifecycle and cap.
+  Example: `(USDT, AaveUsdtStrategy)` is one pair with its own permission state.
+- **Exact token balance**: strategy-held balance for one literal ERC20 token address, returned by `exactTokenBalance(token)`.
+  Example: `exactTokenBalance(aUSDT)` reports `aUSDT` units, not converted `USDT` value.
+- **Position breakdown**: diagnostic per-strategy position shape returned by `positionBreakdown(vaultToken)`.
+  Example: `positionBreakdown(USDT)` can include invested `aUSDT` plus residual `USDT`.
+- **PositionComponent**: one exact-token line item returned inside `strategy.positionBreakdown(vaultToken)`.
   Example: `{ token: aUSDT, amount: 100e6 }`.
-- **Tracked principal token**: principal token included in `getTrackedPrincipalTokens()` for TVL ingestion.
-  Example: tracked set includes principal tokens such as `USDT` and `WETH`.
+- **Receipt token**: non-vault-token component token representing the invested position.
+  Example: `aUSDT` or an ERC4626 share token.
+- **TVL token**: any exact ERC20 token the vault reports in raw TVL.
+  Example: for an Aave USDT strategy, both `USDT` and `aUSDT` are TVL tokens.
+- **Tracked TVL token**: token included in `getTrackedTvlTokens()` / `trackedTvlTokenTotals()` for indexer ingestion.
+  Example: tracked set can include both vault tokens such as `USDT` and component tokens such as `aUSDT`.
+- **Strategy cost basis**: vault-side accounting basis for one `(vaultToken, strategy)` pair, returned by `strategyCostBasis(vaultToken, strategy)`.
+  It tracks what the vault put at risk for yield/loss accounting, not necessarily what the strategy currently reports as exposure.
+- **Strategy exposure**: single-number exposure used for cap and harvest math, returned by `strategyExposure(vaultToken)`.
+  Example: `strategyExposure(USDT)` can differ from both `exactTokenBalance(USDT)` and the sum of reporting components.
+
+### Why Allocation Cost Basis Uses Measured Vault Delta
+
+`allocateVaultTokenToStrategy(vaultToken, strategy, amount)` increases `strategyCostBasis` by the vault's measured net token balance decrease during `allocate`, not by strategy receipt.
+
+Example:
+
+- vault requests allocation of `100`
+- token charges a transfer fee, so strategy receives `99`
+- vault stores `strategyCostBasis = 100`
+- strategy later reports `strategyExposure = 99`
+- harvestable yield stays `0`
+
+This is intentional. The missing `1` is treated as deployment cost/loss, not as yield. If the vault instead stored cost basis as `99`, then when exposure later grows to `120`, harvestable yield would read as `21` even though only `20` of economic gain was realized versus the original vault outlay.
+
+Partial-pull example:
+
+- vault requests allocation of `100`
+- strategy only pulls `90` from the vault
+- vault stores `strategyCostBasis = 90`
+- strategy later reports `strategyExposure = 120`
+- harvestable yield reads as `30`
+
+This is also intentional. Using the requested `100` here would overstate cost basis and suppress real yield after the strategy under-spent its allowance.
+
+In short:
+
+- measured vault-side net decrease on allocate = vault cost basis
+- strategy receipt can differ from vault cost basis
+- yield is only what exceeds cost basis
+
+Important nuance:
+
+- vault-side delta measures net vault balance decrease, not strategy receipt
+- if a strategy or protocol sends tokens back to the vault during the same call, tracked spend is reduced by that netting effect
+- fee-on-transfer behavior stays unchanged because sender-side vault outflow is still typically the full requested amount
 
 ### Strategy Lifecycle (`whitelisted` vs `active`)
 
 For each `(token, strategy)` pair, the vault tracks two different concepts:
 
 - `whitelisted`: allocation permission for new funds.
-- `active`: membership in token-domain withdraw/reporting set.
+- `active`: membership in the withdraw/reporting set for that vault token.
 
 Why `active` is needed:
 
@@ -113,57 +161,60 @@ The vault reports TVL in raw token units (no USD conversion inside the contract)
 For each token, accounting is deterministic:
 
 ```text
-totalExactAssets(token) = idleAssets(token) + sum(component.amount where component.token == token across active strategies)
+tokenTotals(token) = idleAssets(token) + sum(component.amount where component.token == token across active strategies)
 ```
 
 Where:
 
 - `idleAssets(token)` is the vault's direct ERC20 balance.
 - `strategy.exactTokenBalance(token)` returns the strategy-held amount for that exact token only.
-- `strategy.positionBreakdown(principalToken)` is a separate diagnostic surface that can show principal-domain shape such as receipt token plus residual underlying.
+- `strategy.positionBreakdown(vaultToken)` is a separate diagnostic surface that can show position shape such as receipt token plus residual underlying.
 - The vault never converts amounts across token denominations while reporting.
 
 The vault maintains a token registry for TVL discovery:
 
-- `getTrackedPrincipalTokens()` returns the current token set that should be tracked for TVL.
-- `isTrackedPrincipalToken(token)` checks if a token is currently in that set.
-- Registry scope is principal tokens only (canonical storage keys).
-- Principal tokens remain tracked while they still have exposure, even if `principalToken.supported` is disabled.
-- A principal token is removed from tracking only when unsupported and fully unwound.
-- Tracker sync happens on vault write paths (for example `setPrincipalTokenConfig`, strategy whitelist changes, allocate/deallocate, rebalance/emergency sends).
-- Read paths (`getTrackedPrincipalTokens`/`isTrackedPrincipalToken`) are storage-backed and do not call strategy reporting methods.
-- Component tokens are not auto-registered in this discovery list.
-- Exact-token component reporting remains available through `totalExactAssets*` scans over global active strategies.
+- `getTrackedTvlTokens()` returns the current token set that should be tracked for TVL.
+- `isTrackedTvlToken(token)` checks if a token is currently in that set.
+- `trackedTvlTokenTotals()` returns the tracked token list plus best-effort totals in one call.
+- Registry scope includes:
+  - supported vault tokens,
+  - tokens declared by cached `strategy.tvlTokens(vaultToken)` lists for active strategy pairs,
+  - admin forced-tracking overrides.
+- Vault tokens remain tracked while supported or while idle balance remains.
+- Strategy-declared component tokens remain tracked while their active pair keeps them in the cached TVL-token list.
+- Tracker sync happens on vault write paths (for example `setVaultTokenConfig`, strategy whitelist changes, allocate/deallocate, rebalance/emergency sends).
+- Read paths (`getTrackedTvlTokens`/`isTrackedTvlToken`) are storage-backed and do not call strategy reporting methods.
+- Strategy TVL-token list refresh is explicit via `refreshStrategyTvlTokens(vaultToken, strategy)`.
+- Exact-token totals remain available through `tokenTotals*` scans over global active strategies.
 
 ### How 3rd-Party Trackers Should Compute TVL
 
 For accurate on-chain TVL ingestion:
 
-1. Read tracked principal-token list:
-   - `tokens = getTrackedPrincipalTokens()`
-2. Read batch totals:
-   - `statuses = totalExactAssetsBatch(tokens)`
-3. Interpret each token row:
+1. Prefer the one-call snapshot:
+   - `(tokens, statuses) = trackedTvlTokenTotals()`
+2. Interpret each token row:
    - `statuses[i].total` is the raw token amount for `tokens[i]`.
    - `statuses[i].skippedStrategies == 0` means no strategy read failures for that token.
    - `statuses[i].skippedStrategies > 0` means total is a conservative lower bound (one or more strategies could not be read safely).
-4. (Optional) For diagnostics, inspect:
-   - `getPrincipalTokenStrategies(token)` for token-keyed active entries.
-   - `strategyPositionBreakdown(token, strategy)` for any active strategy when you need per-strategy principal-domain details.
+3. (Optional) For diagnostics, inspect:
+   - `getSupportedVaultTokens()` for supported vault-token coverage.
+   - `getVaultTokenStrategies(vaultToken)` for vault-token-keyed active entries.
+   - `strategyPositionBreakdown(vaultToken, strategy)` for any active strategy when you need per-strategy position details.
 
 Notes:
 
 - The contract does not provide cross-token aggregation or pricing.
 - Any USD TVL metric should be computed off-chain by applying external price feeds to raw per-token totals.
-- For non-principal component tokens (for example receipt tokens), callers query `totalExactAssets(componentToken)` directly.
+- For ad-hoc exact-token queries outside the tracked registry, callers can still use `tokenTotals(componentToken)` directly.
 
-### Normal Yield Flow (Allocate / PrincipalDeallocatedFromStrategy)
+### Normal Yield Flow (Allocate / VaultTokenDeallocatedFromStrategy)
 
 ```text
 [ALLOCATOR role]
       |
       v
-GRVTL1TreasuryVault.allocatePrincipalToStrategy(token, strategy, amount)
+GRVTL1TreasuryVault.allocateVaultTokenToStrategy(token, strategy, amount)
       |
       +--> checks: token supported, strategy whitelisted, cap, pause
       +--> token approve(strategy)
@@ -172,7 +223,7 @@ GRVTL1TreasuryVault.allocatePrincipalToStrategy(token, strategy, amount)
 [ALLOCATOR or VAULT_ADMIN]
       |
       v
-GRVTL1TreasuryVault.deallocatePrincipalFromStrategy(...)
+GRVTL1TreasuryVault.deallocateVaultTokenFromStrategy(...)
       |
       +--> checks: strategy is withdrawable (whitelisted or still active in strategy set)
       +--> strategy.deallocate(...)
@@ -190,7 +241,7 @@ GRVTL1TreasuryVault.rebalanceNativeToL2(amount)
 or
 GRVTL1TreasuryVault.rebalanceErc20ToL2(erc20Token, amount)
       |
-      +--> checks: paused? no, principal token supported, bridge config valid
+      +--> checks: paused? no, vault token supported, bridge config valid
       +--> enforces: l2ExchangeRecipient fixed at initialization (no admin setter)
       +--> both paths require msg.value == 0
       +--> native path mints base token, transfers WETH + base token to NativeBridgeGateway
@@ -246,14 +297,14 @@ GRVTL1TreasuryVault.emergencyErc20ToL2(erc20Token, amount)
 
 ### Native Vault Gateway (`NativeVaultGateway`)
 
-`NativeVaultGateway` is the canonical external ETH -> vault adapter.
+`NativeVaultGateway` is the external ETH -> vault adapter.
 
 Purpose:
 
 - Accept externally sourced native ETH.
 - Wrap ETH into the configured wrapped-native ERC20 (for example WETH).
 - Forward wrapped-native tokens directly to the vault.
-- Keep the vault's investment/strategy accounting in canonical ERC20 domain.
+- Keep the vault's investment/strategy accounting in ERC20 vault-token form.
 
 Deployment wiring:
 
@@ -277,7 +328,7 @@ Operational notes:
 
 ### Native Bridge Gateway (`NativeBridgeGateway`)
 
-`NativeBridgeGateway` is the canonical L1 native bridge execution and failed-deposit recovery adapter.
+`NativeBridgeGateway` is the L1 native bridge execution and failed-deposit recovery adapter.
 
 Purpose:
 
@@ -316,7 +367,7 @@ The system intentionally keeps raw ETH confined to narrow, explicit boundaries. 
 
 Why the split exists:
 
-- The vault's accounting domain is ERC20-only; native exposure is represented internally as wrapped-native.
+- The vault's position is ERC20-only; native exposure is represented internally as wrapped-native.
 - The vault intentionally rejects arbitrary ETH sends and should not be the normal custody point for raw ETH.
 - External native inflow therefore needs a wrapper boundary before funds enter vault accounting.
 - Native L1 -> L2 bridge execution needs a separate boundary because if the vault were the native deposit sender, any later native return on L1 would try to send ETH back to the vault.
@@ -352,21 +403,21 @@ Operational consequences:
 - `initialize(admin, bridgeHub, baseToken, l2ChainId, l2ExchangeRecipient, wrappedNativeToken, yieldRecipient)` sets role admins and core vault config.
 - `bridgeHub`, `baseToken`, and `l2ChainId` define the L1 -> L2 bridge execution context.
 - `l2ExchangeRecipient` is fixed at initialization (no admin setter exposed here).
-- `wrappedNativeToken` is the canonical internal token key for native exposure accounting.
+- `wrappedNativeToken` is the vault token used for native exposure accounting.
 - `nativeBridgeGateway` is configured separately after deployment because it depends on the deployed vault proxy address.
 - Native sweep scaffolding is restricted to admin and sends only to configured yield recipient.
 - Initial yield recipient must be explicitly provided and must be different from `admin`.
 
 ## Interface Reporting Model
 
-### Native and Canonical Token Rules
+### Native and Vault-Token Rules
 
 - Native bridge paths are explicit (`rebalanceNativeToL2`, `emergencyNativeToL2`); there is no native sentinel API input.
-- Internal accounting keys and read/reporting surfaces use canonical ERC20 addresses.
+- Internal accounting keys and read/reporting surfaces use ERC20 vault-token addresses.
 - Native exposure is represented as wrapped native token on read surfaces.
-- `allocatePrincipalToStrategy` does not implicitly wrap native ETH and requires canonical idle funds.
-- Strategy domain is always ERC20: strategies hold principal tokens (for native exposure, wrapped native), not native ETH.
-- Native ingress is restricted: direct ETH sends from non-wrapper senders revert; `NativeVaultGateway` is the canonical external ETH ingress path.
+- `allocateVaultTokenToStrategy` does not implicitly wrap native ETH and requires wrapped-native idle funds when operating on native exposure.
+- Strategy inputs are always ERC20: strategies hold vault tokens (for native exposure, wrapped native), not native ETH.
+- Native ingress is restricted: direct ETH sends from non-wrapper senders revert; `NativeVaultGateway` is the external ETH ingress path.
 
 ### Native ETH/Wrapped-Native Invariants (Why)
 
@@ -374,30 +425,30 @@ Operational consequences:
 - To keep vault/strategy logic simple and deterministic, strategy accounting is ERC20-only and native exposure is always modeled as wrapped-native internally.
 - Inflow invariant: external native ETH must be wrapped first through `NativeVaultGateway` before it enters vault accounting.
 - Outflow invariant 1 (L1 -> L2 rebalance/emergency): wrapped-native leaves the vault through `NativeBridgeGateway`, which unwraps and bridges as native ETH.
-- Outflow invariant 2 (harvest -> yield recipient): wrapped-native principal harvest pays yield recipient in native ETH to reduce operational conversion overhead and keep ETH available for gas/ops usage.
+- Outflow invariant 2 (harvest -> yield recipient): wrapped-native vault-token harvest pays yield recipient in native ETH to reduce operational conversion overhead and keep ETH available for gas/ops usage.
 - Failed native deposit recovery invariant: recovered ETH must return to `NativeBridgeGateway`, then be re-wrapped and re-enter vault accounting only as wrapped-native.
 
 ### Token-Separated Strategy Reporting
 
 - `IYieldStrategy.exactTokenBalance(token)` returns the strategy-held amount for that exact token address only.
-- `IYieldStrategy.positionBreakdown(principalToken)` returns a principal-domain `StrategyAssetBreakdown` for diagnostics.
+- `IYieldStrategy.positionBreakdown(vaultToken)` returns a `PositionComponent[]` array for diagnostics.
 - Component amounts remain in each component token's native units; no cross-token conversion is done in reporting.
-- Unsupported exact-token / principal-domain queries return `0` / empty components.
-- `totalExactAssets(token)` / status variants scan global active strategies, so component-token queries (for example `aUSDT`) are supported even when strategy registration is keyed by a different underlying token.
-- `IL1TreasuryVault.totalExactAssets(token)` returns strict exact-token totals and reverts on invalid strategy reads.
-- `IL1TreasuryVault.totalExactAssetsStatus(token)` and batch status variants skip invalid strategies and report `skippedStrategies`.
+- Unsupported exact-token / position queries return `0` / empty components.
+- `tokenTotals(token)` / status variants scan global active strategies, so component-token queries (for example `aUSDT`) are supported even when strategy registration is keyed by a different underlying token.
+- `IL1TreasuryVault.tokenTotals(token)` returns strict exact-token totals and reverts on invalid strategy reads.
+- `IL1TreasuryVault.tokenTotalsStatus(token)` and batch status variants skip invalid strategies and report `skippedStrategies`.
 - Non-underlying component token queries (for example receipt tokens) are valid exact-token queries.
-- Break-glass tracked-principal override exists for admin recovery when conservative read-failure handling pins principal-token tracking.
+- Break-glass tracked-TVL-token override exists for admin recovery when conservative read-failure handling pins token tracking.
 
-### Harvest and Cap Scalar Path
+### Harvest and Cap Exposure Path
 
-- Harvest and cap logic are based on `IYieldStrategy.principalBearingExposure(token)`.
-- This scalar path is separate from reporting components and may use strategy-specific conversion policies.
-- Unsupported token queries for `principalBearingExposure(token)` return `0`.
-- Harvest/principal APIs use canonical principal token keys (ERC20); `address(0)` is not a strategy token key.
-- Harvest payout policy is principal-token based:
-  - if principal token is not wrapped native, yield recipient receives ERC20 directly;
-  - if principal token is wrapped native, vault unwraps and yield recipient receives native ETH.
+- Harvest and cap logic are based on `IYieldStrategy.strategyExposure(token)`.
+- This exposure value is separate from reporting components and may use strategy-specific conversion policies.
+- Unsupported token queries for `strategyExposure(token)` return `0`.
+- Harvest/accounting APIs use ERC20 vault tokens; `address(0)` is not a strategy token key.
+- Harvest payout policy is vault-token based:
+  - if vault token is not wrapped native, yield recipient receives ERC20 directly;
+  - if vault token is wrapped native, vault unwraps and yield recipient receives native ETH.
 - `minReceived` is enforced on yield-recipient-side net receipt:
   - ERC20 balance delta for non-wrapped-native harvest,
   - native ETH balance delta for wrapped-native harvest.
@@ -405,29 +456,29 @@ Operational consequences:
 
 ## Protocol-Agnostic Adapter Guidance
 
-The strategy interface is protocol-agnostic. Adapters must unify principal-bearing exposure while preserving exact-token reporting:
+The strategy interface is protocol-agnostic. Adapters must unify strategy exposure while preserving exact-token reporting:
 
 - Aave V3 style rebasing receipt token:
   - implemented in `AaveV3Strategy` in this repo.
   - `exactTokenBalance(aUSDT)` reports invested receipt-token units.
-  - `positionBreakdown(USDT)` can include `aUSDT` as invested principal and `USDT` residual.
-  - scalar example: `principalBearingExposure(USDT) = aUSDT + USDT`, using assumption `1 aUSDT = 1 USDT` (scalar path only).
+  - `positionBreakdown(USDT)` can include `aUSDT` as invested position and `USDT` residual.
+  - exposure example: `strategyExposure(USDT) = aUSDT + USDT`, using assumption `1 aUSDT = 1 USDT` (exposure path only).
   - `deallocate`/`deallocateAll` sweep residual strategy-held underlying to vault to avoid dust-lock exposure.
-  - unsupported scalar domains return `0` (non-reverting).
+  - unsupported exposure queries return `0` (non-reverting).
 - Compound III style index-based accounting:
   - `exactTokenBalance(baseToken)` reports exact token units only.
-  - `positionBreakdown(principalToken)` may be simple or empty where accounting is purely index-based.
-  - scalar is derived from principal plus index accrual in base-token domain.
+  - `positionBreakdown(vaultToken)` may be simple or empty where accounting is purely index-based.
+  - exposure is derived from cost basis plus index accrual in base-token terms.
 - Morpho/ERC4626 share-vault style accounting:
-  - `positionBreakdown(principalToken)` can include vault share token invested principal plus underlying residual.
-  - scalar is derived by share-to-asset conversion in underlying domain (`convertToAssets` style).
+  - `positionBreakdown(vaultToken)` can include vault share token invested position plus underlying residual.
+  - exposure is derived by share-to-asset conversion in underlying terms (`convertToAssets` style).
 
 These examples are theoretical adapter patterns; this scope does not add new Compound or Morpho strategy contracts.
 
 ## Risk Controls Semantics
 
 - `rebalanceNativeToL2`/`rebalanceErc20ToL2` use conservative availability checks (`availableNativeForRebalance`/`availableErc20ForRebalance`) and role gating.
-- `emergencyNativeToL2`/`emergencyErc20ToL2` intentionally bypass pause and principal-token-support restrictions to prioritize incident-time liquidity restoration.
+- `emergencyNativeToL2`/`emergencyErc20ToL2` intentionally bypass pause and vault-token-support restrictions to prioritize incident-time liquidity restoration.
 - Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
 
 ## Usage
@@ -509,12 +560,12 @@ Record deployed addresses from `ignition/deployments/<deployment-id>/deployed_ad
 For each proxy, also read the EIP-1967 admin slot to capture its `ProxyAdmin` address
 for upgrade modules.
 
-Onboard strategy into the vault registry (set principal-token support + strategy whitelist):
+Onboard strategy into the vault registry (set vault-token support + strategy whitelist):
 
 ```shell
-npm run deploy:principal-token-strategy -- \
+npm run deploy:vault-token-strategy -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/principal-token-strategy.json5
+  --parameters ignition/parameters/sepolia/vault-token-strategy.json5
 ```
 
 Deploy native vault + bridge gateways:
@@ -541,12 +592,12 @@ npm run claim:failed-native-deposit -- \
   --parameters ignition/parameters/sepolia/native-bridge-gateway-claim-failed-deposit.json5
 ```
 
-Configure principal-token support independently:
+Configure vault-token support independently:
 
 ```shell
-npm run config:principal-token -- \
+npm run config:vault-token -- \
   --network sepolia \
-  --parameters ignition/parameters/sepolia/principal-token-config.json5
+  --parameters ignition/parameters/sepolia/vault-token-config.json5
 ```
 
 Bootstrap vault roles:
@@ -618,9 +669,9 @@ Treasury and harvest governance notes:
 - `setYieldRecipient` is executed by timelock operations, not by direct vault-admin calls.
 - `harvestYieldFromStrategy` is vault-admin-gated, blocked while paused, and enforces `minReceived`.
 - Native yield-recipient payout (wrapped-native harvest branch) reverts with `NativeTransferFailed` if yield recipient cannot receive ETH.
-- `YieldHarvested.principalToken` is always the principal token key (for wrapped-native harvest it remains wrapped-native token).
-- Harvest transactions also emit `PrincipalDeallocatedFromStrategy` telemetry for strategy unwind; indexers should treat
-  `PrincipalDeallocatedFromStrategy.received` (vault-side balance delta) and `YieldHarvested.received` (yield-recipient-side net receipt)
+- `YieldHarvested.vaultToken` is always the vault token key (for wrapped-native harvest it remains wrapped-native token).
+- Harvest transactions also emit `VaultTokenDeallocatedFromStrategy` telemetry for strategy unwind; indexers should treat
+  `VaultTokenDeallocatedFromStrategy.received` (vault-side balance delta) and `YieldHarvested.received` (yield-recipient-side net receipt)
   as distinct metrics.
 
 ### Ops Docs

@@ -105,7 +105,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       supportedTokenConfig,
     ]);
@@ -123,11 +123,11 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
   it("allows emergencyErc20ToL2 while paused and token support is disabled", async function () {
     const { vault, token, baseToken, bridgeHub } = await deploySystem();
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       supportedTokenConfig,
     ]);
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       unsupportedTokenConfig,
     ]);
@@ -150,7 +150,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       supportedTokenConfig,
     ]);
@@ -171,7 +171,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       supportedTokenConfig,
     ]);
@@ -222,11 +222,11 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
       await deploySystem();
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       supportedTokenConfig,
     ]);
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       unsupportedTokenConfig,
     ]);
@@ -253,7 +253,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       supportedTokenConfig,
     ]);
@@ -280,7 +280,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
-  it("supports canonical external native ingress via NativeVaultGateway", async function () {
+  it("supports external native ingress via NativeVaultGateway", async function () {
     const { vault, wrappedNative } = await deploySystem();
     const gateway = await viem.deployContract("NativeVaultGateway", [
       wrappedNative.address,
@@ -357,7 +357,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       supportedTokenConfig,
     ]);

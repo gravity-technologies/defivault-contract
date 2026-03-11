@@ -6,14 +6,41 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {StrategyAssetBreakdown} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
 
 library VaultStrategyOpsLib {
     using SafeERC20 for IERC20;
 
     /**
+     * @notice Allocates strategy funds and measures net vault-side token spend as the authoritative result.
+     * @dev `spent` is the vault's net balance decrease across the external `allocate` call. Same-call
+     *      inbound transfers back to the vault reduce `spent`. Invalid balance shapes revert.
+     * @param token Vault token being allocated.
+     * @param strategy Strategy to call.
+     * @param requested Requested allocation amount.
+     * @return spent Net vault-side token balance decrease observed during allocation.
+     */
+    function allocateWithBalanceDelta(
+        address token,
+        address strategy,
+        uint256 requested
+    ) public returns (uint256 spent) {
+        IERC20 asset = IERC20(token);
+        uint256 beforeBal = asset.balanceOf(address(this));
+        IYieldStrategy(strategy).allocate(token, requested);
+        uint256 afterBal = asset.balanceOf(address(this));
+        if (afterBal > beforeBal) {
+            revert IL1TreasuryVault.InvalidAllocationBalanceDelta(token, strategy, requested, beforeBal, afterBal);
+        }
+        spent = beforeBal - afterBal;
+        if (spent > requested) {
+            revert IL1TreasuryVault.InvalidAllocationBalanceDelta(token, strategy, requested, beforeBal, afterBal);
+        }
+    }
+
+    /**
      * @notice Withdraws strategy funds and measures the vault-side balance delta as the authoritative result.
-     * @param token Principal token being withdrawn.
+     * @param token Vault token being withdrawn.
      * @param strategy Strategy to call.
      * @param requested Requested withdrawal amount.
      * @param useAll True to call `deallocateAll`, false to call bounded `deallocate`.
@@ -38,20 +65,20 @@ library VaultStrategyOpsLib {
 
     /**
      * @notice Pays harvested proceeds to the configured recipient and measures recipient-side receipt.
-     * @dev Wrapped-native principal is unwrapped and sent as native ETH; all other assets are transferred as ERC20.
-     * @param principalToken Principal token used for the harvest.
+     * @dev Wrapped-native vault token is unwrapped and sent as native ETH; all other tokens are transferred as ERC20.
+     * @param vaultToken Vault token used for the harvest.
      * @param wrappedNativeToken Canonical wrapped-native token used for native payouts.
      * @param recipient Treasury/yield recipient.
      * @param amount Amount to forward.
      * @return received Amount actually observed at the recipient after transfer.
      */
     function payoutHarvestProceeds(
-        address principalToken,
+        address vaultToken,
         address wrappedNativeToken,
         address recipient,
         uint256 amount
     ) public returns (uint256 received) {
-        if (principalToken == wrappedNativeToken) {
+        if (vaultToken == wrappedNativeToken) {
             uint256 nativeRecipientBefore = recipient.balance;
             IWrappedNative(wrappedNativeToken).withdraw(amount);
             _sendNative(recipient, amount);
@@ -60,7 +87,7 @@ library VaultStrategyOpsLib {
             return nativeRecipientAfter - nativeRecipientBefore;
         }
 
-        IERC20 asset = IERC20(principalToken);
+        IERC20 asset = IERC20(vaultToken);
         uint256 erc20RecipientBefore = asset.balanceOf(recipient);
         asset.safeTransfer(recipient, amount);
         uint256 erc20RecipientAfter = asset.balanceOf(recipient);
@@ -69,14 +96,14 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Reads scalar principal-bearing exposure from a strategy with failure normalization.
-     * @param token Principal token domain to query.
+     * @notice Reads strategy exposure from a strategy with failure normalization.
+     * @param token Vault token to query.
      * @param strategy Strategy to read.
      * @return ok True when the strategy call succeeded.
      * @return exposure Scalar exposure returned by the strategy when successful.
      */
     function readStrategyExposure(address token, address strategy) public view returns (bool ok, uint256 exposure) {
-        try IYieldStrategy(strategy).principalBearingExposure(token) returns (uint256 value) {
+        try IYieldStrategy(strategy).strategyExposure(token) returns (uint256 value) {
             return (true, value);
         } catch {
             return (false, 0);
@@ -84,8 +111,8 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Reads scalar principal-bearing exposure and reverts with the vault's canonical error on failure.
-     * @param token Principal token domain to query.
+     * @notice Reads strategy exposure and reverts with the vault's standard error on failure.
+     * @param token Vault token to query.
      * @param strategy Strategy to read.
      * @return exposure Scalar exposure returned by the strategy.
      */
@@ -96,13 +123,13 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Returns whether a token still has any idle or strategy-side principal exposure.
+     * @notice Returns whether a token still has any idle or strategy-side accounting exposure.
      * @dev Conservatively returns true on strategy exposure read failure to avoid under-tracking.
-     * @param token Principal token to inspect.
-     * @param strategies Active strategy list for the token domain.
+     * @param token Vault token to inspect.
+     * @param strategies Active strategy list for the vault token.
      * @return True when idle balance exists, any strategy exposure exists, or a strategy read fails.
      */
-    function hasAnyPrincipalExposure(address token, address[] memory strategies) public view returns (bool) {
+    function hasAnyAccountingExposure(address token, address[] memory strategies) public view returns (bool) {
         (bool ok, uint256 idle) = tryBalanceOf(token, address(this));
         if (ok && idle != 0) return true;
 
@@ -133,19 +160,19 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Reads the full strategy principal-domain breakdown and normalizes failure to the vault's custom error.
-     * @param principalToken Principal token-domain query passed into the strategy.
+     * @notice Reads the full strategy position breakdown and normalizes failure to the vault's custom error.
+     * @param vaultToken Vault-token query passed into the strategy.
      * @param strategy Strategy to query.
-     * @return breakdown Full strategy asset breakdown.
+     * @return components Full strategy position component array.
      */
     function readStrategyPositionBreakdownOrRevert(
-        address principalToken,
+        address vaultToken,
         address strategy
-    ) public view returns (StrategyAssetBreakdown memory breakdown) {
-        try IYieldStrategy(strategy).positionBreakdown(principalToken) returns (StrategyAssetBreakdown memory data) {
+    ) public view returns (PositionComponent[] memory components) {
+        try IYieldStrategy(strategy).positionBreakdown(vaultToken) returns (PositionComponent[] memory data) {
             return data;
         } catch {
-            revert IL1TreasuryVault.InvalidStrategyAssetsRead(principalToken, strategy);
+            revert IL1TreasuryVault.InvalidStrategyTokenRead(vaultToken, strategy);
         }
     }
 

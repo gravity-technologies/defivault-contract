@@ -1,26 +1,26 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 /**
- * VaultPrincipalTokenConfigModule
+ * VaultTokenConfigModule
  *
  * Purpose:
  * - Apply standalone token support configuration on an existing vault.
  *
- * Parameters (VaultPrincipalTokenConfigModule.*):
+ * Parameters (VaultTokenConfigModule.*):
  * - vaultProxy: existing GRVTL1TreasuryVault proxy address.
- * - principalToken: token address to configure.
- * - supported: value for setPrincipalTokenConfig(token, { supported }).
+ * - vaultToken: token address to configure.
+ * - supported: value for setVaultTokenConfig(token, { supported }).
  */
-export default buildModule("VaultPrincipalTokenConfigModule", (m) => {
+export default buildModule("VaultTokenConfigModule", (m) => {
   const vaultProxy = m.getParameter("vaultProxy");
-  const principalToken = m.getParameter("principalToken");
+  const vaultToken = m.getParameter("vaultToken");
   const supported = m.getParameter("supported", true);
 
   const vault = m.contractAt("GRVTL1TreasuryVault", vaultProxy, {
     id: "Vault",
   });
-  m.call(vault, "setPrincipalTokenConfig", [principalToken, { supported }], {
-    id: "SetPrincipalTokenConfig",
+  m.call(vault, "setVaultTokenConfig", [vaultToken, { supported }], {
+    id: "SetVaultTokenConfig",
   });
 
   return { vault };

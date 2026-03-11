@@ -7,9 +7,9 @@ import {IWrappedNative} from "../external/IWrappedNative.sol";
 
 /**
  * @title NativeVaultGateway
- * @notice Canonical external native-asset entrypoint that wraps ETH and forwards wrapped-native tokens to the vault.
+ * @notice External native-asset entrypoint that wraps ETH and forwards wrapped-native tokens to the vault.
  * @dev Why this exists:
- *      - The vault's accounting domain is ERC20-only; native exposure is modeled as wrapped-native internally.
+ *      - The vault's accounting model is ERC20-only; native exposure is modeled as wrapped-native internally.
  *      - The vault intentionally rejects arbitrary ETH sends, so external native inflow must be normalized before it
  *        reaches vault custody.
  *      - This contract stays intentionally stateless in normal flow and should not retain persistent ETH or
@@ -20,7 +20,7 @@ contract NativeVaultGateway {
 
     error InvalidParam();
 
-    /// @notice Canonical wrapped-native token used by vault accounting.
+    /// @notice Wrapped-native token used by vault accounting.
     address public immutable wrappedNativeToken;
 
     /// @notice L1 vault recipient that receives wrapped-native tokens.

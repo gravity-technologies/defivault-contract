@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @title IGRVTBaseTokenMintable
  * @notice Minimal interface for the GRVT base token used to pay `mintValue` for L1->L2 bridge requests.
  * @dev GRVT uses a controlled base-token mint path to enforce private-chain deposit policy:
- * only flows backed by GRVT-controlled base token can be bridged to the private L2 domain.
+ * only flows backed by GRVT-controlled base token can be bridged to the private L2.
  *
  * Operational requirement:
  * the caller that initiates bridge requests and mints base token must be granted minter permission

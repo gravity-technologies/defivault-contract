@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { encodeFunctionData } from "viem";
 
-import { expectEventOnce } from "../helpers/events.js";
+import { expectEventCount, expectEventOnce } from "../helpers/events.js";
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault adversarial behavior", async function () {
@@ -58,7 +58,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     await vault.write.grantRole([allocatorRole, addr(allocator)]);
     await vault.write.grantRole([rebalancerRole, addr(rebalancer)]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       tokenAddress,
       {
         supported: true,
@@ -83,13 +83,10 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     return { vault, bridge, baseToken, vaultAsAllocator, vaultAsRebalancer };
   }
 
-  function componentTotal(breakdown: {
-    components: ReadonlyArray<{ amount: bigint }>;
-  }): bigint {
-    return breakdown.components.reduce(
-      (sum, component) => sum + component.amount,
-      0n,
-    );
+  function componentTotal(
+    components: ReadonlyArray<{ amount: bigint }>,
+  ): bigint {
+    return components.reduce((sum, component) => sum + component.amount, 0n);
   }
 
   it("blocks reentrancy through malicious strategy callback", async function () {
@@ -106,7 +103,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       token.address,
     ]);
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       malicious.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -115,7 +112,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     await vault.write.grantRole([allocatorRole, malicious.address]);
 
     await viem.assertions.revertWithCustomError(
-      vaultAsAllocator.write.allocatePrincipalToStrategy([
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
         token.address,
         malicious.address,
         10_000n,
@@ -136,20 +133,54 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault.address,
       "SAFE_STRAT",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       badToken.address,
       strategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
     await viem.assertions.revertWithCustomError(
-      vaultAsAllocator.write.allocatePrincipalToStrategy([
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
         badToken.address,
         strategy.address,
         100_000n,
       ]),
       vaultAsAllocator,
       "SafeERC20FailedOperation",
+    );
+  });
+
+  it("reverts when allocation produces a net positive vault delta", async function () {
+    const token = await viem.deployContract("MockERC20", [
+      "Mock USDT",
+      "mUSDT",
+      6,
+    ]);
+    const { vault, vaultAsAllocator } = await setupVaultForToken(token.address);
+
+    await token.write.mint([vault.address, 1_000_000n]);
+    const strategy = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "REFUND_STRAT",
+    ]);
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await token.write.mint([strategy.address, 100_000n]);
+    await strategy.write.setAllocatePullAmount([token.address, 20_000n]);
+    await strategy.write.setAllocateRefundToVault([token.address, 80_001n]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
+        token.address,
+        strategy.address,
+        50_000n,
+      ]),
+      vaultAsAllocator,
+      "InvalidAllocationBalanceDelta",
     );
   });
 
@@ -167,13 +198,13 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       [vault.address],
     );
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       overreporting.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       overreporting.address,
       300_000n,
@@ -183,7 +214,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     const idleBefore = (await vault.read.idleTokenBalance([
       token.address,
     ])) as bigint;
-    const hash = await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+    const hash = await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
       token.address,
       overreporting.address,
       120_000n,
@@ -198,7 +229,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     const deallocateEvent = expectEventOnce(
       receipt,
       vault,
-      "PrincipalDeallocatedFromStrategy",
+      "VaultTokenDeallocatedFromStrategy",
     );
     assert.equal(deallocateEvent.received, 120_000n);
 
@@ -214,7 +245,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       token.address,
     ])) as bigint;
     const allHash =
-      await vaultAsAllocator.write.deallocateAllPrincipalFromStrategy([
+      await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
         token.address,
         overreporting.address,
       ]);
@@ -230,7 +261,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     const allDeallocateEvent = expectEventOnce(
       allReceipt,
       vault,
-      "PrincipalDeallocatedFromStrategy",
+      "VaultTokenDeallocatedFromStrategy",
     );
     assert.equal(allDeallocateEvent.requested, 2n ** 256n - 1n);
     assert.equal(allDeallocateEvent.received, 180_000n);
@@ -253,17 +284,18 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault.address,
       "FEE_STRAT",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       feeToken.address,
       strategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
-      feeToken.address,
-      strategy.address,
-      100_000n,
-    ]);
+    const allocHash = await vaultAsAllocator.write.allocateVaultTokenToStrategy(
+      [feeToken.address, strategy.address, 100_000n],
+    );
+    const allocReceipt = await publicClient.waitForTransactionReceipt({
+      hash: allocHash,
+    });
 
     const stratAssets = componentTotal(
       await vault.read.strategyPositionBreakdown([
@@ -272,8 +304,18 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       ]),
     );
     assert.equal(stratAssets, 99_000n);
+    assert.equal(
+      await vault.read.strategyCostBasis([feeToken.address, strategy.address]),
+      100_000n,
+    );
+    expectEventCount(
+      allocReceipt,
+      vault,
+      "VaultTokenAllocationSpentMismatch",
+      0,
+    );
 
-    await vaultAsAllocator.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
       feeToken.address,
       strategy.address,
     ]);
@@ -300,19 +342,19 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault.address,
       "FEE_HARVEST",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       feeToken.address,
       strategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       feeToken.address,
       strategy.address,
       100_000n,
     ]);
 
-    // Principal tracked by vault is 100_000, while strategy only received 99_000 (1% fee).
+    // Cost basis tracked by vault is 100_000, while strategy only received 99_000 (1% fee).
     // Add external yield so harvestable yield becomes 20_000.
     await feeToken.write.mint([strategy.address, 21_000n]);
     await strategy.write.setAssets([feeToken.address, 120_000n]);
@@ -364,13 +406,13 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       "MockOverreportingStrategy",
       [vault.address],
     );
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       overreporting.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       overreporting.address,
       300_000n,
@@ -430,18 +472,18 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       "HEALTHY",
     ]);
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       revertingStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       healthyStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       healthyStrategy.address,
       900_000n,
@@ -467,13 +509,13 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault.address,
       "HEALTHY",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       healthyStrategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       healthyStrategy.address,
       900_000n,
@@ -508,12 +550,12 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     const revertingA = await viem.deployContract("MockRevertingStrategy");
     const revertingB = await viem.deployContract("MockRevertingStrategy");
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       revertingA.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       revertingB.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -538,12 +580,12 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     const revertingA = await viem.deployContract("MockRevertingStrategy");
     const revertingB = await viem.deployContract("MockRevertingStrategy");
 
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       revertingA.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       revertingB.address,
       { whitelisted: true, active: false, cap: 0n },
@@ -612,31 +654,31 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault.address,
       "DEFENSIVE",
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       strategy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       strategy.address,
       700_000n,
     ]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       {
         supported: false,
       },
     ]);
 
-    await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
       token.address,
       strategy.address,
       200_000n,
     ]);
-    await vaultAsAllocator.write.deallocateAllPrincipalFromStrategy([
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
       token.address,
       strategy.address,
     ]);

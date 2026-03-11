@@ -70,7 +70,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
         addr(rebalancer),
       ]);
 
-      await vault.write.setPrincipalTokenConfig([
+      await vault.write.setVaultTokenConfig([
         token.address,
         {
           supported: true,
@@ -81,7 +81,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
         vault.address,
         `STRAT_${decimals}`,
       ]);
-      await vault.write.setPrincipalStrategyWhitelist([
+      await vault.write.setVaultTokenStrategyConfig([
         token.address,
         strategy.address,
         { whitelisted: true, active: false, cap: 900_000n * unit },
@@ -102,12 +102,12 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
         },
       );
 
-      await vaultAsAllocator.write.allocatePrincipalToStrategy([
+      await vaultAsAllocator.write.allocateVaultTokenToStrategy([
         token.address,
         strategy.address,
         400_000n * unit,
       ]);
-      await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+      await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
         token.address,
         strategy.address,
         150_000n * unit,
@@ -130,12 +130,12 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
         token.address,
         strategy.address,
       ]);
-      const strategyAssets = breakdown.components.reduce(
+      const strategyAssets = breakdown.reduce(
         (sum, component) => sum + component.amount,
         0n,
       );
-      const totals = await vault.read.totalExactAssets([token.address]);
-      const status = await vault.read.totalExactAssetsStatus([token.address]);
+      const totals = await vault.read.tokenTotals([token.address]);
+      const status = await vault.read.tokenTotalsConservative([token.address]);
 
       assert.equal(status.skippedStrategies, 0n);
       assert.equal(totals.total, idle + strategyAssets);

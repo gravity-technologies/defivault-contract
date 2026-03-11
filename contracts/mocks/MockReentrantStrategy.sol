@@ -3,7 +3,7 @@ pragma solidity 0.8.34;
 
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
-import {StrategyAssetBreakdown} from "../interfaces/IVaultReportingTypes.sol";
+import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
 
 /**
  * @dev Malicious strategy mock that attempts to reenter the vault during allocate.
@@ -41,18 +41,23 @@ contract MockReentrantStrategy is IYieldStrategy {
         return exposure;
     }
 
-    function positionBreakdown(address) external pure returns (StrategyAssetBreakdown memory breakdown) {
-        return breakdown;
+    function tvlTokens(address vaultToken) external pure returns (address[] memory tokens) {
+        tokens = new address[](1);
+        tokens[0] = vaultToken;
     }
 
-    function principalBearingExposure(address) external pure returns (uint256 exposure) {
+    function positionBreakdown(address) external pure returns (PositionComponent[] memory components) {
+        return components;
+    }
+
+    function strategyExposure(address) external pure returns (uint256 exposure) {
         return 0;
     }
 
     function allocate(address token_, uint256) external onlyVault {
         if (token_ != token) revert InvalidParam();
         if (triggerReenter) {
-            IL1TreasuryVault(vault).allocatePrincipalToStrategy(token, address(this), 1);
+            IL1TreasuryVault(vault).allocateVaultTokenToStrategy(token, address(this), 1);
         }
     }
 

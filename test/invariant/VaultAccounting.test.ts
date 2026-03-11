@@ -91,13 +91,12 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
     return { vault, vaultAsAllocator, vaultAsRebalancer };
   }
 
-  function componentTotal(breakdown: {
-    components: ReadonlyArray<{ amount: bigint }>;
-  }): bigint {
-    return breakdown.components.reduce(
-      (sum, component) => sum + component.amount,
-      0n,
-    );
+  function componentTotal(
+    components: ReadonlyArray<{
+      readonly amount: bigint;
+    }>,
+  ): bigint {
+    return components.reduce((sum, component) => sum + component.amount, 0n);
   }
 
   it("keeps totalAssets consistent with idle + strategies across random sequences", async function () {
@@ -119,18 +118,18 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
       "STRAT_B",
     ]);
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       {
         supported: true,
       },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratA.address,
       { whitelisted: true, active: false, cap: 2_000_000n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       stratB.address,
       { whitelisted: true, active: false, cap: 2_000_000n },
@@ -154,7 +153,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
         let amount = idle / 10n;
         if (amount > remainingCap) amount = remainingCap;
         if (amount > 0n) {
-          await vaultAsAllocator.write.allocatePrincipalToStrategy([
+          await vaultAsAllocator.write.allocateVaultTokenToStrategy([
             token.address,
             strategy,
             amount,
@@ -167,7 +166,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
         );
         const amount = sAssets / 2n;
         if (amount > 0n) {
-          await vaultAsAllocator.write.deallocatePrincipalFromStrategy([
+          await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
             token.address,
             strategy,
             amount,
@@ -202,8 +201,8 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
           stratB.address,
         ]),
       );
-      const totals = await vault.read.totalExactAssets([token.address]);
-      const status = await vault.read.totalExactAssetsStatus([token.address]);
+      const totals = await vault.read.tokenTotals([token.address]);
+      const status = await vault.read.tokenTotalsConservative([token.address]);
 
       assert.equal(status.skippedStrategies, 0n);
       assert.equal(totals.total, idle + sA + sB);
@@ -211,7 +210,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
     }
   });
 
-  it("keeps totalAssetsStatus callable in degraded mode with reverting strategies", async function () {
+  it("keeps totalAssetsStatus callable in best-effort mode with reverting strategies", async function () {
     const { vault, vaultAsAllocator } = await deployVault();
 
     const token = await viem.deployContract("MockERC20", [
@@ -227,30 +226,30 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
     ]);
     const reverting = await viem.deployContract("MockRevertingStrategy");
 
-    await vault.write.setPrincipalTokenConfig([
+    await vault.write.setVaultTokenConfig([
       token.address,
       {
         supported: true,
       },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       healthy.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
-    await vault.write.setPrincipalStrategyWhitelist([
+    await vault.write.setVaultTokenStrategyConfig([
       token.address,
       reverting.address,
       { whitelisted: true, active: false, cap: 0n },
     ]);
 
-    await vaultAsAllocator.write.allocatePrincipalToStrategy([
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
       healthy.address,
       400_000n,
     ]);
 
-    const status = await vault.read.totalExactAssetsStatus([token.address]);
+    const status = await vault.read.tokenTotalsConservative([token.address]);
     const idle = await vault.read.idleTokenBalance([token.address]);
     const healthyAssets = componentTotal(
       await vault.read.strategyPositionBreakdown([
