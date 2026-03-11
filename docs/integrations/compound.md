@@ -1,5 +1,12 @@
 # Compound Integration Path
 
+## Metadata
+
+- Status: not implemented in this repo
+- Audience: adapter implementers, reviewers
+- Purpose: design guidance for a future Compound adapter
+- Current implemented strategy in this repo: Aave via `contracts/strategies/AaveV3Strategy.sol`
+
 ## Suitability
 
 The current vault/strategy interfaces are suitable for Compound integration, including Compound III (Comet) and Compound II style adapters.

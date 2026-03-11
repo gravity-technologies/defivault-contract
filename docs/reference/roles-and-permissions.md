@@ -1,0 +1,49 @@
+# Roles and Permissions
+
+## Metadata
+
+- Audience: operators, contributors, reviewers
+- Purpose: compact reference for role hierarchy and operational gating
+- Canonical for: role ownership, pause/support behavior, fund-moving policy matrix
+
+## Role Hierarchy
+
+- `DEFAULT_ADMIN_ROLE`: administers `VAULT_ADMIN_ROLE`
+- `VAULT_ADMIN_ROLE`: administers `REBALANCER_ROLE`, `ALLOCATOR_ROLE`, and `PAUSER_ROLE`
+- `REBALANCER_ROLE`: executes normal L1 -> L2 top-ups
+- `ALLOCATOR_ROLE`: allocates and deallocates strategy positions
+- `PAUSER_ROLE`: pauses allocations, harvests, and normal L1 -> L2 rebalances
+
+Initialization grants the admin address:
+
+- `DEFAULT_ADMIN_ROLE`
+- `VAULT_ADMIN_ROLE`
+- `PAUSER_ROLE`
+
+Operational roles must be granted separately.
+
+## Policy Matrix
+
+| Function                                     | Allowed caller(s)                       | Blocked by `pause()` | Requires `vaultToken.supported == true` |
+| -------------------------------------------- | --------------------------------------- | -------------------- | --------------------------------------- |
+| `allocateVaultTokenToStrategy`               | `ALLOCATOR_ROLE`                        | Yes                  | Yes                                     |
+| `deallocateVaultTokenFromStrategy`           | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                      |
+| `deallocateAllVaultTokenFromStrategy`        | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`  | No                   | No                                      |
+| `harvestYieldFromStrategy`                   | `VAULT_ADMIN_ROLE`                      | Yes                  | No                                      |
+| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                       | Yes                  | Yes                                     |
+| `emergencyNativeToL2` / `emergencyErc20ToL2` | `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE` | No                   | No                                      |
+| `pause`                                      | `PAUSER_ROLE` or `VAULT_ADMIN_ROLE`     | N/A                  | N/A                                     |
+| `unpause`                                    | `VAULT_ADMIN_ROLE`                      | N/A                  | N/A                                     |
+
+## Operational Notes
+
+- Pause blocks allocations, harvests, and normal L1 -> L2 rebalances, not defensive exits.
+- Emergency bridge sends are intended for incident-time liquidity restoration.
+- A strategy can be de-whitelisted but remain `active`, which keeps it withdrawable and reportable.
+- Harvest uses the ERC20 vault-token key. `address(0)` is not a strategy token input.
+- Native bridge intent uses explicit native methods. Wrapped-native must not be routed through the ERC20 bridge path.
+
+## Code Surfaces
+
+- [../../contracts/interfaces/IL1TreasuryVault.sol](../../contracts/interfaces/IL1TreasuryVault.sol)
+- [../../contracts/vault/GRVTL1TreasuryVault.sol](../../contracts/vault/GRVTL1TreasuryVault.sol)

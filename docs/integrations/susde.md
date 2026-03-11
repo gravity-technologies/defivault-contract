@@ -1,5 +1,12 @@
 # sUSDe (Ethena) Integration Path
 
+## Metadata
+
+- Status: not implemented in this repo
+- Audience: adapter implementers, reviewers
+- Purpose: point-in-time evaluation for a possible future adapter
+- Current implemented strategy in this repo: Aave via `contracts/strategies/AaveV3Strategy.sol`
+
 ## Scope
 
 As of March 5, 2026, this document is a point-in-time design evaluation for integrating Ethena sUSDe into the current vault/strategy model:

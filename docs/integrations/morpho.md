@@ -1,5 +1,12 @@
 # Morpho Integration Path
 
+## Metadata
+
+- Status: not implemented in this repo
+- Audience: adapter implementers, reviewers
+- Purpose: design guidance for a future Morpho adapter
+- Current implemented strategy in this repo: Aave via `contracts/strategies/AaveV3Strategy.sol`
+
 ## Suitability
 
 The current vault/strategy interfaces are suitable for Morpho integration.

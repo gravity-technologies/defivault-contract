@@ -55,7 +55,7 @@ interface IL1TreasuryVault {
     /// @notice Role allowed to allocate/deallocate strategy positions.
     function ALLOCATOR_ROLE() external view returns (bytes32);
 
-    /// @notice Role allowed to pause and unpause risk-taking actions.
+    /// @notice Role allowed to pause allocations, harvests, and normal L1 -> L2 rebalances.
     function PAUSER_ROLE() external view returns (bytes32);
 
     /// @notice Returns whether `account` currently holds `role`.
@@ -94,7 +94,7 @@ interface IL1TreasuryVault {
     function pause() external;
 
     /// @notice Exits paused mode.
-    /// @dev Implementations should restrict this call to pauser/admin authority.
+    /// @dev Implementations should restrict this call to vault-admin authority.
     function unpause() external;
 
     /// @notice Sets one-time timelock authority for yield-recipient updates.

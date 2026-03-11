@@ -137,7 +137,8 @@ describe("GRVTL1TreasuryVault core flows", async function () {
   }
 
   it("enforces RBAC on pause controls", async function () {
-    const { vaultAsOther, vaultAsPauser, vault } = await deployBase();
+    const { vaultAsOther, vaultAsPauser, vaultAsAdmin, vault } =
+      await deployBase();
 
     await viem.assertions.revertWithCustomError(
       vaultAsOther.write.pause(),
@@ -146,12 +147,17 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
     await vaultAsPauser.write.pause();
     assert.equal(await vault.read.paused(), true);
-    await vaultAsPauser.write.unpause();
+    await viem.assertions.revertWithCustomError(
+      vaultAsPauser.write.unpause(),
+      vaultAsPauser,
+      "Unauthorized",
+    );
+    await vaultAsAdmin.write.unpause();
     assert.equal(await vault.read.paused(), false);
   });
 
   it("enforces pause and unpause state transition guards", async function () {
-    const { vaultAsOther, vaultAsPauser } = await deployBase();
+    const { vaultAsOther, vaultAsPauser, vaultAsAdmin } = await deployBase();
 
     await viem.assertions.revertWithCustomError(
       vaultAsOther.write.unpause(),
@@ -161,6 +167,11 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     await viem.assertions.revertWithCustomError(
       vaultAsPauser.write.unpause(),
       vaultAsPauser,
+      "Unauthorized",
+    );
+    await viem.assertions.revertWithCustomError(
+      vaultAsAdmin.write.unpause(),
+      vaultAsAdmin,
       "InvalidParam",
     );
 
@@ -171,15 +182,15 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       "InvalidParam",
     );
 
-    await vaultAsPauser.write.unpause();
+    await vaultAsAdmin.write.unpause();
     await viem.assertions.revertWithCustomError(
-      vaultAsPauser.write.unpause(),
-      vaultAsPauser,
+      vaultAsAdmin.write.unpause(),
+      vaultAsAdmin,
       "InvalidParam",
     );
   });
 
-  it("blocks risk-on ops when paused but allows defensive exits", async function () {
+  it("blocks allocations, harvests, and normal rebalances when paused but allows defensive exits", async function () {
     const {
       vaultAsAllocator,
       vaultAsRebalancer,
