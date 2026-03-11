@@ -29,7 +29,6 @@ describe("GRVTL1TreasuryVault principal write-down", async function () {
     const bridgeHub = await viem.deployContract("MockBridgehub", [
       baseToken.address,
     ]);
-    const strategy = await viem.deployContract("MockYieldStrategy");
 
     const implementation = await viem.deployContract("GRVTL1TreasuryVault");
     const initializeData = encodeFunctionData({
@@ -56,6 +55,10 @@ describe("GRVTL1TreasuryVault principal write-down", async function () {
       "GRVTL1TreasuryVault",
       proxy.address,
     );
+    const strategy = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "PWD_STRAT",
+    ]);
     return { vault, token, strategy };
   }
 
@@ -125,7 +128,7 @@ describe("GRVTL1TreasuryVault principal write-down", async function () {
       writeDown.args.strategy.toLowerCase(),
       strategy.address.toLowerCase(),
     );
-    assert.equal(writeDown.args.previousPrincipal, 10n);
+    assert.equal(writeDown.args.previousPrincipal, 9n);
     assert.equal(writeDown.args.newPrincipal, 3n);
     assert.equal(writeDown.args.exposureAfter, 3n);
   });

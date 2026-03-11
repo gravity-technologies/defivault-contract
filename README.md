@@ -6,6 +6,13 @@ In simple terms, this contract helps put GRVT TVL to work by allocating funds in
 
 ## Project Overview
 
+This repository contains:
+
+- `GRVTL1TreasuryVault`: L1 vault with RBAC, pause semantics, strategy routing, and L1->L2 rebalance/emergency flows.
+- `AaveV3Strategy`: vault-only strategy integration for Aave v3 (USDT-first).
+
+The design enforces strict asset-flow restrictions, strategy whitelisting, and emergency controls.
+
 ## Architecture and Major Flows
 
 ### High-Level Structure
@@ -112,7 +119,7 @@ totalExactAssets(token) = idleAssets(token) + sum(component.amount where compone
 Where:
 
 - `idleAssets(token)` is the vault's direct ERC20 balance.
-- `strategy.assets(token)` returns exact-token components; components may be underlying or non-root position-token units.
+- `strategy.assets(token)` returns exact-token components; components may be underlying or non-principal position-token units.
 - The vault never converts amounts across token denominations while reporting.
 
 The vault maintains a token registry for TVL discovery:
@@ -147,9 +154,9 @@ Notes:
 
 - The contract does not provide cross-token aggregation or pricing.
 - Any USD TVL metric should be computed off-chain by applying external price feeds to raw per-token totals.
-- For non-root component tokens (for example receipt tokens), callers query `totalExactAssets(componentToken)` directly.
+- For non-principal component tokens (for example receipt tokens), callers query `totalExactAssets(componentToken)` directly.
 
-### Normal Yield Flow (Allocate / Deallocate)
+### Normal Yield Flow (Allocate / PrincipalDeallocatedFromStrategy)
 
 ```text
 [ALLOCATOR role]
@@ -284,7 +291,16 @@ Operational notes:
 - Internal accounting keys and read/reporting surfaces use canonical ERC20 addresses.
 - Native exposure is represented as wrapped native token on read surfaces.
 - `allocatePrincipalToStrategy` does not implicitly wrap native ETH and requires canonical idle funds.
+- Strategy domain is always ERC20: strategies hold principal tokens (for native exposure, wrapped native), not native ETH.
 - Native ingress is restricted: direct ETH sends from non-wrapper senders revert; `NativeToWrappedIngress` is the canonical external ETH ingress path.
+
+### Native ETH/Wrapped-Native Invariants (Why)
+
+- zkSync bridge integration here supports native ETH branch and non-wrapped-native ERC20 branch; explicit wrapped-native bridge-out is rejected.
+- To keep vault/strategy logic simple and deterministic, strategy accounting is ERC20-only and native exposure is always modeled as wrapped-native internally.
+- Inflow invariant: external native ETH must be wrapped first through `NativeToWrappedIngress` before it enters vault accounting.
+- Outflow invariant 1 (L1 -> L2 rebalance/emergency): wrapped-native is unwrapped and bridged as native ETH.
+- Outflow invariant 2 (harvest -> treasury): wrapped-native principal harvest pays treasury in native ETH to reduce operational conversion overhead and keep ETH available for gas/ops usage.
 
 ### Token-Separated Strategy Reporting
 
@@ -295,12 +311,20 @@ Operational notes:
 - `IL1TreasuryVault.totalExactAssets(token)` returns strict exact-token totals and reverts on invalid strategy reads.
 - `IL1TreasuryVault.totalExactAssetsStatus(token)` and batch status variants skip invalid strategies and report `skippedStrategies`.
 - Non-underlying component token queries (for example receipt tokens) are valid exact-token queries.
+- Break-glass tracked-principal override exists for admin recovery when conservative read-failure handling pins principal-token tracking.
 
 ### Harvest and Cap Scalar Path
 
 - Harvest and cap logic are based on `IYieldStrategy.principalBearingExposure(token)`.
 - This scalar path is separate from reporting components and may use strategy-specific conversion policies.
 - Unsupported token queries for `principalBearingExposure(token)` return `0`.
+- Harvest/principal APIs use canonical principal token keys (ERC20); `address(0)` is not a strategy token key.
+- Harvest payout policy is principal-token based:
+  - if principal token is not wrapped native, treasury receives ERC20 directly;
+  - if principal token is wrapped native, vault unwraps and treasury receives native ETH.
+- `minReceived` is enforced on treasury-side net receipt:
+  - ERC20 balance delta for non-wrapped-native harvest,
+  - native ETH balance delta for wrapped-native harvest.
 - Current accounting/reporting scope excludes reward and incentive tokens.
 
 ## Protocol-Agnostic Adapter Guidance
@@ -308,8 +332,11 @@ Operational notes:
 The strategy interface is protocol-agnostic. Adapters must unify principal-bearing exposure while preserving exact-token reporting:
 
 - Aave V3 style rebasing receipt token:
-  - components: `aUSDT` as invested principal and `USDT` residual when queried in USDT domain.
-  - scalar example: `principalBearingExposure(USDT) = aUSDT + USDT`, using conversion rule `1 aUSDT = 1 USDT`.
+  - implemented in `AaveV3Strategy` in this repo.
+  - components can include `aUSDT` as invested principal and `USDT` residual when queried in USDT domain.
+  - scalar example: `principalBearingExposure(USDT) = aUSDT + USDT`, using assumption `1 aUSDT = 1 USDT` (scalar path only).
+  - `deallocate`/`deallocateAll` sweep residual strategy-held underlying to vault to avoid dust-lock exposure.
+  - unsupported scalar domains return `0` (non-reverting).
 - Compound III style index-based accounting:
   - components remain exact token units only (typically base token domain).
   - non-underlying receipt-token reporting may be empty where accounting is purely index-based.
@@ -320,12 +347,189 @@ The strategy interface is protocol-agnostic. Adapters must unify principal-beari
 
 These examples are theoretical adapter patterns; this scope does not add new Compound or Morpho strategy contracts.
 
+## Risk Controls Semantics
+
+- `rebalanceToL2` uses conservative availability checks (`availableForRebalance`) and role gating.
+- `emergencySendToL2` intentionally bypasses pause and token-support restrictions to prioritize incident-time liquidity restoration.
+- Emergency actions remain role-gated and should be used under incident procedures defined in `docs/operations-runbook.md`.
+
 ## Usage
 
 ### Running Tests
 
-To run all the tests in the project, execute the following command:
+Run all tests:
 
 ```shell
 npm run test
 ```
+
+### Current Test Matrix
+
+- `test/unit/*`: vault policy, RBAC, config/upgrade, reporting, and strategy integration behavior.
+- `test/adversarial/*`: reentrancy, malformed/fee-on-transfer ERC20 behavior, unwind failure handling, and bridge-path hardening.
+- `test/invariant/*`: accounting consistency across randomized operation sequences.
+- Default unit/adversarial/invariant suites are deterministic and mock-based.
+
+Run fork integration tests (requires mainnet RPC):
+
+```shell
+MAINNET_RPC_URL=<rpc-url> npx hardhat test test/fork/*.ts
+```
+
+Optional fork block pin:
+
+```shell
+MAINNET_RPC_URL=<rpc-url> MAINNET_FORK_BLOCK=22000000 npx hardhat test test/fork/*.ts
+```
+
+### Deployment Smoke Test
+
+Smoke test the Ignition deployment path end-to-end (vault core, strategy core,
+token-strategy onboarding, roles bootstrap, native ingress):
+
+```shell
+npx hardhat node --hostname 127.0.0.1 --port 8545
+```
+
+In a second terminal:
+
+```shell
+npm run smoke:deployment
+```
+
+The smoke runner writes debugging artifacts to `smoke-artifacts/`:
+
+- command stdout/stderr logs
+- per-module Ignition deployed-address snapshots
+- assertion logs and summary
+
+### Deployments and Ops
+
+Use `.env` for network credentials (`SEPOLIA_RPC_URL`, `SEPOLIA_PRIVATE_KEY`)
+and JSON5 parameter files under `ignition/parameters/`.
+
+All core deployment, configuration, and upgrades are managed by Ignition modules.
+Core proxy deployments use OpenZeppelin `TransparentUpgradeableProxy` artifacts loaded
+directly from `@openzeppelin/contracts/build/contracts`.
+
+Deploy vault core (implementation + transparent proxy):
+
+```shell
+npm run deploy:vault -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/vault-core.json5
+```
+
+Deploy Aave strategy core (implementation + transparent proxy):
+
+```shell
+npm run deploy:strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/strategy-core.json5
+```
+
+Record deployed addresses from `ignition/deployments/<deployment-id>/deployed_addresses.json`.
+For each proxy, also read the EIP-1967 admin slot to capture its `ProxyAdmin` address
+for upgrade modules.
+
+Onboard strategy into the vault registry (set token support + whitelist):
+
+```shell
+npm run deploy:token-strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/token-strategy.json5
+```
+
+Deploy native ingress wrapper for external ETH -> wrapped-native flow:
+
+```shell
+npm run deploy:native-ingress -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/native-ingress.json5
+```
+
+Configure token support independently:
+
+```shell
+npm run config:token -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/token-config.json5
+```
+
+Bootstrap vault roles:
+
+```shell
+npm run roles:bootstrap -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/roles-bootstrap.json5
+```
+
+Bootstrap treasury timelock governance (one-time):
+
+```shell
+npm run deploy:yield-recipient-timelock -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-bootstrap.json5
+```
+
+Schedule a yield recipient update through timelock:
+
+```shell
+npm run yield-recipient:schedule-update -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-schedule-update.json5
+```
+
+Execute a ready yield recipient update through timelock:
+
+```shell
+npm run yield-recipient:execute-update -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/treasury-execute-update.json5
+```
+
+Execute a harvest operation (strategy -> treasury):
+
+```shell
+npm run ops:harvest-yield -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/harvest-yield.json5
+```
+
+Upgrade vault proxy (ProxyAdmin `upgradeAndCall`):
+
+```shell
+npm run upgrade:vault -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/vault-upgrade.json5
+```
+
+Upgrade strategy proxy (ProxyAdmin `upgradeAndCall`):
+
+```shell
+npm run upgrade:strategy -- \
+  --network sepolia \
+  --parameters ignition/parameters/sepolia/strategy-upgrade.json5
+```
+
+Inspect Ignition deployment state for post-deploy operations:
+
+```shell
+npx hardhat ignition deployments --network sepolia
+npx hardhat ignition status <deployment-id> --network sepolia
+```
+
+Treasury and harvest governance notes:
+
+- Yield recipient updates are timelock-gated once `setYieldRecipientTimelock` is configured.
+- `setYieldRecipient` is executed by timelock operations, not by direct vault-admin calls.
+- `harvestYieldFromStrategy` is vault-admin-gated, blocked while paused, and enforces `minReceived`.
+- Native treasury payout (wrapped-native harvest branch) reverts with `NativeTransferFailed` if treasury cannot receive ETH.
+- `YieldHarvested.principalToken` is always the principal token key (for wrapped-native harvest it remains wrapped-native token).
+- Harvest transactions also emit `PrincipalDeallocatedFromStrategy` telemetry for strategy unwind; indexers should treat
+  `PrincipalDeallocatedFromStrategy.received` (vault-side balance delta) and `YieldHarvested.received` (treasury-side net receipt)
+  as distinct metrics.
+
+### Ops Docs
+
+- Incident/deployment runbook: `docs/operations-runbook.md`

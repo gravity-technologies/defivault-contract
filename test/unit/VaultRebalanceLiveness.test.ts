@@ -131,7 +131,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       wrappedNative.address,
       supportedTokenConfig,
     ]);
-    await wrappedNative.write.deposit([], { value: 20n });
+    await wrappedNative.write.deposit({ value: 20n });
     await wrappedNative.write.transfer([vault.address, 20n]);
 
     await vault.write.rebalanceNativeToL2([12n]);
@@ -173,7 +173,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       wrappedNative.address,
       unsupportedTokenConfig,
     ]);
-    await wrappedNative.write.deposit([], { value: 9n });
+    await wrappedNative.write.deposit({ value: 9n });
     await wrappedNative.write.transfer([vault.address, 9n]);
     await vault.write.pause();
 
@@ -226,7 +226,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       vault.address,
     ]);
 
-    await ingress.write.ingress([], { value: 4n });
+    await ingress.write.ingress({ value: 4n });
 
     assert.equal(await wrappedNative.read.balanceOf([vault.address]), 4n);
     assert.equal(await wrappedNative.read.balanceOf([ingress.address]), 0n);
@@ -244,7 +244,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     ]);
 
     await viem.assertions.revertWithCustomError(
-      ingress.write.ingress([], { value: 0n }),
+      ingress.write.ingress({ value: 0n }),
       ingress,
       "InvalidParam",
     );
