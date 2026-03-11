@@ -383,8 +383,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /// @inheritdoc IL1TreasuryVault
     function sweepNativeToYieldRecipient(uint256 amount) external override onlyVaultAdmin nonReentrant {
         if (amount == 0 || _yieldRecipient == address(0) || amount > address(this).balance) revert InvalidParam();
-        (bool ok, ) = _yieldRecipient.call{value: amount}("");
-        if (!ok) revert NativeTransferFailed();
+        _sendNative(_yieldRecipient, amount);
         emit NativeSweptToYieldRecipient(_yieldRecipient, amount);
     }
 
@@ -485,10 +484,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             return;
         }
 
-        bool canRemove;
-        try IYieldStrategy(strategy).principalBearingExposure(canonicalToken) returns (uint256 exposure) {
-            canRemove = exposure == 0;
-        } catch {
+        (bool ok, uint256 exposure) = _readStrategyExposure(canonicalToken, strategy);
+        bool canRemove = ok && exposure == 0;
+        if (!ok) {
             emit StrategyRemovalCheckFailed(canonicalToken, strategy);
         }
         _setPrincipalStrategyLifecycle(
@@ -675,12 +673,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (idle < amount) revert InvalidParam();
 
         if (sCfg.cap != 0) {
-            uint256 current;
-            try IYieldStrategy(strategy).principalBearingExposure(canonicalToken) returns (uint256 exposure) {
-                current = exposure;
-            } catch {
-                revert InvalidStrategyExposureRead(canonicalToken, strategy);
-            }
+            (bool ok, uint256 current) = _readStrategyExposure(canonicalToken, strategy);
+            if (!ok) revert InvalidStrategyExposureRead(canonicalToken, strategy);
             if (current > type(uint256).max - amount || current + amount > sCfg.cap) revert CapExceeded();
         }
 
@@ -805,22 +799,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         uint256 withdrawnToVault = _deallocateWithBalanceDelta(canonicalToken, strategy, amount, false, false, false);
         if (withdrawnToVault > maxYield) revert YieldNotAvailable();
 
-        if (canonicalToken == _wrappedNativeToken) {
-            uint256 recipientBefore = recipient.balance;
-            IWrappedNative(_wrappedNativeToken).withdraw(withdrawnToVault);
-            (bool ok, ) = recipient.call{value: withdrawnToVault}("");
-            if (!ok) revert NativeTransferFailed();
-            uint256 recipientAfter = recipient.balance;
-            if (recipientAfter < recipientBefore) revert InvalidParam();
-            received = recipientAfter - recipientBefore;
-        } else {
-            IERC20 asset = IERC20(canonicalToken);
-            uint256 recipientBefore = asset.balanceOf(recipient);
-            asset.safeTransfer(recipient, withdrawnToVault);
-            uint256 recipientAfter = asset.balanceOf(recipient);
-            if (recipientAfter < recipientBefore) revert InvalidParam();
-            received = recipientAfter - recipientBefore;
-        }
+        received = _payoutHarvestProceeds(canonicalToken, recipient, withdrawnToVault);
         if (received < minReceived) revert SlippageExceeded();
         emit YieldHarvested(canonicalToken, strategy, recipient, amount, received);
         // Harvest first deallocates into vault idle, then pays yield recipient.
@@ -849,15 +828,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      * @dev Enforces standard rebalance policy for native path. Blocked when paused.
      */
     function rebalanceNativeToL2(uint256 amount) external payable override nonReentrant whenNotPaused onlyRebalancer {
-        if (msg.value != 0 || amount == 0) revert InvalidParam();
-        _requireBridgeInfraConfigured();
-        PrincipalTokenConfig memory cfg = _principalTokenConfigs[_wrappedNativeToken];
-        if (!cfg.supported) revert TokenNotSupported();
-        if (amount > availableNativeForRebalance()) revert InvalidParam();
-
-        bytes32 txHash = _bridgeToL2TwoBridges(_wrappedNativeToken, amount, true);
-        emit NativeRebalancedToL2(amount, L2_TX_GAS_LIMIT, L2_TX_GAS_PER_PUBDATA_BYTE, _l2ExchangeRecipient, txHash);
-        _afterPrincipalTokenBalanceChange(_wrappedNativeToken);
+        if (msg.value != 0) revert InvalidParam();
+        _dispatchBridgeOutToL2(_wrappedNativeToken, amount, true, false);
     }
 
     /**
@@ -868,23 +840,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address erc20Token,
         uint256 amount
     ) external payable override nonReentrant whenNotPaused onlyRebalancer {
-        if (msg.value != 0 || amount == 0) revert InvalidParam();
+        if (msg.value != 0) revert InvalidParam();
         if (erc20Token == address(0) || erc20Token == _wrappedNativeToken) revert InvalidParam();
-        _requireBridgeInfraConfigured();
-        PrincipalTokenConfig memory cfg = _principalTokenConfigs[erc20Token];
-        if (!cfg.supported) revert TokenNotSupported();
-        if (amount > availableErc20ForRebalance(erc20Token)) revert InvalidParam();
-
-        bytes32 txHash = _bridgeToL2TwoBridges(erc20Token, amount, false);
-        emit Erc20RebalancedToL2(
-            erc20Token,
-            amount,
-            L2_TX_GAS_LIMIT,
-            L2_TX_GAS_PER_PUBDATA_BYTE,
-            _l2ExchangeRecipient,
-            txHash
-        );
-        _afterPrincipalTokenBalanceChange(erc20Token);
+        _dispatchBridgeOutToL2(erc20Token, amount, false, false);
     }
 
     /**
@@ -899,20 +857,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      *      iteration, the call reverts.
      */
     function emergencyNativeToL2(uint256 amount) external payable override nonReentrant onlyRebalancerOrAdmin {
-        if (msg.value != 0 || amount == 0) revert InvalidParam();
-        _requireBridgeInfraConfigured();
-
-        IERC20 asset = IERC20(_wrappedNativeToken);
-        uint256 idle = asset.balanceOf(address(this));
-        if (idle < amount) {
-            _unwindStrategiesForEmergency(asset, _wrappedNativeToken, amount - idle);
-        }
-
-        if (asset.balanceOf(address(this)) < amount) revert InvalidParam();
-
-        bytes32 txHash = _bridgeToL2TwoBridges(_wrappedNativeToken, amount, true);
-        emit NativeEmergencySentToL2(amount, L2_TX_GAS_LIMIT, L2_TX_GAS_PER_PUBDATA_BYTE, _l2ExchangeRecipient, txHash);
-        _afterPrincipalTokenBalanceChange(_wrappedNativeToken);
+        if (msg.value != 0) revert InvalidParam();
+        _dispatchBridgeOutToL2(_wrappedNativeToken, amount, true, true);
     }
 
     /**
@@ -930,28 +876,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address erc20Token,
         uint256 amount
     ) external payable override nonReentrant onlyRebalancerOrAdmin {
-        if (msg.value != 0 || amount == 0) revert InvalidParam();
+        if (msg.value != 0) revert InvalidParam();
         if (erc20Token == address(0) || erc20Token == _wrappedNativeToken) revert InvalidParam();
-        _requireBridgeInfraConfigured();
-
-        IERC20 asset = IERC20(erc20Token);
-        uint256 idle = asset.balanceOf(address(this));
-        if (idle < amount) {
-            _unwindStrategiesForEmergency(asset, erc20Token, amount - idle);
-        }
-
-        if (asset.balanceOf(address(this)) < amount) revert InvalidParam();
-
-        bytes32 txHash = _bridgeToL2TwoBridges(erc20Token, amount, false);
-        emit Erc20EmergencySentToL2(
-            erc20Token,
-            amount,
-            L2_TX_GAS_LIMIT,
-            L2_TX_GAS_PER_PUBDATA_BYTE,
-            _l2ExchangeRecipient,
-            txHash
-        );
-        _afterPrincipalTokenBalanceChange(erc20Token);
+        _dispatchBridgeOutToL2(erc20Token, amount, false, true);
     }
     /**
      * @notice Returns the current active strategy list for a token.
@@ -1117,6 +1044,72 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /**
+     * @notice Executes shared bridge-out flow for rebalance and emergency operations.
+     * @param token Canonical ERC20 principal token key.
+     * @param amount Amount to bridge to L2.
+     * @param isNativeIntent True for native branch (`token` must be wrapped-native).
+     * @param emergency True for emergency mode (supports disabled, pause-bypass behavior).
+     */
+    function _dispatchBridgeOutToL2(address token, uint256 amount, bool isNativeIntent, bool emergency) internal {
+        if (amount == 0) revert InvalidParam();
+        _requireBridgeInfraConfigured();
+
+        IERC20 asset = IERC20(token);
+        if (emergency) {
+            uint256 idle = asset.balanceOf(address(this));
+            if (idle < amount) {
+                _unwindStrategiesForEmergency(asset, token, amount - idle);
+            }
+            if (asset.balanceOf(address(this)) < amount) revert InvalidParam();
+        } else {
+            PrincipalTokenConfig memory cfg = _principalTokenConfigs[token];
+            if (!cfg.supported) revert TokenNotSupported();
+            (bool ok, uint256 idle) = _tryBalanceOf(token, address(this));
+            if (!ok || idle < amount) revert InvalidParam();
+        }
+
+        bytes32 txHash = _bridgeToL2TwoBridges(token, amount, isNativeIntent);
+        if (isNativeIntent) {
+            if (emergency) {
+                emit NativeEmergencySentToL2(
+                    amount,
+                    L2_TX_GAS_LIMIT,
+                    L2_TX_GAS_PER_PUBDATA_BYTE,
+                    _l2ExchangeRecipient,
+                    txHash
+                );
+            } else {
+                emit NativeRebalancedToL2(
+                    amount,
+                    L2_TX_GAS_LIMIT,
+                    L2_TX_GAS_PER_PUBDATA_BYTE,
+                    _l2ExchangeRecipient,
+                    txHash
+                );
+            }
+        } else if (emergency) {
+            emit Erc20EmergencySentToL2(
+                token,
+                amount,
+                L2_TX_GAS_LIMIT,
+                L2_TX_GAS_PER_PUBDATA_BYTE,
+                _l2ExchangeRecipient,
+                txHash
+            );
+        } else {
+            emit Erc20RebalancedToL2(
+                token,
+                amount,
+                L2_TX_GAS_LIMIT,
+                L2_TX_GAS_PER_PUBDATA_BYTE,
+                _l2ExchangeRecipient,
+                txHash
+            );
+        }
+        _afterPrincipalTokenBalanceChange(token);
+    }
+
+    /**
      * @notice Builds and submits a two-bridges request to BridgeHub.
      * @dev Uses fixed gas/pubdata parameters from vault constants and fixed L2 recipient wiring.
      */
@@ -1144,36 +1137,24 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             revert InvalidParam();
         }
 
+        bool needsBaseApprove = isNativeIntent || token != _baseToken;
+        uint256 nativeValue;
+        address bridgeToken = token;
+
         if (isNativeIntent) {
             IWrappedNative(_wrappedNativeToken).withdraw(amount);
-            IERC20(_baseToken).forceApprove(sharedBridge, baseCost);
-
-            txHash = hub.requestL2TransactionTwoBridges{value: amount}(
-                L2TransactionRequestTwoBridgesOuter({
-                    chainId: _l2ChainId,
-                    mintValue: baseCost,
-                    l2Value: 0,
-                    l2GasLimit: L2_TX_GAS_LIMIT,
-                    l2GasPerPubdataByteLimit: L2_TX_GAS_PER_PUBDATA_BYTE,
-                    refundRecipient: _l2ExchangeRecipient,
-                    secondBridgeAddress: sharedBridge,
-                    secondBridgeValue: amount,
-                    secondBridgeCalldata: abi.encode(address(0), amount, _l2ExchangeRecipient)
-                })
-            );
-
-            IERC20(_baseToken).forceApprove(sharedBridge, 0);
-            return txHash;
-        }
-
-        if (token == _baseToken) {
+            nativeValue = amount;
+            bridgeToken = address(0);
+        } else if (token == _baseToken) {
             IERC20(token).forceApprove(sharedBridge, amount + baseCost);
         } else {
             IERC20(token).forceApprove(sharedBridge, amount);
+        }
+        if (needsBaseApprove) {
             IERC20(_baseToken).forceApprove(sharedBridge, baseCost);
         }
 
-        txHash = hub.requestL2TransactionTwoBridges(
+        txHash = hub.requestL2TransactionTwoBridges{value: nativeValue}(
             L2TransactionRequestTwoBridgesOuter({
                 chainId: _l2ChainId,
                 mintValue: baseCost,
@@ -1182,15 +1163,15 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
                 l2GasPerPubdataByteLimit: L2_TX_GAS_PER_PUBDATA_BYTE,
                 refundRecipient: _l2ExchangeRecipient,
                 secondBridgeAddress: sharedBridge,
-                secondBridgeValue: 0,
-                secondBridgeCalldata: abi.encode(token, amount, _l2ExchangeRecipient)
+                secondBridgeValue: nativeValue,
+                secondBridgeCalldata: abi.encode(bridgeToken, amount, _l2ExchangeRecipient)
             })
         );
 
-        if (token == _baseToken) {
+        if (!isNativeIntent) {
             IERC20(token).forceApprove(sharedBridge, 0);
-        } else {
-            IERC20(token).forceApprove(sharedBridge, 0);
+        }
+        if (needsBaseApprove) {
             IERC20(_baseToken).forceApprove(sharedBridge, 0);
         }
     }
@@ -1253,10 +1234,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         uint256 previousPrincipal = _strategyPrincipal[token][strategy];
         if (previousPrincipal == 0) return;
 
-        uint256 exposureAfter;
-        try IYieldStrategy(strategy).principalBearingExposure(token) returns (uint256 exposure) {
-            exposureAfter = exposure;
-        } catch {
+        (bool ok, uint256 exposureAfter) = _readStrategyExposure(token, strategy);
+        if (!ok) {
             emit StrategyPrincipalWriteDownSkipped(token, strategy);
             return;
         }
@@ -1304,6 +1283,44 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (principal == 0) return;
         uint256 decreaseBy = delta < principal ? delta : principal;
         _setStrategyPrincipal(token, strategy, principal - decreaseBy);
+    }
+
+    /**
+     * @notice Pays harvest proceeds to yield recipient and returns net amount received.
+     * @param principalToken Principal token being harvested.
+     * @param recipient Yield recipient address.
+     * @param amount Amount withdrawn from strategy to be paid out.
+     */
+    function _payoutHarvestProceeds(
+        address principalToken,
+        address recipient,
+        uint256 amount
+    ) internal returns (uint256 received) {
+        if (principalToken == _wrappedNativeToken) {
+            uint256 nativeRecipientBefore = recipient.balance;
+            IWrappedNative(_wrappedNativeToken).withdraw(amount);
+            _sendNative(recipient, amount);
+            uint256 nativeRecipientAfter = recipient.balance;
+            if (nativeRecipientAfter < nativeRecipientBefore) revert InvalidParam();
+            return nativeRecipientAfter - nativeRecipientBefore;
+        }
+
+        IERC20 asset = IERC20(principalToken);
+        uint256 erc20RecipientBefore = asset.balanceOf(recipient);
+        asset.safeTransfer(recipient, amount);
+        uint256 erc20RecipientAfter = asset.balanceOf(recipient);
+        if (erc20RecipientAfter < erc20RecipientBefore) revert InvalidParam();
+        return erc20RecipientAfter - erc20RecipientBefore;
+    }
+
+    /**
+     * @notice Sends native ETH to target recipient and reverts on failed transfer.
+     * @param recipient Destination address.
+     * @param amount ETH amount to transfer.
+     */
+    function _sendNative(address recipient, uint256 amount) internal {
+        (bool ok, ) = recipient.call{value: amount}("");
+        if (!ok) revert NativeTransferFailed();
     }
 
     /**
@@ -1359,18 +1376,16 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         for (uint256 i = 0; i < list.length && needed > 0; ++i) {
             address strategy = list[i];
 
-            uint256 exposure;
-            try IYieldStrategy(strategy).principalBearingExposure(token) returns (uint256 assets_) {
-                exposure = assets_;
-            } catch {
+            (bool ok, uint256 exposure) = _readStrategyExposure(token, strategy);
+            if (!ok) {
                 emit EmergencyStrategySkipped(token, strategy);
                 continue;
             }
             if (exposure == 0) continue;
 
             uint256 request = needed < exposure ? needed : exposure;
-            (uint256 got, bool ok) = _tryEmergencyDeallocate(asset, token, strategy, request);
-            if (!ok) {
+            (uint256 got, bool deallocateOk) = _tryEmergencyDeallocate(asset, token, strategy, request);
+            if (!deallocateOk) {
                 emit EmergencyStrategySkipped(token, strategy);
                 continue;
             }
