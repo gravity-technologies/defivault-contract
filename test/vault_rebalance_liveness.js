@@ -15,11 +15,13 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     const baseToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
+      18,
     ]);
     const wrappedNative = await viem.deployContract("MockWETH");
     const token = await viem.deployContract("MockERC20", [
       "Mock Token",
       "MOCK",
+      18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
       baseToken.address,

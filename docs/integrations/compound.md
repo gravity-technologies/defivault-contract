@@ -8,8 +8,9 @@ Why this fits:
 
 - Adapter API is token-domain based and does not assume a specific receipt mechanism (`contracts/interfaces/IYieldStrategy.sol`).
 - Cap/exposure logic uses strategy scalar (`principalBearingExposure`) independent of reporting structure.
-- Tracked-token registry is root-token-only for discovery (`getTrackedTokens`/`isTrackedToken`).
-- Receipt-token exact totals remain available through `totalAssets(receiptToken)` via global active-strategy scans.
+- Tracked-token registry is principal-token-only for discovery (`getTrackedTokens`/`isTrackedToken`).
+- Receipt-token exact totals remain available through `totalExactAssets(receiptToken)` via global active-strategy scans.
+- Strategy token domain is canonical ERC20 only (`address(0)` is not a strategy token key).
 
 ## Option A: Compound III (Comet, index-based)
 
@@ -17,20 +18,20 @@ Why this fits:
 - `assets(baseToken)`:
   - report base-token exact units only (invested + residual as applicable).
 - `principalBearingExposure(baseToken)`:
-  - return underlying/base-token exposure scalar from Comet accounting.
+  - return principal-token exposure scalar from Comet accounting.
 - `assets(otherToken)` and `principalBearingExposure(otherToken)`:
   - return empty / zero.
 
 ## Option B: Compound II (cToken)
 
-- Typical shape: one non-root receipt token (`cToken`) plus optional underlying residual.
-- `assets(underlying)`:
+- Typical shape: one non-principal receipt token (`cToken`) plus optional underlying residual.
+- `assets(principalToken)`:
   - include `cToken` invested component (exact `cToken` units),
-  - include underlying residual when present.
+  - include principal-token residual when present.
 - `assets(cToken)`:
   - include `cToken` component for exact-token query support.
-- `principalBearingExposure(underlying)`:
-  - return underlying-domain scalar using current exchange-rate conversion plus residual underlying.
+- `principalBearingExposure(principalToken)`:
+  - return principal-token-domain scalar using current exchange-rate conversion plus residual principal token.
 
 ## Interface Contract Requirements
 
@@ -39,38 +40,42 @@ Adapter must satisfy:
 - Unsupported queries:
   - `assets(token)` => empty components.
   - `principalBearingExposure(token)` => `0` (no unsupported-token revert).
+- Canonical token boundary:
+  - strategy APIs (`assets`, `principalBearingExposure`, `allocate`, `deallocate`, `deallocateAll`) use canonical ERC20 principal token keys.
+  - native sentinel `address(0)` is not valid for strategy token inputs.
 - `allocate(token, amount)`:
   - vault-only caller,
-  - pull underlying from vault,
+  - pull principal token from vault,
   - supply/deposit to Compound market.
 - `deallocate(token, amount)` / `deallocateAll(token)`:
   - withdraw/redeem from Compound,
-  - transfer underlying back to vault,
+  - transfer principal token back to vault,
   - return actual received amount.
-- Exclude reward tokens (for example `COMP`) from V1 component reporting and exposure scalar.
+- Exclude reward tokens (for example `COMP`) from current component reporting and exposure scalar.
 
 ## Vault Integration Steps
 
 1. Deploy Compound adapter with immutable config:
    - vault address,
-   - token domain (base/underlying),
+   - principal token domain (for example base token),
    - protocol addresses (Comet or cToken/Comptroller path),
    - optional receipt token address (`cToken`) for Compound II model.
 2. Configure vault:
-   - `setTokenConfig(tokenDomain, {supported: true})`,
+   - `setPrincipalTokenConfig(tokenDomain, {supported: true})`,
    - `whitelistStrategy(tokenDomain, adapter, {whitelisted: true, cap})`.
 3. Run smoke lifecycle:
-   - `allocateToStrategy(tokenDomain, adapter, amount)`,
-   - `deallocateFromStrategy(tokenDomain, adapter, partialAmount)`,
-   - `deallocateAllFromStrategy(tokenDomain, adapter)`.
+   - `allocatePrincipalToStrategy(tokenDomain, adapter, amount)`,
+   - `deallocatePrincipalFromStrategy(tokenDomain, adapter, partialAmount)`,
+   - `deallocateAllPrincipalFromStrategy(tokenDomain, adapter)`.
 4. Validate reporting:
    - `strategyAssets(tokenDomain, adapter)`,
-   - `totalAssets(tokenDomain)`,
-   - if receipt token exists, `totalAssets(receiptToken)`,
-   - `getTrackedTokens()` remains root-token-only after allocate/deallocate hooks.
+   - `totalExactAssets(tokenDomain)`,
+   - if receipt token exists, `totalExactAssets(receiptToken)`,
+   - `getTrackedPrincipalTokens()` remains principal-token-only after allocate/deallocate hooks.
 
 ## Critical Notes
 
-- `totalAssets(token)` is strict exact-token; adapter read errors for active strategies can cause revert on that strict path.
+- `totalExactAssets(token)` is strict exact-token; adapter read errors for active strategies can cause revert on that strict path.
 - Keep adapter math deterministic and bounded for index/exchange-rate conversions.
-- Root tracked-token discovery intentionally ignores non-root receipt-token shape.
+- Tracked-principal discovery intentionally ignores non-principal receipt-token shape.
+- Root tracking sync is write-time; if strategy reads fail during sync, tracking can stay conservatively pinned until the next successful write hook or explicit override.
