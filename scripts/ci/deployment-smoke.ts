@@ -415,12 +415,15 @@ async function main() {
       pauser,
     },
   );
-  const nativeIngressParamsPath = writeModuleParams(
-    "native-ingress.temp.json",
-    "NativeIngressModule",
+  const nativeGatewaysParamsPath = writeModuleParams(
+    "native-gateways.temp.json",
+    "NativeGatewaysModule",
     {
       wrappedNativeToken: wrappedNativeToken.address,
+      baseToken: baseToken.address,
+      bridgeHub: bridgeHub.address,
       vaultProxy,
+      proxyAdminOwner: deployAdmin,
     },
   );
 
@@ -497,34 +500,80 @@ async function main() {
     true,
   );
 
-  const nativeIngressDeploymentId = `smoke-native-ingress-${smokeRunId}`;
-  const nativeIngressDeployedAddresses = await runIgnitionDeploy(
-    "ignition-native-ingress",
-    "./ignition/modules/NativeIngress.ts",
-    nativeIngressParamsPath,
-    nativeIngressDeploymentId,
-    "native-ingress-deployed-addresses.json",
+  const nativeGatewaysDeploymentId = `smoke-native-gateways-${smokeRunId}`;
+  const nativeGatewaysDeployedAddresses = await runIgnitionDeploy(
+    "ignition-native-gateways",
+    "./ignition/modules/NativeGateways.ts",
+    nativeGatewaysParamsPath,
+    nativeGatewaysDeploymentId,
+    "native-gateways-deployed-addresses.json",
   );
-  const nativeIngressAddress = requiredDeployedAddress(
-    nativeIngressDeployedAddresses,
-    "NativeIngressModule#NativeIngress",
+  const nativeVaultGatewayAddress = requiredDeployedAddress(
+    nativeGatewaysDeployedAddresses,
+    "NativeGatewaysModule#NativeVaultGateway",
+  );
+  const nativeBridgeGatewayImplementation = requiredDeployedAddress(
+    nativeGatewaysDeployedAddresses,
+    "NativeGatewaysModule#NativeBridgeGatewayImplementation",
+  );
+  const nativeBridgeGatewayProxy = requiredDeployedAddress(
+    nativeGatewaysDeployedAddresses,
+    "NativeGatewaysModule#NativeBridgeGatewayProxy",
+  );
+  const nativeBridgeGatewayProxyAdmin = await readProxyAdminAddress(
+    publicClient,
+    nativeBridgeGatewayProxy,
   );
 
-  const nativeIngress = await viem.getContractAt(
-    "NativeToWrappedIngress",
-    nativeIngressAddress,
+  const nativeVaultGateway = await viem.getContractAt(
+    "NativeVaultGateway",
+    nativeVaultGatewayAddress,
+  );
+  const nativeBridgeGateway = await viem.getContractAt(
+    "NativeBridgeGateway",
+    nativeBridgeGatewayProxy,
   );
   recordEq(
     assertions,
-    "nativeIngress.wrappedNativeToken",
-    await nativeIngress.read.wrappedNativeToken(),
+    "nativeVaultGateway.wrappedNativeToken",
+    await nativeVaultGateway.read.wrappedNativeToken(),
     wrappedNativeToken.address,
   );
   recordEq(
     assertions,
-    "nativeIngress.vault",
-    await nativeIngress.read.vault(),
+    "nativeVaultGateway.vault",
+    await nativeVaultGateway.read.vault(),
     vaultProxy,
+  );
+  recordEq(
+    assertions,
+    "nativeBridgeGateway.wrappedNativeToken",
+    await nativeBridgeGateway.read.wrappedNativeToken(),
+    wrappedNativeToken.address,
+  );
+  recordEq(
+    assertions,
+    "nativeBridgeGateway.baseToken",
+    await nativeBridgeGateway.read.baseToken(),
+    baseToken.address,
+  );
+  recordEq(
+    assertions,
+    "nativeBridgeGateway.bridgeHub",
+    await nativeBridgeGateway.read.bridgeHub(),
+    bridgeHub.address,
+  );
+  recordEq(
+    assertions,
+    "nativeBridgeGateway.vault",
+    await nativeBridgeGateway.read.vault(),
+    vaultProxy,
+  );
+  recordEq(
+    assertions,
+    "vault.nativeBridgeGateway",
+    await vault.read.nativeBridgeGateway(),
+    nativeBridgeGatewayProxy,
   );
 
   const wrappedNative = await viem.getContractAt(
@@ -532,11 +581,11 @@ async function main() {
     wrappedNativeToken.address,
   );
   const vaultWethBefore = await wrappedNative.read.balanceOf([vaultProxy]);
-  await nativeIngress.write.ingress({ value: 1n });
+  await nativeVaultGateway.write.depositToVault({ value: 1n });
   const vaultWethAfter = await wrappedNative.read.balanceOf([vaultProxy]);
   recordEq(
     assertions,
-    "nativeIngress.ingressWrapForwardDelta",
+    "nativeVaultGateway.depositWrapForwardDelta",
     vaultWethAfter - vaultWethBefore,
     1n,
   );
@@ -555,7 +604,10 @@ async function main() {
     strategyImplementation,
     strategyProxy,
     strategyProxyAdmin,
-    nativeIngress: nativeIngressAddress,
+    nativeVaultGateway: nativeVaultGatewayAddress,
+    nativeBridgeGatewayImplementation,
+    nativeBridgeGatewayProxy,
+    nativeBridgeGatewayProxyAdmin,
     assertions: assertions.length,
   });
 }

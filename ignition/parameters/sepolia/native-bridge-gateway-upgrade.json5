@@ -1,0 +1,10 @@
+{
+  NativeBridgeGatewayUpgradeModule: {
+    // ProxyAdmin controlling the native bridge gateway proxy
+    proxyAdmin: "0x0000000000000000000000000000000000000000",
+    // Existing native bridge gateway proxy
+    nativeBridgeGatewayProxy: "0x0000000000000000000000000000000000000000",
+    // Optional post-upgrade call data
+    upgradeCallData: "0x",
+  },
+}

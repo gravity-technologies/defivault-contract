@@ -34,6 +34,8 @@ interface IL1TreasuryVault {
     error YieldNotAvailable();
     /// @dev Yield-recipient timelock controller is not configured.
     error YieldRecipientTimelockControllerNotSet();
+    /// @dev Native bridge gateway is not configured.
+    error NativeBridgeGatewayNotSet();
 
     // --------- Roles (RBAC) ---------
     /// @notice Role allowed to configure vault policy and privileged controls.
@@ -67,6 +69,9 @@ interface IL1TreasuryVault {
     /// @notice Wrapped native token used for internal ERC20 accounting of native exposure.
     function wrappedNativeToken() external view returns (address);
 
+    /// @notice Native bridge gateway used for L1 -> L2 native bridge sends and failed-deposit recovery.
+    function nativeBridgeGateway() external view returns (address);
+
     /// @notice Recipient that receives harvested yield and native sweep funds.
     function yieldRecipient() external view returns (address);
 
@@ -91,6 +96,10 @@ interface IL1TreasuryVault {
     /// @notice Updates configured yield recipient via timelock governance.
     /// @param newYieldRecipient New recipient address.
     function setYieldRecipient(address newYieldRecipient) external;
+
+    /// @notice Updates the native bridge gateway used for outbound native bridge sends.
+    /// @param newNativeBridgeGateway New native bridge gateway address.
+    function setNativeBridgeGateway(address newNativeBridgeGateway) external;
 
     // --------- Token support & risk controls ---------
     /// @notice Principal-token enablement configuration.
@@ -230,6 +239,12 @@ interface IL1TreasuryVault {
 
     /// @notice Emitted when forced/native-dust ETH is swept to yield recipient.
     event NativeSweptToYieldRecipient(address indexed yieldRecipient, uint256 amount);
+
+    /// @notice Emitted when the configured native bridge gateway changes.
+    event NativeBridgeGatewayUpdated(
+        address indexed previousNativeBridgeGateway,
+        address indexed newNativeBridgeGateway
+    );
 
     /// @notice Allocates vault idle principal into an approved strategy.
     /// @param principalToken Principal token to allocate.

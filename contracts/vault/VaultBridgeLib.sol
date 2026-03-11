@@ -5,7 +5,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IGRVTBaseTokenMintable} from "../external/IGRVTBaseTokenMintable.sol";
-import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 
@@ -160,8 +159,8 @@ library VaultBridgeLib {
 
     /**
      * @notice Executes the two-bridges L1 -> L2 request against BridgeHub.
-     * @dev Mints base-token bridge cost, configures temporary allowances, unwraps wrapped-native for
-     *      native-intent sends, and clears approvals after submission.
+     * @dev ERC20-only helper used by the vault's direct bridge path. Native-intent sends route through
+     *      `NativeBridgeGateway` so failed deposits can be reclaimed without sending ETH back to the vault.
      * @param request Shared bridge request parameters.
      * @return txHash L2 transaction hash returned by BridgeHub.
      */
@@ -179,21 +178,13 @@ library VaultBridgeLib {
 
         IGRVTBaseTokenMintable(request.baseToken).mint(address(this), baseCost);
 
-        if (request.isNativeIntent) {
-            if (request.token != request.wrappedNativeToken) revert IL1TreasuryVault.InvalidParam();
-        } else if (request.token == request.wrappedNativeToken) {
+        if (request.isNativeIntent || request.token == request.wrappedNativeToken) {
             revert IL1TreasuryVault.InvalidParam();
         }
 
-        bool needsBaseApprove = request.isNativeIntent || request.token != request.baseToken;
-        uint256 nativeValue;
-        address bridgeToken = request.token;
+        bool needsBaseApprove = request.token != request.baseToken;
 
-        if (request.isNativeIntent) {
-            IWrappedNative(request.wrappedNativeToken).withdraw(request.amount);
-            nativeValue = request.amount;
-            bridgeToken = address(0);
-        } else if (request.token == request.baseToken) {
+        if (request.token == request.baseToken) {
             IERC20(request.token).forceApprove(sharedBridge, request.amount + baseCost);
         } else {
             IERC20(request.token).forceApprove(sharedBridge, request.amount);
@@ -202,7 +193,7 @@ library VaultBridgeLib {
             IERC20(request.baseToken).forceApprove(sharedBridge, baseCost);
         }
 
-        txHash = hub.requestL2TransactionTwoBridges{value: nativeValue}(
+        txHash = hub.requestL2TransactionTwoBridges(
             L2TransactionRequestTwoBridgesOuter({
                 chainId: request.l2ChainId,
                 mintValue: baseCost,
@@ -211,14 +202,12 @@ library VaultBridgeLib {
                 l2GasPerPubdataByteLimit: request.l2TxGasPerPubdataByte,
                 refundRecipient: request.l2ExchangeRecipient,
                 secondBridgeAddress: sharedBridge,
-                secondBridgeValue: nativeValue,
-                secondBridgeCalldata: abi.encode(bridgeToken, request.amount, request.l2ExchangeRecipient)
+                secondBridgeValue: 0,
+                secondBridgeCalldata: abi.encode(request.token, request.amount, request.l2ExchangeRecipient)
             })
         );
 
-        if (!request.isNativeIntent) {
-            IERC20(request.token).forceApprove(sharedBridge, 0);
-        }
+        IERC20(request.token).forceApprove(sharedBridge, 0);
         if (needsBaseApprove) {
             IERC20(request.baseToken).forceApprove(sharedBridge, 0);
         }
