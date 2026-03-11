@@ -5,6 +5,7 @@ import { network } from "hardhat";
 import { encodeFunctionData, keccak256, stringToHex } from "viem";
 
 import { expectEventOnce } from "../helpers/events.js";
+import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
   const { viem } = await network.connect();
@@ -142,7 +143,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       18,
     ]);
     const wrappedNative = await viem.deployContract("MockWETH");
-    const vaultImpl = await viem.deployContract("GRVTL1TreasuryVault");
+    const { vaultImplementation: vaultImpl } =
+      await deployVaultImplementation(viem);
     const initData = encodeFunctionData({
       abi: vaultImpl.abi,
       functionName: "initialize",

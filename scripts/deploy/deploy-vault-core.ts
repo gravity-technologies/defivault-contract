@@ -66,7 +66,17 @@ async function main() {
     throw new Error("deployer wallet account is undefined");
   }
 
-  const vaultImplementation = await viem.deployContract("GRVTL1TreasuryVault");
+  const vaultStrategyOpsLib = await viem.deployContract("VaultStrategyOpsLib");
+  const vaultBridgeLib = await viem.deployContract("VaultBridgeLib");
+  const libraries = {
+    VaultStrategyOpsLib: vaultStrategyOpsLib.address,
+    VaultBridgeLib: vaultBridgeLib.address,
+  } as const;
+  const vaultImplementation = await viem.deployContract(
+    "GRVTL1TreasuryVault",
+    [],
+    { libraries },
+  );
   const initializeCalldata = encodeFunctionData({
     abi: vaultImplementation.abi,
     functionName: "initialize",
@@ -112,6 +122,8 @@ async function main() {
 
   const output = {
     network: await publicClient.getChainId(),
+    vaultStrategyOpsLib: vaultStrategyOpsLib.address,
+    vaultBridgeLib: vaultBridgeLib.address,
     vaultImplementation: vaultImplementation.address,
     vaultProxy,
     vaultProxyAdmin: proxyAdmin,

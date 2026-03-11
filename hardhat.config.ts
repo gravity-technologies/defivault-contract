@@ -35,8 +35,6 @@ export default defineConfig({
     default: {
       type: "edr-simulated",
       chainType: "l1",
-      // Local-only convenience: smoke deploys the oversized vault implementation.
-      allowUnlimitedContractSize: true,
     },
     localhost: {
       type: "http",

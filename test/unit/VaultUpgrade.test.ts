@@ -5,6 +5,10 @@ import { network } from "hardhat";
 import { encodeFunctionData } from "viem";
 
 import { proxyAdminAbi, readProxyAdminAddress } from "../helpers/proxyAdmin.js";
+import {
+  deployVaultImplementation,
+  deployVaultV2Implementation,
+} from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault upgrade safety", async function () {
   const { viem } = await network.connect();
@@ -27,7 +31,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       18,
     ]);
     const wrappedNative = await viem.deployContract("MockWETH");
-    const vaultImpl = await viem.deployContract("GRVTL1TreasuryVault");
+    const { vaultImplementation: vaultImpl } =
+      await deployVaultImplementation(viem);
     const initData = encodeFunctionData({
       abi: vaultImpl.abi,
       functionName: "initialize",
@@ -55,7 +60,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
   }
 
   async function deployUninitializedVaultProxy() {
-    const vaultImpl = await viem.deployContract("GRVTL1TreasuryVault");
+    const { vaultImplementation: vaultImpl } =
+      await deployVaultImplementation(viem);
     const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
       vaultImpl.address,
       addr(admin),
@@ -174,7 +180,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
 
   it("enforces admin-only upgrades via ProxyAdmin ownership", async function () {
     const { proxy } = await deployVaultProxy();
-    const v2Impl = await viem.deployContract("GRVTL1TreasuryVaultV2Mock");
+    const { vaultImplementation: v2Impl } =
+      await deployVaultV2Implementation(viem);
 
     const proxyAdmin = await readProxyAdminAddress(publicClient, proxy.address);
     const owner = await publicClient.readContract({
@@ -267,7 +274,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     ]);
     const expectedIdle = await vault.read.idleTokenBalance([token.address]);
 
-    const v2Impl = await viem.deployContract("GRVTL1TreasuryVaultV2Mock");
+    const { vaultImplementation: v2Impl } =
+      await deployVaultV2Implementation(viem);
     const proxyAdmin = await readProxyAdminAddress(publicClient, proxy.address);
 
     await admin.writeContract({

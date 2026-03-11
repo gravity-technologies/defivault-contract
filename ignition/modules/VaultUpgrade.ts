@@ -16,9 +16,19 @@ export default buildModule("VaultUpgradeModule", (m) => {
   const proxyAdmin = m.getParameter("proxyAdmin");
   const vaultProxy = m.getParameter("vaultProxy");
   const upgradeCallData = m.getParameter("upgradeCallData", "0x");
+  const vaultStrategyOpsLib = m.library("VaultStrategyOpsLib", {
+    id: "VaultStrategyOpsLibVNext",
+  });
+  const vaultBridgeLib = m.library("VaultBridgeLib", {
+    id: "VaultBridgeLibVNext",
+  });
 
   const vaultImplementation = m.contract("GRVTL1TreasuryVault", [], {
     id: "VaultImplementationVNext",
+    libraries: {
+      VaultStrategyOpsLib: vaultStrategyOpsLib,
+      VaultBridgeLib: vaultBridgeLib,
+    },
   });
   const proxyAdminContract = m.contractAt("IProxyAdmin", proxyAdmin, {
     id: "ProxyAdmin",
@@ -35,5 +45,5 @@ export default buildModule("VaultUpgradeModule", (m) => {
     id: "VaultAfterUpgrade",
   });
 
-  return { vaultImplementation, vault };
+  return { vaultStrategyOpsLib, vaultBridgeLib, vaultImplementation, vault };
 });
