@@ -6,6 +6,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
+import {IGRVTBaseTokenMintable} from "../external/IGRVTBaseTokenMintable.sol";
+import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {
@@ -100,7 +103,11 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /// @notice Maximum number of strategies that can be simultaneously registered for a single token.
     /// @dev Bounds the gas cost of emergency strategy iteration and prevents unbounded loops.
     uint256 public constant MAX_STRATEGIES_PER_TOKEN = 8;
+    uint256 private constant L2_TX_GAS_LIMIT = 500_000;
+    uint256 private constant L2_TX_GAS_PER_PUBDATA_BYTE = 800;
+
     // ============================================= Storage (Private) ==============================================
+
     /// @dev L1 BridgeHub contract used for outbound L1 → L2 transfers.
     address private _bridgeHub;
 
@@ -688,46 +695,112 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /**
      * @inheritdoc IL1TreasuryVault
-     * @dev Bridge execution logic is introduced in a follow-up commit.
+     * @dev Enforces standard rebalance policy for native path. Blocked when paused.
      */
     function rebalanceNativeToL2(uint256 amount) external payable override nonReentrant whenNotPaused onlyRebalancer {
-        amount;
-        revert InvalidParam();
+        if (msg.value != 0 || amount == 0) revert InvalidParam();
+        _requireBridgeInfraConfigured();
+        PrincipalTokenConfig memory cfg = _principalTokenConfigs[_wrappedNativeToken];
+        if (!cfg.supported) revert TokenNotSupported();
+        if (amount > availableNativeForRebalance()) revert InvalidParam();
+
+        bytes32 txHash = _bridgeToL2TwoBridges(_wrappedNativeToken, amount, true);
+        emit NativeRebalancedToL2(amount, L2_TX_GAS_LIMIT, L2_TX_GAS_PER_PUBDATA_BYTE, _l2ExchangeRecipient, txHash);
+        _afterPrincipalTokenBalanceChange(_wrappedNativeToken);
     }
 
     /**
      * @inheritdoc IL1TreasuryVault
-     * @dev Bridge execution logic is introduced in a follow-up commit.
+     * @dev Enforces standard rebalance policy for ERC20 path. Blocked when paused.
      */
     function rebalanceErc20ToL2(
         address erc20Token,
         uint256 amount
     ) external payable override nonReentrant whenNotPaused onlyRebalancer {
-        erc20Token;
-        amount;
-        revert InvalidParam();
+        if (msg.value != 0 || amount == 0) revert InvalidParam();
+        if (erc20Token == address(0) || erc20Token == _wrappedNativeToken) revert InvalidParam();
+        _requireBridgeInfraConfigured();
+        PrincipalTokenConfig memory cfg = _principalTokenConfigs[erc20Token];
+        if (!cfg.supported) revert TokenNotSupported();
+        if (amount > availableErc20ForRebalance(erc20Token)) revert InvalidParam();
+
+        bytes32 txHash = _bridgeToL2TwoBridges(erc20Token, amount, false);
+        emit Erc20RebalancedToL2(
+            erc20Token,
+            amount,
+            L2_TX_GAS_LIMIT,
+            L2_TX_GAS_PER_PUBDATA_BYTE,
+            _l2ExchangeRecipient,
+            txHash
+        );
+        _afterPrincipalTokenBalanceChange(erc20Token);
     }
 
     /**
      * @inheritdoc IL1TreasuryVault
-     * @dev Bridge execution logic is introduced in a follow-up commit.
+     * @dev Bypass mode: skips pause check and support checks.
+     *
+     *      Auto-unwind: if wrapped-native idle balance is less than `amount`, the function iterates
+     *      `_principalTokenStrategies[_wrappedNativeToken]` and pulls funds from each strategy via best-effort
+     *      `try/catch` deallocate calls until the shortfall is covered or all strategies are
+     *      exhausted. Strategies that revert or return a decreased balance are skipped with an
+     *      `EmergencyStrategySkipped` event. If the balance is still insufficient after the full
+     *      iteration, the call reverts.
      */
     function emergencyNativeToL2(uint256 amount) external payable override nonReentrant onlyRebalancerOrAdmin {
-        amount;
-        revert InvalidParam();
+        if (msg.value != 0 || amount == 0) revert InvalidParam();
+        _requireBridgeInfraConfigured();
+
+        IERC20 asset = IERC20(_wrappedNativeToken);
+        uint256 idle = asset.balanceOf(address(this));
+        if (idle < amount) {
+            _unwindStrategiesForEmergency(asset, _wrappedNativeToken, amount - idle);
+        }
+
+        if (asset.balanceOf(address(this)) < amount) revert InvalidParam();
+
+        bytes32 txHash = _bridgeToL2TwoBridges(_wrappedNativeToken, amount, true);
+        emit NativeEmergencySentToL2(amount, L2_TX_GAS_LIMIT, L2_TX_GAS_PER_PUBDATA_BYTE, _l2ExchangeRecipient, txHash);
+        _afterPrincipalTokenBalanceChange(_wrappedNativeToken);
     }
 
     /**
      * @inheritdoc IL1TreasuryVault
-     * @dev Bridge execution logic is introduced in a follow-up commit.
+     * @dev Bypass mode: skips pause check and support checks.
+     *
+     *      Auto-unwind: if vault idle balance is less than `amount`, the function iterates
+     *      `_principalTokenStrategies[erc20Token]` and pulls funds from each strategy via best-effort
+     *      `try/catch` deallocate calls until the shortfall is covered or all strategies are
+     *      exhausted. Strategies that revert or return a decreased balance are skipped with an
+     *      `EmergencyStrategySkipped` event. If the balance is still insufficient after the full
+     *      iteration, the call reverts.
      */
     function emergencyErc20ToL2(
         address erc20Token,
         uint256 amount
     ) external payable override nonReentrant onlyRebalancerOrAdmin {
-        erc20Token;
-        amount;
-        revert InvalidParam();
+        if (msg.value != 0 || amount == 0) revert InvalidParam();
+        if (erc20Token == address(0) || erc20Token == _wrappedNativeToken) revert InvalidParam();
+        _requireBridgeInfraConfigured();
+
+        IERC20 asset = IERC20(erc20Token);
+        uint256 idle = asset.balanceOf(address(this));
+        if (idle < amount) {
+            _unwindStrategiesForEmergency(asset, erc20Token, amount - idle);
+        }
+
+        if (asset.balanceOf(address(this)) < amount) revert InvalidParam();
+
+        bytes32 txHash = _bridgeToL2TwoBridges(erc20Token, amount, false);
+        emit Erc20EmergencySentToL2(
+            erc20Token,
+            amount,
+            L2_TX_GAS_LIMIT,
+            L2_TX_GAS_PER_PUBDATA_BYTE,
+            _l2ExchangeRecipient,
+            txHash
+        );
+        _afterPrincipalTokenBalanceChange(erc20Token);
     }
     /**
      * @notice Returns the current active strategy list for a token.
@@ -882,11 +955,104 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /**
+     * @notice Builds and submits a two-bridges request to BridgeHub.
+     * @dev Uses fixed gas/pubdata parameters from vault constants and fixed L2 recipient wiring.
+     */
+    function _bridgeToL2TwoBridges(
+        address token,
+        uint256 amount,
+        bool isNativeIntent
+    ) internal returns (bytes32 txHash) {
+        IL1ZkSyncBridgeHub hub = IL1ZkSyncBridgeHub(_bridgeHub);
+        address sharedBridge = hub.sharedBridge();
+        if (sharedBridge == address(0)) revert InvalidParam();
+
+        uint256 baseCost = hub.l2TransactionBaseCost(
+            _l2ChainId,
+            tx.gasprice,
+            L2_TX_GAS_LIMIT,
+            L2_TX_GAS_PER_PUBDATA_BYTE
+        );
+
+        IGRVTBaseTokenMintable(_baseToken).mint(address(this), baseCost);
+
+        if (isNativeIntent) {
+            if (token != _wrappedNativeToken) revert InvalidParam();
+        } else if (token == _wrappedNativeToken) {
+            revert InvalidParam();
+        }
+
+        if (isNativeIntent) {
+            IWrappedNative(_wrappedNativeToken).withdraw(amount);
+            IERC20(_baseToken).forceApprove(sharedBridge, baseCost);
+
+            txHash = hub.requestL2TransactionTwoBridges{value: amount}(
+                L2TransactionRequestTwoBridgesOuter({
+                    chainId: _l2ChainId,
+                    mintValue: baseCost,
+                    l2Value: 0,
+                    l2GasLimit: L2_TX_GAS_LIMIT,
+                    l2GasPerPubdataByteLimit: L2_TX_GAS_PER_PUBDATA_BYTE,
+                    refundRecipient: _l2ExchangeRecipient,
+                    secondBridgeAddress: sharedBridge,
+                    secondBridgeValue: amount,
+                    secondBridgeCalldata: abi.encode(address(0), amount, _l2ExchangeRecipient)
+                })
+            );
+
+            IERC20(_baseToken).forceApprove(sharedBridge, 0);
+            return txHash;
+        }
+
+        if (token == _baseToken) {
+            IERC20(token).forceApprove(sharedBridge, amount + baseCost);
+        } else {
+            IERC20(token).forceApprove(sharedBridge, amount);
+            IERC20(_baseToken).forceApprove(sharedBridge, baseCost);
+        }
+
+        txHash = hub.requestL2TransactionTwoBridges(
+            L2TransactionRequestTwoBridgesOuter({
+                chainId: _l2ChainId,
+                mintValue: baseCost,
+                l2Value: 0,
+                l2GasLimit: L2_TX_GAS_LIMIT,
+                l2GasPerPubdataByteLimit: L2_TX_GAS_PER_PUBDATA_BYTE,
+                refundRecipient: _l2ExchangeRecipient,
+                secondBridgeAddress: sharedBridge,
+                secondBridgeValue: 0,
+                secondBridgeCalldata: abi.encode(token, amount, _l2ExchangeRecipient)
+            })
+        );
+
+        if (token == _baseToken) {
+            IERC20(token).forceApprove(sharedBridge, 0);
+        } else {
+            IERC20(token).forceApprove(sharedBridge, 0);
+            IERC20(_baseToken).forceApprove(sharedBridge, 0);
+        }
+    }
+
+    /**
      * @notice Normalizes principal-token input to vault storage key.
      * @dev Token model is ERC20-only internally; native operations use wrapped-native key.
      */
     function _canonicalToken(address token) internal pure returns (address canonicalToken) {
         return token;
+    }
+
+    /**
+     * @notice Validates that core bridge wiring is configured.
+     */
+    function _requireBridgeInfraConfigured() internal view {
+        if (
+            _bridgeHub == address(0) ||
+            _baseToken == address(0) ||
+            _l2ChainId == 0 ||
+            _l2ExchangeRecipient == address(0)
+        ) {
+            revert InvalidParam();
+        }
     }
 
     /**
@@ -966,6 +1132,96 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      */
     function _canWithdrawPrincipalFromStrategy(address token, address strategy) internal view returns (bool) {
         return _principalStrategyConfigs[token][strategy].whitelisted || _isActivePrincipalStrategy(token, strategy);
+    }
+
+    /**
+     * @notice Iterates active strategies for `token` and deallocates up to `needed` units.
+     * @dev Used by emergency bridge paths to top up idle balance before bridging.
+     *      Iterates `_principalTokenStrategies[token]`, which includes both whitelisted and withdraw-only active entries.
+     *
+     *      For each strategy (bounded by `MAX_STRATEGIES_PER_TOKEN`):
+     *        1. Probes `strategy.principalBearingExposure(token)` via `try/catch`. Skips on failure.
+     *        2. Requests `min(needed, sAssets)` from the strategy via `_tryEmergencyDeallocate`.
+     *        3. Subtracts the measured received amount from `needed`.
+     *        4. Stops early when `needed` reaches 0.
+     *
+     *      Each failed strategy emits `EmergencyStrategySkipped` and is non-fatal. The caller
+     *      is responsible for checking that the final idle balance meets the target.
+     *
+     * @param asset  IERC20 instance (to avoid repeated casting).
+     * @param token  Token address (used for strategy calls and event emission).
+     * @param needed Shortfall to cover; units in token's decimals.
+     */
+    function _unwindStrategiesForEmergency(IERC20 asset, address token, uint256 needed) internal {
+        address[] storage list = _principalTokenStrategies[token];
+        for (uint256 i = 0; i < list.length && needed > 0; ++i) {
+            address strategy = list[i];
+
+            uint256 exposure;
+            try IYieldStrategy(strategy).principalBearingExposure(token) returns (uint256 assets_) {
+                exposure = assets_;
+            } catch {
+                emit EmergencyStrategySkipped(token, strategy);
+                continue;
+            }
+            if (exposure == 0) continue;
+
+            uint256 request = needed < exposure ? needed : exposure;
+            (uint256 got, bool ok) = _tryEmergencyDeallocate(asset, token, strategy, request);
+            if (!ok) {
+                emit EmergencyStrategySkipped(token, strategy);
+                continue;
+            }
+
+            if (got >= needed) {
+                needed = 0;
+            } else {
+                unchecked {
+                    needed -= got;
+                }
+            }
+            emit PrincipalDeallocatedFromStrategy(token, strategy, request, got);
+            _applyPrincipalWriteDown(token, strategy);
+            _afterPrincipalTokenBalanceChange(token);
+        }
+    }
+
+    /**
+     * @notice Best-effort single-strategy deallocation for emergency unwinds.
+     * @dev Calls `strategy.deallocate(token, request)` inside a `try/catch`.
+     *      Returns `(0, false)` on any of:
+     *        - `deallocate` reverts.
+     *        - The vault's token balance decreases after the call (should be impossible for
+     *          a correct strategy, but guards against malicious implementations).
+     *
+     *      On success, the measured balance delta is used as `got`, not the strategy-reported
+     *      return value. A mismatch triggers `StrategyReportedReceivedMismatch`.
+     *
+     * @param asset    IERC20 instance for balance checks.
+     * @param token    Token address passed to `deallocate`.
+     * @param strategy Strategy to call.
+     * @param request  Amount to request from the strategy.
+     * @return got     Actual token amount received by the vault (balance delta).
+     * @return ok      True if the call succeeded and the balance did not decrease.
+     */
+    function _tryEmergencyDeallocate(
+        IERC20 asset,
+        address token,
+        address strategy,
+        uint256 request
+    ) internal returns (uint256 got, bool ok) {
+        uint256 beforeBal = asset.balanceOf(address(this));
+        uint256 reported;
+        try IYieldStrategy(strategy).deallocate(token, request) returns (uint256 received_) {
+            reported = received_;
+        } catch {
+            return (0, false);
+        }
+        uint256 afterBal = asset.balanceOf(address(this));
+        if (afterBal < beforeBal) return (0, false);
+        got = afterBal - beforeBal;
+        if (reported != got) emit StrategyReportedReceivedMismatch(token, strategy, request, reported, got);
+        return (got, true);
     }
 
     /**
