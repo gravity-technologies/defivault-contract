@@ -29,7 +29,7 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *        └── VAULT_ADMIN_ROLE  – governs config, token support, strategy whitelist
  *              ├── REBALANCER_ROLE  – executes L1 → L2 bridge top-ups
  *              ├── ALLOCATOR_ROLE   – allocates/deallocates to yield strategies
- *              └── PAUSER_ROLE      – triggers pause/unpause
+ *              └── PAUSER_ROLE      – triggers pause only
  *
  *      ### Three operational flows
  *      1. **Idle custody** – ERC20 tokens sit in the vault (via `token.balanceOf(address(this))`).
@@ -44,7 +44,8 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *         deposit sender so failed native deposits can be reclaimed without sending ETH back to the vault.
  *
  *      ### Pause semantics
- *      Pausing (via PAUSER_ROLE or VAULT_ADMIN_ROLE) blocks *risk-taking* actions:
+ *      Pausing (via PAUSER_ROLE or VAULT_ADMIN_ROLE) blocks allocations, harvests,
+ *      and normal L1 -> L2 rebalances:
  *        - `allocateVaultTokenToStrategy`
  *        - `rebalanceNativeToL2`
  *        - `rebalanceErc20ToL2`
@@ -414,7 +415,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
-    function unpause() external override onlyPauserOrAdmin {
+    function unpause() external override onlyVaultAdmin {
         if (!_paused) revert InvalidParam();
         _paused = false;
         emit VaultUnpaused(msg.sender);
