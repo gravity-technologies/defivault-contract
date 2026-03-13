@@ -3,7 +3,7 @@
     // Existing deployed vault proxy
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Configured vault yield-recipient timelock
-    yieldRecipientTimelock: "0x0000000000000000000000000000000000000000",
+    yieldRecipientTimelockController: "0x0000000000000000000000000000000000000000",
     // Must match the scheduled operation parameters
     newYieldRecipient: "0x0000000000000000000000000000000000000000",
     predecessor: "0x0000000000000000000000000000000000000000000000000000000000000000",

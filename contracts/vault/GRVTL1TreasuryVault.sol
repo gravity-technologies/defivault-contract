@@ -7,7 +7,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IL1ZkSyncBridgeHub} from "../external/IL1ZkSyncBridgeHub.sol";
-import {IGRVTBaseTokenMintable} from "../external/IGRVTBaseTokenMintable.sol";
+import {IGRVTBridgeProxyFeeToken} from "../external/IGRVTBridgeProxyFeeToken.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
@@ -110,8 +110,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /// @dev L1 BridgeHub contract used for outbound L1 → L2 transfers.
     address private _bridgeHub;
 
-    /// @dev Mintable base token used for BridgeHub `mintValue` funding.
-    address private _baseToken;
+    /// @dev GRVT bridge-proxy fee token used for BridgeHub `mintValue` funding.
+    address private _grvtBridgeProxyFeeToken;
 
     /// @dev Target L2 chain id passed into BridgeHub requests.
     uint256 private _l2ChainId;
@@ -244,7 +244,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      *      because it depends on the deployed vault proxy address.
      * @param admin                Initial governance admin account.
      * @param bridgeHub_           Initial BridgeHub address. Must be non-zero.
-     * @param baseToken_           Initial mintable base token address. Must be non-zero.
+     * @param grvtBridgeProxyFeeToken_ Initial GRVT bridge-proxy fee token address. Must be non-zero.
      * @param l2ChainId_           Target L2 chain id. Must be non-zero.
      * @param l2ExchangeRecipient_ Initial L2 exchange recipient address. Must be non-zero.
      * @param wrappedNativeToken_  Canonical wrapped native token address. Must be non-zero.
@@ -253,7 +253,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     function initialize(
         address admin,
         address bridgeHub_,
-        address baseToken_,
+        address grvtBridgeProxyFeeToken_,
         uint256 l2ChainId_,
         address l2ExchangeRecipient_,
         address wrappedNativeToken_,
@@ -262,7 +262,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (
             admin == address(0) ||
             bridgeHub_ == address(0) ||
-            baseToken_ == address(0) ||
+            grvtBridgeProxyFeeToken_ == address(0) ||
             l2ChainId_ == 0 ||
             l2ExchangeRecipient_ == address(0) ||
             wrappedNativeToken_ == address(0) ||
@@ -285,7 +285,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         _grantRole(PAUSER_ROLE, admin);
 
         _bridgeHub = bridgeHub_;
-        _baseToken = baseToken_;
+        _grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
         _l2ChainId = l2ChainId_;
         _l2ExchangeRecipient = l2ExchangeRecipient_;
         _wrappedNativeToken = wrappedNativeToken_;
@@ -350,8 +350,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
-    function baseToken() external view override returns (address) {
-        return _baseToken;
+    function grvtBridgeProxyFeeToken() external view override returns (address) {
+        return _grvtBridgeProxyFeeToken;
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -1187,7 +1187,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     function _dispatchBridgeOutToL2(address token, uint256 amount, bool isNativeIntent, bool emergency) internal {
         VaultBridgeLib.BridgeRequest memory request = VaultBridgeLib.BridgeRequest({
             bridgeHub: _bridgeHub,
-            baseToken: _baseToken,
+            grvtBridgeProxyFeeToken: _grvtBridgeProxyFeeToken,
             l2ChainId: _l2ChainId,
             l2ExchangeRecipient: _l2ExchangeRecipient,
             wrappedNativeToken: _wrappedNativeToken,
@@ -1224,7 +1224,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /**
      * @notice Bridges wrapped-native to L2 through the configured native bridge gateway.
-     * @dev The vault mints base token to itself, transfers wrapped-native and base token into the gateway,
+     * @dev The vault mints the fee token to itself, transfers wrapped-native and fee token into the gateway,
      *      and lets the gateway become the zkSync deposit sender so failed native deposits can be reclaimed
      *      without sending ETH directly back to the vault.
      * @param amount Wrapped-native amount to bridge as native ETH.
@@ -1241,9 +1241,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             L2_TX_GAS_PER_PUBDATA_BYTE
         );
 
-        IGRVTBaseTokenMintable(_baseToken).mint(address(this), baseCost);
+        IGRVTBridgeProxyFeeToken(_grvtBridgeProxyFeeToken).mint(address(this), baseCost);
         IERC20(_wrappedNativeToken).safeTransfer(gateway, amount);
-        IERC20(_baseToken).safeTransfer(gateway, baseCost);
+        IERC20(_grvtBridgeProxyFeeToken).safeTransfer(gateway, baseCost);
 
         txHash = INativeBridgeGateway(gateway).bridgeNativeToL2(
             _l2ChainId,

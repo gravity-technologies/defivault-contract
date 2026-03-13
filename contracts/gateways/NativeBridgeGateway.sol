@@ -19,7 +19,7 @@ import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
  *        wraps it back into wrapped-native, and returns normalized funds to the vault.
  *
  *      Flow:
- *      - The vault transfers wrapped-native and base token into this gateway before `bridgeNativeToL2`.
+ *      - The vault transfers wrapped-native and the fee token into this gateway before `bridgeNativeToL2`.
  *      - If a native deposit later fails on zkSync, BridgeHub recovery is claimed externally back to this gateway.
  *      - `recoverClaimedNativeDeposit` then wraps the already-claimed ETH and returns the normalized funds to the vault.
  *
@@ -48,8 +48,8 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     /// @notice Canonical wrapped-native token bridged through this gateway.
     address public wrappedNativeToken;
 
-    /// @notice Base token used for BridgeHub `mintValue`.
-    address public baseToken;
+    /// @notice GRVT bridge-proxy fee token used for BridgeHub `mintValue`.
+    address public grvtBridgeProxyFeeToken;
 
     /// @notice zkSync BridgeHub used for native bridge submissions.
     address public bridgeHub;
@@ -81,31 +81,31 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     /**
      * @notice Initializes the upgradeable native bridge gateway.
      * @param wrappedNativeToken_ Wrapped-native token contract address.
-     * @param baseToken_ Base token contract address.
+     * @param grvtBridgeProxyFeeToken_ GRVT bridge-proxy fee token contract address.
      * @param bridgeHub_ BridgeHub contract address.
      * @param vault_ Vault address authorized to start native bridge sends.
      */
     function initialize(
         address wrappedNativeToken_,
-        address baseToken_,
+        address grvtBridgeProxyFeeToken_,
         address bridgeHub_,
         address vault_
     ) external initializer {
         if (
             wrappedNativeToken_ == address(0) ||
-            baseToken_ == address(0) ||
+            grvtBridgeProxyFeeToken_ == address(0) ||
             bridgeHub_ == address(0) ||
             vault_ == address(0)
         ) revert InvalidParam();
         if (
             wrappedNativeToken_.code.length == 0 ||
-            baseToken_.code.length == 0 ||
+            grvtBridgeProxyFeeToken_.code.length == 0 ||
             bridgeHub_.code.length == 0 ||
             vault_.code.length == 0
         ) revert InvalidParam();
 
         wrappedNativeToken = wrappedNativeToken_;
-        baseToken = baseToken_;
+        grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
         bridgeHub = bridgeHub_;
         vault = vault_;
     }
@@ -137,7 +137,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
         if (sharedBridge == address(0)) revert InvalidParam();
 
         IWrappedNative(wrappedNativeToken).withdraw(amount);
-        IERC20(baseToken).forceApprove(sharedBridge, baseCost);
+        IERC20(grvtBridgeProxyFeeToken).forceApprove(sharedBridge, baseCost);
 
         txHash = hub.requestL2TransactionTwoBridges{value: amount}(
             L2TransactionRequestTwoBridgesOuter({
@@ -153,7 +153,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
             })
         );
 
-        IERC20(baseToken).forceApprove(sharedBridge, 0);
+        IERC20(grvtBridgeProxyFeeToken).forceApprove(sharedBridge, 0);
 
         NativeBridgeRecord storage record = nativeBridgeRecords[txHash];
         if (record.amount != 0) revert InvalidParam();

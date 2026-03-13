@@ -1,0 +1,14 @@
+{
+  VaultHarvestYieldModule: {
+    // Production vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token key for the harvest.
+    token: "0x0000000000000000000000000000000000000000",
+    // Existing whitelisted or withdraw-only strategy proxy.
+    strategy: "0x0000000000000000000000000000000000000000",
+    // Fill per approved production runbook.
+    amount: "0n",
+    // Keep non-zero for any live operation unless governance accepts the risk explicitly.
+    minReceived: "0n",
+  },
+}

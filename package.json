@@ -27,7 +27,8 @@
     "deploy:yield-recipient-timelock": "hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts",
     "yield-recipient:schedule-update": "hardhat ignition deploy ./ignition/modules/YieldRecipientScheduleUpdate.ts",
     "yield-recipient:execute-update": "hardhat ignition deploy ./ignition/modules/YieldRecipientExecuteUpdate.ts",
-    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts"
+    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts",
+    "wallets:generate": "node ./scripts/generate-wallets.mjs"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,12 @@
+{
+  YieldRecipientExecuteUpdateModule: {
+    // Existing production vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Configured production yield-recipient timelock controller.
+    yieldRecipientTimelockController: "0x0000000000000000000000000000000000000000",
+    // Must match the scheduled operation exactly.
+    newYieldRecipient: "0x0000000000000000000000000000000000000000",
+    predecessor: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
+  },
+}

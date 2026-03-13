@@ -11,7 +11,7 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
   const [admin, yieldRecipient] = await viem.getWalletClients();
 
   async function deployVault() {
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
       18,
@@ -22,7 +22,7 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
       18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
     ]);
     const { vaultImplementation: implementation } =
       await deployVaultImplementation(viem);
@@ -32,7 +32,7 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
       args: [
         admin.account.address,
         bridgeHub.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         admin.account.address,
         wrappedNative.address,

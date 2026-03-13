@@ -22,7 +22,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
 
   async function setupVaultForToken(tokenAddress: `0x${string}`) {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -36,7 +36,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       args: [
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2Recipient),
         wrappedNative.address,
@@ -80,7 +80,13 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       },
     );
 
-    return { vault, bridge, baseToken, vaultAsAllocator, vaultAsRebalancer };
+    return {
+      vault,
+      bridge,
+      grvtBridgeProxyFeeToken,
+      vaultAsAllocator,
+      vaultAsRebalancer,
+    };
   }
 
   function componentTotal(

@@ -25,7 +25,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
 
   async function deployVaultProxy() {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -39,7 +39,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       args: [
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2Recipient),
         wrappedNative.address,
@@ -56,7 +56,14 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       "GRVTL1TreasuryVault",
       proxy.address,
     );
-    return { bridge, baseToken, wrappedNative, vaultImpl, proxy, vault };
+    return {
+      bridge,
+      grvtBridgeProxyFeeToken,
+      wrappedNative,
+      vaultImpl,
+      proxy,
+      vault,
+    };
   }
 
   async function deployUninitializedVaultProxy() {
@@ -75,14 +82,14 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
   }
 
   it("rejects initialize() when called a second time", async function () {
-    const { bridge, baseToken, wrappedNative, vault } =
+    const { bridge, grvtBridgeProxyFeeToken, wrappedNative, vault } =
       await deployVaultProxy();
 
     await viem.assertions.revertWithCustomError(
       vault.write.initialize([
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2Recipient),
         wrappedNative.address,
@@ -95,7 +102,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
 
   it("reverts initialize() when any required parameter is invalid", async function () {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -125,7 +132,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     await expectInvalidInitialize([
       zeroAddress,
       bridge.address,
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
       270n,
       addr(l2Recipient),
       wrappedNative.address,
@@ -134,7 +141,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     await expectInvalidInitialize([
       addr(admin),
       zeroAddress,
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
       270n,
       addr(l2Recipient),
       wrappedNative.address,
@@ -152,7 +159,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     await expectInvalidInitialize([
       addr(admin),
       bridge.address,
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
       0n,
       addr(l2Recipient),
       wrappedNative.address,
@@ -161,7 +168,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     await expectInvalidInitialize([
       addr(admin),
       bridge.address,
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
       270n,
       zeroAddress,
       wrappedNative.address,
@@ -170,7 +177,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     await expectInvalidInitialize([
       addr(admin),
       bridge.address,
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
       270n,
       addr(l2Recipient),
       zeroAddress,
@@ -261,7 +268,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     await vault.write.pause();
 
     const expectedBridgeHub = await vault.read.bridgeHub();
-    const expectedBaseToken = await vault.read.baseToken();
+    const expectedBridgeProxyFeeToken =
+      await vault.read.grvtBridgeProxyFeeToken();
     const expectedL2ChainId = await vault.read.l2ChainId();
     const expectedRecipient = await vault.read.l2ExchangeRecipient();
     const expectedPaused = await vault.read.paused();
@@ -295,8 +303,10 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       (expectedBridgeHub as `0x${string}`).toLowerCase(),
     );
     assert.equal(
-      ((await vaultV2.read.baseToken()) as `0x${string}`).toLowerCase(),
-      (expectedBaseToken as `0x${string}`).toLowerCase(),
+      (
+        (await vaultV2.read.grvtBridgeProxyFeeToken()) as `0x${string}`
+      ).toLowerCase(),
+      (expectedBridgeProxyFeeToken as `0x${string}`).toLowerCase(),
     );
     assert.equal(await vaultV2.read.l2ChainId(), expectedL2ChainId);
     assert.equal(

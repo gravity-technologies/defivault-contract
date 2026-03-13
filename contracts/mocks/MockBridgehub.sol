@@ -16,7 +16,7 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
         bool claimed;
     }
 
-    address public immutable baseToken;
+    address public immutable grvtBridgeProxyFeeToken;
     uint256 public requestCount;
     address public lastToken;
     uint256 public lastAmount;
@@ -31,8 +31,8 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
 
     address private immutable _sharedBridge;
 
-    constructor(address baseToken_) {
-        baseToken = baseToken_;
+    constructor(address grvtBridgeProxyFeeToken_) {
+        grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
         _sharedBridge = address(this);
     }
 
@@ -65,7 +65,7 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
             require(msg.value == 0, "BAD_ERC20_MSG_VALUE");
         }
         if (request.mintValue != 0) {
-            IERC20(baseToken).transferFrom(msg.sender, address(this), request.mintValue);
+            IERC20(grvtBridgeProxyFeeToken).transferFrom(msg.sender, address(this), request.mintValue);
         }
 
         unchecked {

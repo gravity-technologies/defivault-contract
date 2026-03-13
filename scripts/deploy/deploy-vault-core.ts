@@ -14,7 +14,7 @@ import {
 type VaultCoreParams = {
   deployAdmin: Address;
   bridgeHub: Address;
-  baseToken: Address;
+  grvtBridgeProxyFeeToken: Address;
   l2ChainId: bigint;
   l2ExchangeRecipient: Address;
   wrappedNativeToken: Address;
@@ -39,7 +39,10 @@ function readVaultCoreParameters(filePath: string): VaultCoreParams {
   return {
     deployAdmin: parseAddress(params.deployAdmin, "deployAdmin"),
     bridgeHub: parseAddress(params.bridgeHub, "bridgeHub"),
-    baseToken: parseAddress(params.baseToken, "baseToken"),
+    grvtBridgeProxyFeeToken: parseAddress(
+      params.grvtBridgeProxyFeeToken,
+      "grvtBridgeProxyFeeToken",
+    ),
     l2ChainId: parsePositiveBigint(params.l2ChainId, "l2ChainId"),
     l2ExchangeRecipient: parseAddress(
       params.l2ExchangeRecipient,
@@ -83,7 +86,7 @@ async function main() {
     args: [
       params.deployAdmin,
       params.bridgeHub,
-      params.baseToken,
+      params.grvtBridgeProxyFeeToken,
       params.l2ChainId,
       params.l2ExchangeRecipient,
       params.wrappedNativeToken,

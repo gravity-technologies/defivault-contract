@@ -12,7 +12,7 @@ import { transparentUpgradeableProxyArtifact } from "./shared/transparentProxyAr
  * Parameters (VaultCoreModule.*):
  * - deployAdmin: admin for vault initialize + proxy admin.
  * - bridgeHub: L1 zkSync BridgeHub address.
- * - baseToken: GRVT base token (mintable) address.
+ * - grvtBridgeProxyFeeToken: GRVT bridge-proxy fee token address used for `mintValue`.
  * - l2ChainId: target L2 chain id.
  * - l2ExchangeRecipient: fixed L2 recipient for top-ups.
  * - wrappedNativeToken: canonical wrapped-native token address (for native intent canonicalization).
@@ -21,7 +21,7 @@ import { transparentUpgradeableProxyArtifact } from "./shared/transparentProxyAr
 export default buildModule("VaultCoreModule", (m) => {
   const deployAdmin = m.getParameter("deployAdmin");
   const bridgeHub = m.getParameter("bridgeHub");
-  const baseToken = m.getParameter("baseToken");
+  const grvtBridgeProxyFeeToken = m.getParameter("grvtBridgeProxyFeeToken");
   const l2ChainId = m.getParameter("l2ChainId");
   const l2ExchangeRecipient = m.getParameter("l2ExchangeRecipient");
   const wrappedNativeToken = m.getParameter("wrappedNativeToken");
@@ -47,7 +47,7 @@ export default buildModule("VaultCoreModule", (m) => {
     [
       deployAdmin,
       bridgeHub,
-      baseToken,
+      grvtBridgeProxyFeeToken,
       l2ChainId,
       l2ExchangeRecipient,
       wrappedNativeToken,

@@ -8,7 +8,7 @@ pragma solidity 0.8.34;
  * @param l2Value Native value forwarded to the L2 call.
  * @param l2GasLimit Gas limit for L2 execution.
  * @param l2GasPerPubdataByteLimit Pubdata gas parameter for L2 transaction pricing.
- * @param refundRecipient Recipient for any refunded base token.
+ * @param refundRecipient Recipient for any refunded fee token.
  * @param secondBridgeAddress Secondary bridge address (shared bridge on L1).
  * @param secondBridgeValue Native value sent to secondary bridge call.
  * @param secondBridgeCalldata Encoded deposit calldata for secondary bridge.
@@ -30,9 +30,9 @@ struct L2TransactionRequestTwoBridgesOuter {
 /**
  * @title IL1ZkSyncBridgeHub
  * @notice Minimal Bridgehub interface consumed by the vault for controlled L1->L2 rebalancing.
- * @dev The vault computes `mintValue` via `l2TransactionBaseCost`, mints GRVT base token,
+ * @dev The vault computes `mintValue` via `l2TransactionBaseCost`, mints the GRVT bridge-proxy fee token,
  * and then submits `requestL2TransactionTwoBridges`. This preserves GRVT's private-chain
- * deposit control model where bridging depends on GRVT-controlled base token availability.
+ * deposit control model where bridging depends on GRVT-controlled fee-token availability.
  * Reference:
  * https://github.com/matter-labs/era-contracts/blob/main/l1-contracts/contracts/bridgehub/IBridgehub.sol
  */

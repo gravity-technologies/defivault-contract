@@ -12,14 +12,14 @@ import { transparentUpgradeableProxyArtifact } from "./shared/transparentProxyAr
  *
  * Parameters (NativeGatewaysModule.*):
  * - wrappedNativeToken: canonical wrapped-native token address (e.g. WETH).
- * - baseToken: GRVT base token address used for `mintValue`.
+ * - grvtBridgeProxyFeeToken: GRVT bridge-proxy fee token address used for `mintValue`.
  * - bridgeHub: L1 zkSync BridgeHub address.
  * - vaultProxy: existing GRVTL1TreasuryVault proxy address.
  * - proxyAdminOwner: owner of the native bridge gateway proxy's ProxyAdmin.
  */
 export default buildModule("NativeGatewaysModule", (m) => {
   const wrappedNativeToken = m.getParameter("wrappedNativeToken");
-  const baseToken = m.getParameter("baseToken");
+  const grvtBridgeProxyFeeToken = m.getParameter("grvtBridgeProxyFeeToken");
   const bridgeHub = m.getParameter("bridgeHub");
   const vaultProxy = m.getParameter("vaultProxy");
   const proxyAdminOwner = m.getParameter("proxyAdminOwner");
@@ -40,7 +40,7 @@ export default buildModule("NativeGatewaysModule", (m) => {
   const initializeCalldata = m.encodeFunctionCall(
     nativeBridgeGatewayImplementation,
     "initialize",
-    [wrappedNativeToken, baseToken, bridgeHub, vaultProxy],
+    [wrappedNativeToken, grvtBridgeProxyFeeToken, bridgeHub, vaultProxy],
     { id: "NativeBridgeGatewayInitializeCalldata" },
   );
   const nativeBridgeGatewayProxy = m.contract(

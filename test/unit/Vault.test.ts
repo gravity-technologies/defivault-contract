@@ -26,7 +26,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
 
   async function deployBase() {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -40,7 +40,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       args: [
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2Recipient),
         wrappedNative.address,
@@ -124,7 +124,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
 
     return {
       bridge,
-      baseToken,
+      grvtBridgeProxyFeeToken,
       vault,
       token,
       stratA,
@@ -678,15 +678,17 @@ describe("GRVTL1TreasuryVault core flows", async function () {
   });
 
   it("keeps bridge config initialized and non-zero", async function () {
-    const { vault, bridge, baseToken } = await deployBase();
+    const { vault, bridge, grvtBridgeProxyFeeToken } = await deployBase();
 
     assert.equal(
       ((await vault.read.bridgeHub()) as `0x${string}`).toLowerCase(),
       bridge.address.toLowerCase(),
     );
     assert.equal(
-      ((await vault.read.baseToken()) as `0x${string}`).toLowerCase(),
-      baseToken.address.toLowerCase(),
+      (
+        (await vault.read.grvtBridgeProxyFeeToken()) as `0x${string}`
+      ).toLowerCase(),
+      grvtBridgeProxyFeeToken.address.toLowerCase(),
     );
     assert.equal(await vault.read.l2ChainId(), 270n);
   });

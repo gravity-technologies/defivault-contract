@@ -137,7 +137,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
   async function deployBase() {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -151,7 +151,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       args: [
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2Recipient),
         wrappedNative.address,
@@ -235,7 +235,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     return {
       bridge,
-      baseToken,
+      grvtBridgeProxyFeeToken,
       wrappedNative,
       vault,
       token,
@@ -811,7 +811,11 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
   });
 
   it("keeps declared TVL tokens tracked after harvest payout until the strategy pair is removed", async function () {
-    const { vault, vaultAsAdmin, token: baseToken } = await deployBase();
+    const {
+      vault,
+      vaultAsAdmin,
+      token: grvtBridgeProxyFeeToken,
+    } = await deployBase();
 
     const token = await viem.deployContract("MockERC20", [
       "HarvestToken",
@@ -873,7 +877,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(await vault.read.isTrackedTvlToken([token.address]), false);
 
     // Sanity check base fixture token stays unaffected.
-    assert.equal(await vault.read.isTrackedTvlToken([baseToken.address]), true);
+    assert.equal(
+      await vault.read.isTrackedTvlToken([grvtBridgeProxyFeeToken.address]),
+      true,
+    );
   });
 
   it("updates treasury via configured timelock, not direct admin", async function () {

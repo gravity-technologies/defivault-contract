@@ -1,0 +1,16 @@
+{
+  NativeBridgeGatewayClaimFailedDepositModule: {
+    // zkSync shared bridge for production.
+    sharedBridge: "0x0000000000000000000000000000000000000000",
+    // Existing production NativeBridgeGateway proxy.
+    nativeBridgeGatewayProxy: "0x0000000000000000000000000000000000000000",
+    // Fill only when recovering a proven failed deposit.
+    chainId: 0,
+    amount: 0,
+    bridgeTxHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    l2BatchNumber: 0,
+    l2MessageIndex: 0,
+    l2TxNumberInBatch: 0,
+    merkleProof: [],
+  },
+}

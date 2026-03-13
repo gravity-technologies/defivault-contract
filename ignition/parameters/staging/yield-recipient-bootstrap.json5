@@ -1,0 +1,11 @@
+{
+  VaultYieldRecipientTimelockModule: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // One day default for staging governance exercises.
+    minDelay: "86400n",
+    proposers: ["0x0000000000000000000000000000000000000000"],
+    executors: ["0x0000000000000000000000000000000000000000"],
+    admin: "0x0000000000000000000000000000000000000000",
+  },
+}
