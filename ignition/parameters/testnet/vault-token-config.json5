@@ -3,7 +3,7 @@
     // Existing deployed vault proxy
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Vault token to configure
-    vaultToken: "0x0000000000000000000000000000000000000000",
+    vaultToken: "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
     // Support flag passed to setVaultTokenConfig(token, { supported })
     supported: true,
   },

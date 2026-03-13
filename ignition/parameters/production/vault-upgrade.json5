@@ -1,9 +1,9 @@
 {
-  VaultUpgradeModule: {
-    // ProxyAdmin controlling the production vault proxy.
-    proxyAdmin: "0x0000000000000000000000000000000000000000",
+  VaultUpgradeTask: {
     // Existing production vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Production uses a multisig to submit the proxy admin upgrade.
+    requiresMultisig: true,
     // Optional post-upgrade initializer call data.
     upgradeCallData: "0x",
   },
