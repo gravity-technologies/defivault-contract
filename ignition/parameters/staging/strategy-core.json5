@@ -3,11 +3,11 @@
     // Existing staging vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Owner of the strategy proxy's ProxyAdmin.
-    proxyAdminOwner: "0x0000000000000000000000000000000000000000",
+    proxyAdminOwner: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
     // Aave V3 Sepolia USDT reserve.
-    aavePool: "0x0000000000000000000000000000000000000000",
-    underlyingToken: "0x0000000000000000000000000000000000000000",
-    aToken: "0x0000000000000000000000000000000000000000",
+    aavePool: "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951",
+    underlyingToken: "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
+    aToken: "0xAF0F6e8b0Dc5c913bbF4d14c22B4E78Dd14310B6",
     strategyName: "AAVE_V3_SEPOLIA_USDT",
   },
 }

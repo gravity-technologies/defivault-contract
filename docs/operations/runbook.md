@@ -47,26 +47,32 @@ Common env vars:
 - `TESTNET_RPC_URL`
 - `TESTNET_PRIVATE_KEY`
 
+Shared parameter rule for vault core and native gateways:
+
+- Use `ignition/parameters/<env>/core.json5` as the canonical file for both modules.
+- Put repeated infra addresses in `$global`.
+- Keep module-only values under `VaultCoreModule` and `NativeGatewaysModule`.
+
 ## Deployment Workflow
 
 ### 1. Deploy Vault Core
 
-Prepare `ignition/parameters/<env>/vault-core.json5` with:
+Prepare `ignition/parameters/<env>/core.json5` with:
 
-- `deployAdmin`
-- `bridgeHub`
-- `grvtBridgeProxyFeeToken`
-- `l2ChainId`
-- `l2ExchangeRecipient`
-- `wrappedNativeToken`
-- `yieldRecipient`
+- `$global.bridgeHub`
+- `$global.grvtBridgeProxyFeeToken`
+- `$global.wrappedNativeToken`
+- `VaultCoreModule.deployAdmin`
+- `VaultCoreModule.l2ChainId`
+- `VaultCoreModule.l2ExchangeRecipient`
+- `VaultCoreModule.yieldRecipient`
 
 Command:
 
 ```bash
 npm run deploy:vault -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/vault-core.json5
+  --parameters ignition/parameters/<env>/core.json5
 ```
 
 Record:
@@ -177,20 +183,20 @@ Operator rules:
 
 ### 7. Deploy Native Gateways
 
-Prepare `ignition/parameters/<env>/native-gateways.json5` with:
+Use the same `ignition/parameters/<env>/core.json5` file and fill:
 
-- `vaultProxy`
-- `proxyAdminOwner`
-- `wrappedNativeToken`
-- `grvtBridgeProxyFeeToken`
-- `bridgeHub`
+- `$global.bridgeHub`
+- `$global.grvtBridgeProxyFeeToken`
+- `$global.wrappedNativeToken`
+- `NativeGatewaysModule.vaultProxy`
+- `NativeGatewaysModule.proxyAdminOwner`
 
 Command:
 
 ```bash
 npm run deploy:native-gateways -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/native-gateways.json5
+  --parameters ignition/parameters/<env>/core.json5
 ```
 
 Record:
