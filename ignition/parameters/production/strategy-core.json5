@@ -5,9 +5,9 @@
     // Owner of the strategy proxy's ProxyAdmin; use production governance.
     proxyAdminOwner: "0x0000000000000000000000000000000000000000",
     // Aave V3 Ethereum USDT reserve.
-    aavePool: "0x0000000000000000000000000000000000000000",
-    underlyingToken: "0x0000000000000000000000000000000000000000",
-    aToken: "0x0000000000000000000000000000000000000000",
+    aavePool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+    underlyingToken: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    aToken: "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
     strategyName: "AAVE_V3_ETHEREUM_USDT",
   },
 }

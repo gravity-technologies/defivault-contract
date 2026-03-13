@@ -3,8 +3,8 @@
     // Existing deployed vault proxy
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Initial role holders
-    allocator: "0x0000000000000000000000000000000000000000",
-    rebalancer: "0x0000000000000000000000000000000000000000",
-    pauser: "0x0000000000000000000000000000000000000000",
+    allocator: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+    rebalancer: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+    pauser: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
   },
 }
