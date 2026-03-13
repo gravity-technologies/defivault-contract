@@ -1,0 +1,26 @@
+{
+  $global: {
+    // L1 BridgeHub for production.
+    bridgeHub: "0x303a465B659cBB0ab36eE643eA362c509EEb5213",
+    // GRVT bridge-proxy fee token on production.
+    grvtBridgeProxyFeeToken: "0xAB3B124052F0389D1cbED221d912026Ac995bb95",
+    // Canonical wrapped-native token on production.
+    wrappedNativeToken: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  },
+  VaultCoreModule: {
+    // VAULT_ADMIN_ROLE holder and vault proxy admin owner; use governance or multisig.
+    deployAdmin: "0x0000000000000000000000000000000000000000",
+    // Fill with the real production L2 chain id; zero is an intentional placeholder.
+    l2ChainId: "325n",
+    // Fixed L2 recipient for production rebalance flows. Set separately from governance and treasury.
+    l2ExchangeRecipient: "0x85dee82d32d78eaa59588b6574df420ef2a74098",
+    // Must be non-zero and must not equal deployAdmin.
+    yieldRecipient: "0x0000000000000000000000000000000000000000",
+  },
+  NativeGatewaysModule: {
+    // Existing production vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // This should be a production proxy-admin multisig.
+    proxyAdminOwner: "0x0000000000000000000000000000000000000000",
+  },
+}
