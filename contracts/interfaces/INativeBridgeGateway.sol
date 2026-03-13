@@ -7,7 +7,7 @@ pragma solidity 0.8.34;
  */
 interface INativeBridgeGateway {
     /**
-     * @notice Bridges native ETH from L1 to L2 using wrapped-native and base token already held by the gateway.
+     * @notice Bridges native ETH from L1 to L2 using wrapped-native and the fee token already held by the gateway.
      * @param chainId Target L2 chain id.
      * @param l2GasLimit L2 gas limit for the request.
      * @param l2GasPerPubdataByteLimit L2 pubdata gas limit setting.

@@ -59,11 +59,11 @@ export default defineConfig({
       // Test-only convenience: vault mock suites deploy oversized contracts.
       allowUnlimitedContractSize: true,
     },
-    sepolia: {
+    testnet: {
       type: "http",
       chainType: "l1",
-      url: configVariable("SEPOLIA_RPC_URL"),
-      accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
+      url: configVariable("TESTNET_RPC_URL"),
+      accounts: [configVariable("TESTNET_PRIVATE_KEY")],
     },
   },
 });

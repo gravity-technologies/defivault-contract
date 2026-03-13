@@ -1,0 +1,14 @@
+{
+  NativeGatewaysModule: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Owner of the NativeBridgeGateway proxy's ProxyAdmin.
+    proxyAdminOwner: "0x0000000000000000000000000000000000000000",
+    // WETH on Ethereum Sepolia.
+    wrappedNativeToken: "0x0000000000000000000000000000000000000000",
+    // GRVT bridge-proxy fee token used for zkSync mintValue accounting.
+    grvtBridgeProxyFeeToken: "0x0000000000000000000000000000000000000000",
+    // zkSync Era Bridgehub on Ethereum Sepolia.
+    bridgeHub: "0x0000000000000000000000000000000000000000",
+  },
+}

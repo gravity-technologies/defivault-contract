@@ -1,0 +1,9 @@
+{
+  VaultTokenConfigModule: {
+    // Existing production vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token to enable or disable.
+    vaultToken: "0x0000000000000000000000000000000000000000",
+    supported: true,
+  },
+}

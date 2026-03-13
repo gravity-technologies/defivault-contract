@@ -65,8 +65,8 @@ interface IL1TreasuryVault {
     /// @notice BridgeHub contract used to submit L1 -> L2 bridge requests.
     function bridgeHub() external view returns (address);
 
-    /// @notice Base token contract used to fund bridge `mintValue`.
-    function baseToken() external view returns (address);
+    /// @notice GRVT bridge-proxy fee token contract used to fund bridge `mintValue`.
+    function grvtBridgeProxyFeeToken() external view returns (address);
 
     /// @notice Target L2 chain id for all bridge submissions.
     function l2ChainId() external view returns (uint256);
@@ -345,13 +345,13 @@ interface IL1TreasuryVault {
 
     /// @notice Bridges native ETH to the L2 exchange recipient.
     /// @param amount Native amount to bridge.
-    /// @dev Implementations should enforce `msg.value == 0` and fund bridge cost via base token minting.
+    /// @dev Implementations should enforce `msg.value == 0` and fund bridge cost via fee-token minting.
     function rebalanceNativeToL2(uint256 amount) external payable;
 
     /// @notice Bridges ERC20 token to L2 exchange recipient.
     /// @param erc20Token ERC20 token to bridge (wrapped native should be rejected on this path).
     /// @param amount Token amount to bridge.
-    /// @dev Implementations should enforce `msg.value == 0` and fund bridge cost via base token minting.
+    /// @dev Implementations should enforce `msg.value == 0` and fund bridge cost via fee-token minting.
     function rebalanceErc20ToL2(address erc20Token, uint256 amount) external payable;
 
     // --------- Emergency: force funds back to exchange ---------

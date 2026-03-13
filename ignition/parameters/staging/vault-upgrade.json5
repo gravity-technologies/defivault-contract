@@ -1,0 +1,10 @@
+{
+  VaultUpgradeModule: {
+    // ProxyAdmin controlling the staging vault proxy.
+    proxyAdmin: "0x0000000000000000000000000000000000000000",
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Optional post-upgrade initializer call data.
+    upgradeCallData: "0x",
+  },
+}

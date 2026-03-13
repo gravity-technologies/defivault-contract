@@ -1,0 +1,14 @@
+{
+  VaultTokenStrategyModule: {
+    // Existing production vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Existing production strategy proxy.
+    strategyProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token key for this strategy binding.
+    vaultToken: "0x0000000000000000000000000000000000000000",
+    vaultTokenSupported: true,
+    vaultTokenStrategyWhitelisted: true,
+    // Keep at zero until governance approves a live cap.
+    strategyCap: "0n",
+  },
+}

@@ -24,7 +24,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
       const unit = 10n ** BigInt(decimals);
 
       const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-      const baseToken = await viem.deployContract("MockERC20", [
+      const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
         "Mock Base",
         "mBASE",
         18,
@@ -38,7 +38,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
         args: [
           addr(admin),
           bridge.address,
-          baseToken.address,
+          grvtBridgeProxyFeeToken.address,
           270n,
           addr(l2Recipient),
           wrappedNative.address,

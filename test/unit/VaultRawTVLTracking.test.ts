@@ -18,7 +18,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
   }
 
   async function deploySystem() {
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
       18,
@@ -29,7 +29,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
       18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
     ]);
 
     const { vaultImplementation: implementation } =
@@ -40,7 +40,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
       args: [
         admin.account.address,
         bridgeHub.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         admin.account.address,
         wrappedNative.address,
@@ -58,7 +58,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
       "GRVTL1TreasuryVault",
       proxy.address,
     );
-    return { vault, bridgeHub, baseToken };
+    return { vault, bridgeHub, grvtBridgeProxyFeeToken };
   }
 
   async function deployToken(symbol = "MOCK") {

@@ -162,7 +162,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
 
   it("vault + Aave strategy on fork preserves defensive exit semantics", async function () {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -176,7 +176,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
       args: [
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2RecipientWallet),
         wrappedNative.address,

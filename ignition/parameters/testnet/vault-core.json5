@@ -2,15 +2,15 @@
   VaultCoreModule: {
     // VAULT_ADMIN + proxy admin
     deployAdmin: "0x0000000000000000000000000000000000000000",
-    // L1 BridgeHub
+    // zkSync Era Bridgehub on Ethereum Sepolia
     bridgeHub: "0x0000000000000000000000000000000000000000",
-    // Mintable GRVT base token on L1
-    baseToken: "0x0000000000000000000000000000000000000000",
+    // GRVT bridge-proxy fee token on L1
+    grvtBridgeProxyFeeToken: "0x0000000000000000000000000000000000000000",
     // Example private-L2 chain id (JSON5 bigint string format)
-    l2ChainId: "270n",
-    // Fixed L2 recipient used by vault bridge sends
+    l2ChainId: "326n",
+    // Fixed L2 recipient used by vault bridge sends. Set separately from admin/operator EOAs.
     l2ExchangeRecipient: "0x0000000000000000000000000000000000000000",
-    // Canonical wrapped-native token (e.g. WETH)
+    // WETH on Ethereum Sepolia
     wrappedNativeToken: "0x0000000000000000000000000000000000000000",
     // Initial yield recipient (must be non-zero and not equal to deployAdmin)
     yieldRecipient: "0x0000000000000000000000000000000000000000",

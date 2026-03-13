@@ -44,8 +44,8 @@ Use `.env` only for network credentials. Keep deployment inputs in versioned Ign
 
 Common env vars:
 
-- `SEPOLIA_RPC_URL`
-- `SEPOLIA_PRIVATE_KEY`
+- `TESTNET_RPC_URL`
+- `TESTNET_PRIVATE_KEY`
 
 ## Deployment Workflow
 
@@ -55,7 +55,7 @@ Prepare `ignition/parameters/<env>/vault-core.json5` with:
 
 - `deployAdmin`
 - `bridgeHub`
-- `baseToken`
+- `grvtBridgeProxyFeeToken`
 - `l2ChainId`
 - `l2ExchangeRecipient`
 - `wrappedNativeToken`
@@ -182,7 +182,7 @@ Prepare `ignition/parameters/<env>/native-gateways.json5` with:
 - `vaultProxy`
 - `proxyAdminOwner`
 - `wrappedNativeToken`
-- `baseToken`
+- `grvtBridgeProxyFeeToken`
 - `bridgeHub`
 
 Command:
@@ -221,7 +221,7 @@ npm run upgrade:strategy -- \
 
 1. Confirm `paused() == false`.
 2. Confirm expected role holders for all roles.
-3. Confirm `bridgeHub`, `baseToken`, `l2ChainId`, `l2ExchangeRecipient`, and `wrappedNativeToken`.
+3. Confirm `bridgeHub`, `grvtBridgeProxyFeeToken`, `l2ChainId`, `l2ExchangeRecipient`, and `wrappedNativeToken`.
 4. Confirm supported vault tokens and strategy registry state.
 5. Confirm the configured `nativeBridgeGateway`.
 6. Confirm all deployment outputs and tx hashes are attached to the deployment record.

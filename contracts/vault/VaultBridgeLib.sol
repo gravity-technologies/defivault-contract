@@ -4,7 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
-import {IGRVTBaseTokenMintable} from "../external/IGRVTBaseTokenMintable.sol";
+import {IGRVTBridgeProxyFeeToken} from "../external/IGRVTBridgeProxyFeeToken.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 
@@ -36,7 +36,7 @@ library VaultBridgeLib {
     /**
      * @notice Shared bridge request parameters used across normal and emergency bridge flows.
      * @param bridgeHub L1 BridgeHub used to submit the request.
-     * @param baseToken Mintable base token used to fund bridge base cost.
+     * @param grvtBridgeProxyFeeToken GRVT bridge-proxy fee token used to fund bridge base cost.
      * @param l2ChainId Target L2 chain id.
      * @param l2ExchangeRecipient L2 recipient for bridged funds and refunds.
      * @param wrappedNativeToken Canonical wrapped-native token for native-intent flows.
@@ -48,7 +48,7 @@ library VaultBridgeLib {
      */
     struct BridgeRequest {
         address bridgeHub;
-        address baseToken;
+        address grvtBridgeProxyFeeToken;
         uint256 l2ChainId;
         address l2ExchangeRecipient;
         address wrappedNativeToken;
@@ -130,21 +130,21 @@ library VaultBridgeLib {
             request.l2TxGasPerPubdataByte
         );
 
-        IGRVTBaseTokenMintable(request.baseToken).mint(address(this), baseCost);
+        IGRVTBridgeProxyFeeToken(request.grvtBridgeProxyFeeToken).mint(address(this), baseCost);
 
         if (request.isNativeIntent || request.token == request.wrappedNativeToken) {
             revert IL1TreasuryVault.InvalidParam();
         }
 
-        bool needsBaseApprove = request.token != request.baseToken;
+        bool needsBaseApprove = request.token != request.grvtBridgeProxyFeeToken;
 
-        if (request.token == request.baseToken) {
+        if (request.token == request.grvtBridgeProxyFeeToken) {
             IERC20(request.token).forceApprove(sharedBridge, request.amount + baseCost);
         } else {
             IERC20(request.token).forceApprove(sharedBridge, request.amount);
         }
         if (needsBaseApprove) {
-            IERC20(request.baseToken).forceApprove(sharedBridge, baseCost);
+            IERC20(request.grvtBridgeProxyFeeToken).forceApprove(sharedBridge, baseCost);
         }
 
         txHash = hub.requestL2TransactionTwoBridges(
@@ -163,7 +163,7 @@ library VaultBridgeLib {
 
         IERC20(request.token).forceApprove(sharedBridge, 0);
         if (needsBaseApprove) {
-            IERC20(request.baseToken).forceApprove(sharedBridge, 0);
+            IERC20(request.grvtBridgeProxyFeeToken).forceApprove(sharedBridge, 0);
         }
     }
 
@@ -306,7 +306,7 @@ library VaultBridgeLib {
         if (
             request.amount == 0 ||
             request.bridgeHub == address(0) ||
-            request.baseToken == address(0) ||
+            request.grvtBridgeProxyFeeToken == address(0) ||
             request.l2ChainId == 0 ||
             request.l2ExchangeRecipient == address(0)
         ) {

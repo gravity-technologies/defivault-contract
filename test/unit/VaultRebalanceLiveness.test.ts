@@ -16,7 +16,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
   async function deploySystem({
     setNativeBridgeGateway = true,
   }: { setNativeBridgeGateway?: boolean } = {}) {
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",
       18,
@@ -28,7 +28,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       18,
     ]);
     const bridgeHub = await viem.deployContract("MockBridgehub", [
-      baseToken.address,
+      grvtBridgeProxyFeeToken.address,
     ]);
 
     const { vaultImplementation: implementation } =
@@ -39,7 +39,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       args: [
         admin.account.address,
         bridgeHub.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         admin.account.address,
         wrappedNative.address,
@@ -67,7 +67,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       functionName: "initialize",
       args: [
         wrappedNative.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         bridgeHub.address,
         vault.address,
       ],
@@ -92,7 +92,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     return {
       vault,
       token,
-      baseToken,
+      grvtBridgeProxyFeeToken,
       bridgeHub,
       wrappedNative,
       nativeBridgeGateway,
@@ -100,7 +100,8 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
   }
 
   it("allows multiple rebalanceErc20ToL2 calls without time/size rate limiting", async function () {
-    const { vault, token, baseToken, bridgeHub } = await deploySystem();
+    const { vault, token, grvtBridgeProxyFeeToken, bridgeHub } =
+      await deploySystem();
 
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
@@ -117,11 +118,15 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(await bridgeHub.read.requestCount(), 2n);
     assert.equal(await token.read.balanceOf([vault.address]), 80n);
     assert.equal(await token.read.balanceOf([bridgeHub.address]), 120n);
-    assert.equal(await baseToken.read.balanceOf([bridgeHub.address]), 2n);
+    assert.equal(
+      await grvtBridgeProxyFeeToken.read.balanceOf([bridgeHub.address]),
+      2n,
+    );
   });
 
   it("allows emergencyErc20ToL2 while paused and token support is disabled", async function () {
-    const { vault, token, baseToken, bridgeHub } = await deploySystem();
+    const { vault, token, grvtBridgeProxyFeeToken, bridgeHub } =
+      await deploySystem();
 
     await vault.write.setVaultTokenConfig([
       token.address,
@@ -140,7 +145,10 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(await bridgeHub.read.requestCount(), 1n);
     assert.equal(await token.read.balanceOf([vault.address]), 0n);
     assert.equal(await token.read.balanceOf([bridgeHub.address]), 75n);
-    assert.equal(await baseToken.read.balanceOf([bridgeHub.address]), 1n);
+    assert.equal(
+      await grvtBridgeProxyFeeToken.read.balanceOf([bridgeHub.address]),
+      1n,
+    );
     assert.equal(await vault.read.paused(), true);
   });
 
@@ -165,8 +173,13 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
   });
 
   it("routes native rebalance through native bridge branch", async function () {
-    const { vault, baseToken, bridgeHub, wrappedNative, nativeBridgeGateway } =
-      await deploySystem();
+    const {
+      vault,
+      grvtBridgeProxyFeeToken,
+      bridgeHub,
+      wrappedNative,
+      nativeBridgeGateway,
+    } = await deploySystem();
 
     const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([rebalancerRole, admin.account.address]);
@@ -194,7 +207,10 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       await wrappedNative.read.balanceOf([nativeBridgeGateway.address]),
       0n,
     );
-    assert.equal(await baseToken.read.balanceOf([bridgeHub.address]), 1n);
+    assert.equal(
+      await grvtBridgeProxyFeeToken.read.balanceOf([bridgeHub.address]),
+      1n,
+    );
     assert.equal(
       await publicClient.getBalance({ address: bridgeHub.address }),
       12n,
@@ -401,13 +417,18 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
   });
 
   it("rejects re-initializing the native bridge gateway proxy", async function () {
-    const { vault, baseToken, bridgeHub, wrappedNative, nativeBridgeGateway } =
-      await deploySystem();
+    const {
+      vault,
+      grvtBridgeProxyFeeToken,
+      bridgeHub,
+      wrappedNative,
+      nativeBridgeGateway,
+    } = await deploySystem();
 
     await viem.assertions.revertWithCustomError(
       nativeBridgeGateway.write.initialize([
         wrappedNative.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         bridgeHub.address,
         vault.address,
       ]),

@@ -1,0 +1,11 @@
+{
+  VaultYieldRecipientTimelockModule: {
+    // Existing production vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Two-day default placeholder for production; adjust to governance policy.
+    minDelay: "172800n",
+    proposers: ["0x0000000000000000000000000000000000000000"],
+    executors: ["0x0000000000000000000000000000000000000000"],
+    admin: "0x0000000000000000000000000000000000000000",
+  },
+}

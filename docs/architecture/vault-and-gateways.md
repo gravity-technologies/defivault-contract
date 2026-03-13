@@ -56,7 +56,7 @@ Normal top-up flow:
 2. vault checks pause and support rules
 3. bridge execution cost is funded through base-token minting
 4. ERC20 path submits the two-bridges request directly through `BridgeHub`
-5. native path transfers wrapped-native plus base token to `NativeBridgeGateway`
+5. native path transfers wrapped-native plus the fee token to `NativeBridgeGateway`
 6. `NativeBridgeGateway` unwraps, becomes the deposit sender, and submits the native bridge request
 
 Emergency top-up flow uses `emergencyNativeToL2` and `emergencyErc20ToL2`. These bypass normal pause/support restrictions but remain role-gated.
@@ -89,7 +89,7 @@ The architecture intentionally keeps raw ETH out of normal vault accounting.
 
 ## Why BaseToken Minting Exists
 
-The bridge flow mints base token to fund `mintValue` for the GRVT private-chain bridge model. Without the required mint permission in the bridge stack, L1 -> L2 top-ups fail even if the vault has enough bridged asset balance.
+The bridge flow mints the GRVT bridge-proxy fee token to fund `mintValue` for the private-chain bridge model. Without the required mint permission in the bridge stack, L1 -> L2 top-ups fail even if the vault has enough bridged asset balance.
 
 ## Deployment Wiring
 
@@ -98,7 +98,7 @@ The native gateway deployment path is:
 1. deploy `NativeVaultGateway`
 2. deploy `NativeBridgeGateway` implementation
 3. deploy `TransparentUpgradeableProxy` for `NativeBridgeGateway`
-4. initialize the proxy with wrapped-native token, base token, bridge hub, and vault
+4. initialize the proxy with wrapped-native token, fee token, bridge hub, and vault
 5. set the vault's `nativeBridgeGateway`
 
 Operational deployment steps live in [../operations/runbook.md](../operations/runbook.md).

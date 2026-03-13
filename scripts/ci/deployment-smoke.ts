@@ -218,7 +218,7 @@ async function main() {
   );
 
   const bridgeHub = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-  const baseToken = await viem.deployContract("MockERC20", [
+  const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
     "Mock Base",
     "mBASE",
     18,
@@ -252,7 +252,7 @@ async function main() {
     pauser,
     yieldRecipient,
     bridgeHub: bridgeHub.address,
-    baseToken: baseToken.address,
+    grvtBridgeProxyFeeToken: grvtBridgeProxyFeeToken.address,
     wrappedNativeToken: wrappedNativeToken.address,
     underlyingToken: underlyingToken.address,
     aavePool: aavePool.address,
@@ -269,7 +269,7 @@ async function main() {
     {
       deployAdmin,
       bridgeHub: bridgeHub.address,
-      baseToken: baseToken.address,
+      grvtBridgeProxyFeeToken: grvtBridgeProxyFeeToken.address,
       l2ChainId: `${l2ChainId}n`,
       l2ExchangeRecipient,
       wrappedNativeToken: wrappedNativeToken.address,
@@ -304,9 +304,9 @@ async function main() {
   );
   recordEq(
     assertions,
-    "vault.baseToken",
-    await vault.read.baseToken(),
-    baseToken.address,
+    "vault.grvtBridgeProxyFeeToken",
+    await vault.read.grvtBridgeProxyFeeToken(),
+    grvtBridgeProxyFeeToken.address,
   );
   recordEq(
     assertions,
@@ -420,7 +420,7 @@ async function main() {
     "NativeGatewaysModule",
     {
       wrappedNativeToken: wrappedNativeToken.address,
-      baseToken: baseToken.address,
+      grvtBridgeProxyFeeToken: grvtBridgeProxyFeeToken.address,
       bridgeHub: bridgeHub.address,
       vaultProxy,
       proxyAdminOwner: deployAdmin,
@@ -552,9 +552,9 @@ async function main() {
   );
   recordEq(
     assertions,
-    "nativeBridgeGateway.baseToken",
-    await nativeBridgeGateway.read.baseToken(),
-    baseToken.address,
+    "nativeBridgeGateway.grvtBridgeProxyFeeToken",
+    await nativeBridgeGateway.read.grvtBridgeProxyFeeToken(),
+    grvtBridgeProxyFeeToken.address,
   );
   recordEq(
     assertions,

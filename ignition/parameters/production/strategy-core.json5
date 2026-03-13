@@ -1,14 +1,13 @@
 {
   StrategyCoreModule: {
-    // Existing deployed vault proxy
+    // Existing production vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
-    // Owner of the strategy proxy's ProxyAdmin
+    // Owner of the strategy proxy's ProxyAdmin; use production governance.
     proxyAdminOwner: "0x0000000000000000000000000000000000000000",
-    // Aave V3 pool + token pair
+    // Aave V3 Ethereum USDT reserve.
     aavePool: "0x0000000000000000000000000000000000000000",
     underlyingToken: "0x0000000000000000000000000000000000000000",
     aToken: "0x0000000000000000000000000000000000000000",
-    // On-chain strategy metadata
-    strategyName: "AAVE_V3_UNDERLYING",
+    strategyName: "AAVE_V3_ETHEREUM_USDT",
   },
 }

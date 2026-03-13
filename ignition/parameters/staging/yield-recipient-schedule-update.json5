@@ -1,0 +1,13 @@
+{
+  YieldRecipientScheduleUpdateModule: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Configured staging yield-recipient timelock controller.
+    yieldRecipientTimelockController: "0x0000000000000000000000000000000000000000",
+    // Proposed next yield recipient.
+    newYieldRecipient: "0x0000000000000000000000000000000000000000",
+    predecessor: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    delay: "86400n",
+  },
+}

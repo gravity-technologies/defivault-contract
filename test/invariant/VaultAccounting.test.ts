@@ -33,7 +33,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
 
   async function deployVault() {
     const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
-    const baseToken = await viem.deployContract("MockERC20", [
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Mock Base",
       "mBASE",
       18,
@@ -47,7 +47,7 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
       args: [
         addr(admin),
         bridge.address,
-        baseToken.address,
+        grvtBridgeProxyFeeToken.address,
         270n,
         addr(l2Recipient),
         wrappedNative.address,
