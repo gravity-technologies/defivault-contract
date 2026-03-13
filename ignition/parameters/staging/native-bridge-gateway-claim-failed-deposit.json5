@@ -1,7 +1,7 @@
 {
   NativeBridgeGatewayClaimFailedDepositModule: {
     // zkSync shared bridge on Ethereum Sepolia.
-    sharedBridge: "0x0000000000000000000000000000000000000000",
+    sharedBridge: "0xF2a49545C5B1A85d2fB018cC39103661639a9B06",
     // Existing deployed NativeBridgeGateway proxy.
     nativeBridgeGatewayProxy: "0x0000000000000000000000000000000000000000",
     // Fill these only when recovering a real failed deposit.
