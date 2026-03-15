@@ -196,25 +196,15 @@ async function main() {
 
   const deployer = wallets[0];
   const deployAdmin = normalizeAddress(deployer.account.address);
-  const allocator = normalizeAddress(
-    wallets[1]?.account?.address ??
-      "0x0000000000000000000000000000000000000a11",
-  );
-  const rebalancer = normalizeAddress(
-    wallets[2]?.account?.address ??
-      "0x0000000000000000000000000000000000000b11",
-  );
-  const pauser = normalizeAddress(
-    wallets[3]?.account?.address ??
-      "0x0000000000000000000000000000000000000c11",
-  );
+  const allocator = deployAdmin;
+  const rebalancer = deployAdmin;
+  const pauser = deployAdmin;
   const l2ExchangeRecipient = normalizeAddress(
     wallets[4]?.account?.address ??
       "0x0000000000000000000000000000000000000d11",
   );
   const yieldRecipient = normalizeAddress(
-    wallets[5]?.account?.address ??
-      "0x0000000000000000000000000000000000000e11",
+    "0x243bd52D0765a8F2831f0873D6a99D56c1Daa517",
   );
 
   const bridgeHub = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
@@ -240,9 +230,9 @@ async function main() {
   ]);
   await aavePool.write.setAToken([aToken.address]);
 
-  const l2ChainId = 270n;
+  const l2ChainId = 327n;
   const strategyName = "AAVE_V3_UNDERLYING";
-  const strategyCap = 1_000_000n;
+  const strategyCap = 0n;
   const smokeRunId = `${Date.now()}`;
 
   writeJson(join(outputsDir, "prerequisites.json"), {

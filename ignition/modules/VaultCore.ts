@@ -31,6 +31,7 @@ export default buildModule("VaultCoreModule", (m) => {
   });
   const vaultBridgeLib = m.library("VaultBridgeLib", {
     id: "VaultBridgeLib",
+    after: [vaultStrategyOpsLib],
   });
 
   const vaultImplementation = m.contract("GRVTL1TreasuryVault", [], {

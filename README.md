@@ -64,6 +64,19 @@ Deployment smoke test:
 npm run smoke:deployment
 ```
 
+Interactive initial stack deployment:
+
+```bash
+npm run deploy:initial-stack:interactive
+```
+
+The interactive initial-stack deploy is environment-aware:
+
+- `staging` and `testnet` deploy mock Aave contracts because GRVT supplies its own underlying test token
+- `production` validates the configured live Aave pool and aToken instead of deploying mocks
+
+See [docs/operations/initial-stack-deployment.md](docs/operations/initial-stack-deployment.md).
+
 ## Read Next
 
 - Start with [docs/README.md](docs/README.md)

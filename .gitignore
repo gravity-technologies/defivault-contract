@@ -35,6 +35,7 @@ ignition/deployments/
 
 # Local CI smoke artifacts
 smoke-artifacts/
+deployment-artifacts/
 
 # Local Solidity JS compiler download artifacts
 soljson-latest.js
