@@ -37,13 +37,27 @@ export default buildModule("VaultRolesBootstrapModule", (m) => {
     id: "PauserRole",
   });
 
-  m.call(vault, "grantRole", [allocatorRole, allocator], {
-    id: "GrantAllocatorRole",
+  const grantAllocatorRole = m.call(
+    vault,
+    "grantRole",
+    [allocatorRole, allocator],
+    {
+      id: "GrantAllocatorRole",
+    },
+  );
+  const grantRebalancerRole = m.call(
+    vault,
+    "grantRole",
+    [rebalancerRole, rebalancer],
+    {
+      id: "GrantRebalancerRole",
+      after: [grantAllocatorRole],
+    },
+  );
+  m.call(vault, "grantRole", [pauserRole, pauser], {
+    id: "GrantPauserRole",
+    after: [grantRebalancerRole],
   });
-  m.call(vault, "grantRole", [rebalancerRole, rebalancer], {
-    id: "GrantRebalancerRole",
-  });
-  m.call(vault, "grantRole", [pauserRole, pauser], { id: "GrantPauserRole" });
 
   return { vault };
 });

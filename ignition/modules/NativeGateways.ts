@@ -35,6 +35,7 @@ export default buildModule("NativeGatewaysModule", (m) => {
     [],
     {
       id: "NativeBridgeGatewayImplementation",
+      after: [nativeVaultGateway],
     },
   );
   const initializeCalldata = m.encodeFunctionCall(

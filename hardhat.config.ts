@@ -1,5 +1,6 @@
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
 import HardhatContractSizer from "@solidstate/hardhat-contract-sizer";
+import "dotenv/config";
 import { configVariable, defineConfig } from "hardhat/config";
 
 import { oneOffOpsTasks } from "./tasks/one-off-ops.js";
@@ -8,6 +9,9 @@ const SOLIDITY_OPTIMIZER_SETTINGS = {
   enabled: true,
   runs: 200,
 } as const;
+
+const IGNITION_REQUIRED_CONFIRMATIONS =
+  process.env.GRVT_ENV === "production" ? 5 : 1;
 
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin, HardhatContractSizer],
@@ -33,6 +37,9 @@ export default defineConfig({
         },
       },
     },
+  },
+  ignition: {
+    requiredConfirmations: IGNITION_REQUIRED_CONFIRMATIONS,
   },
   networks: {
     default: {
@@ -62,7 +69,7 @@ export default defineConfig({
       // Test-only convenience: vault mock suites deploy oversized contracts.
       allowUnlimitedContractSize: true,
     },
-    testnet: {
+    sepolia: {
       type: "http",
       chainType: "l1",
       url: configVariable("TESTNET_RPC_URL"),
