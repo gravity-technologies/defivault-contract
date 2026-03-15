@@ -29,9 +29,11 @@ This docs tree is organized top-down: start with concepts, then architecture, th
 ### Operator
 
 1. [reference/roles-and-permissions.md](reference/roles-and-permissions.md)
-2. [operations/runbook.md](operations/runbook.md)
-3. [design-decisions/native-boundary-and-gateway-split.md](design-decisions/native-boundary-and-gateway-split.md)
-4. [design-decisions/explicit-native-bridge-methods.md](design-decisions/explicit-native-bridge-methods.md)
+2. [operations/initial-stack-deployment.md](operations/initial-stack-deployment.md)
+3. [operations/runbook.md](operations/runbook.md)
+4. [operations/aave-mock-deployment.md](operations/aave-mock-deployment.md)
+5. [design-decisions/native-boundary-and-gateway-split.md](design-decisions/native-boundary-and-gateway-split.md)
+6. [design-decisions/explicit-native-bridge-methods.md](design-decisions/explicit-native-bridge-methods.md)
 
 ### Integrator
 

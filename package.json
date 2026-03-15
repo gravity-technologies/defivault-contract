@@ -20,9 +20,10 @@
     "upgrade:native-bridge-gateway": "hardhat ignition deploy ./ignition/modules/NativeBridgeGatewayUpgrade.ts",
     "config:vault-token": "hardhat ignition deploy ./ignition/modules/VaultTokenConfig.ts",
     "upgrade:strategy": "hardhat ignition deploy ./ignition/modules/StrategyUpgrade.ts",
-    "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts",
     "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost",
     "deploy:yield-recipient-timelock": "hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts",
+    "deploy:initial-stack:interactive": "hardhat run ./scripts/deploy/deploy-initial-stack-interactive.ts --network sepolia",
+    "deploy:initial-stack:interactive:local": "hardhat run ./scripts/deploy/deploy-initial-stack-interactive.ts --network localhost",
     "wallets:generate": "node ./scripts/generate-wallets.mjs"
   },
   "keywords": [],
@@ -45,7 +46,10 @@
   "dependencies": {
     "@openzeppelin/contracts": "^5.4.0",
     "@openzeppelin/contracts-upgradeable": "^5.4.0",
+    "chalk": "^5.6.2",
     "dotenv": "^17.3.1",
-    "json5": "^2.2.3"
+    "json5": "^2.2.3",
+    "node-emoji": "^2.2.0",
+    "ora": "^9.3.0"
   }
 }
