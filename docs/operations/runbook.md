@@ -12,10 +12,15 @@
 Core proxy deployment and most post-deploy configuration are managed with Hardhat Ignition.
 Vault upgrades use a single Hardhat task. Production prepares multisig calldata after deploying a new implementation with a hot wallet; staging/testnet execute directly with the task signer.
 
-Source of truth for deployment records:
+Source of truth for current live state:
+
+- checked-in current snapshot at `deployments/<environment>/<network>.json`
+
+Supporting deployment evidence:
 
 - `ignition/deployments/`
 - versioned parameter files under `ignition/parameters/<environment>/`
+- `ignition/deployments/initial-stack/<environment>/<network>/<runId>/`
 
 Record these for every deployment:
 
@@ -31,6 +36,16 @@ Useful commands:
 npx hardhat ignition deployments --network <network>
 npx hardhat ignition status <deployment-id> --network <network>
 npx hardhat ignition transactions <deployment-id> --network <network>
+```
+
+Registry sync commands:
+
+```bash
+npm run registry:sync -- initial-stack --run-dir <runDir>
+npm run registry:sync -- --network <network> -- vault-upgrade --grvt-env <env> --deployment-id <deploymentId> --parameters ignition/parameters/<env>/vault-upgrade.json5
+npm run registry:sync -- --network <network> -- strategy-upgrade --grvt-env <env> --strategy-key <strategyKey> --deployment-id <deploymentId> --parameters ignition/parameters/<env>/strategy-upgrade.json5
+npm run registry:sync -- --network <network> -- native-bridge-gateway-upgrade --grvt-env <env> --deployment-id <deploymentId> --parameters ignition/parameters/<env>/native-bridge-gateway-upgrade.json5
+npm run registry:sync -- --network <network> -- strategy-core --grvt-env <env> --strategy-key <strategyKey> --deployment-id <deploymentId> --parameters ignition/parameters/<env>/strategy-core.json5
 ```
 
 Local smoke orchestration:
@@ -234,19 +249,37 @@ npm run upgrade:strategy -- \
 1. Confirm `paused() == false`.
 2. Confirm expected role holders for all roles.
 3. Confirm `bridgeHub`, `grvtBridgeProxyFeeToken`, `l2ChainId`, `l2ExchangeRecipient`, and `wrappedNativeToken`.
-4. Confirm supported vault tokens and strategy registry state.
-5. Confirm the configured `nativeBridgeGateway`.
-6. Confirm all deployment outputs and tx hashes are attached to the deployment record.
+4. Confirm the treasury vault proxy has minter permission on `grvtBridgeProxyFeeToken` before any L1 -> L2 rebalance is attempted.
+5. Confirm supported vault tokens and strategy registry state.
+6. Confirm the configured `nativeBridgeGateway`.
+7. Confirm all deployment outputs and tx hashes are attached to the deployment record.
 
 ## Normal Operations
 
 ### Strategy Capital Management
 
-Calls:
+Commands:
 
-- `allocateVaultTokenToStrategy(token, strategy, amount)`
-- `deallocateVaultTokenFromStrategy(token, strategy, amount)`
-- `deallocateAllVaultTokenFromStrategy(token, strategy)`
+```bash
+npm run ops:allocate-to-strategy -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/allocate-to-strategy.json5
+
+npm run ops:deallocate-from-strategy -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/deallocate-from-strategy.json5
+
+npm run ops:deallocate-all-from-strategy -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/deallocate-all-from-strategy.json5
+```
+
+Parameter shape:
+
+- `vaultProxy`
+- `token`
+- `strategy`
+- `amount` for allocate and partial deallocate
 
 Operator rules:
 
@@ -368,6 +401,24 @@ Operator rules:
 - recovery should leave `NativeBridgeGateway` with no stranded native or wrapped-native balance
 
 ## Emergency Send Checklist
+
+Commands:
+
+```bash
+npm run ops:emergency-native-to-l2 -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/emergency-native-to-l2.json5
+
+npm run ops:emergency-erc20-to-l2 -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/emergency-erc20-to-l2.json5
+```
+
+Parameter shape:
+
+- `vaultProxy`
+- `amount`
+- `token` for ERC20 emergency send only
 
 Before each `emergencyNativeToL2` or `emergencyErc20ToL2`:
 

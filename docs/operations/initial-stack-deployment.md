@@ -54,16 +54,18 @@ The script:
 1. resolves the GRVT environment and Aave mode
 2. runs a preflight check for chain id, deployer, balance, parameter directory, and local smoke prerequisites
 3. collects or reuses parameter values, with grouped prompts for common defaults
-4. writes per-run parameter files under `deployment-artifacts/initial-stack-interactive/<env>/<network>/<runId>/params`
+4. writes per-run parameter files under `ignition/deployments/initial-stack/<env>/<network>/<runId>/params`
 5. executes the initial stack deployment step-by-step with Ignition
-6. writes `manifest.json`, `summary.md`, and per-step stdout/stderr logs
+6. optionally runs post-deploy explorer verification for remote networks
+7. writes `manifest.json`, `summary.md`, and per-step stdout/stderr logs
+8. updates the checked-in current deployment snapshot at `deployments/<env>/<network>.json`
 
 ## Artifacts
 
 Each run is stored under:
 
 ```text
-deployment-artifacts/initial-stack-interactive/<grvt-env>/<network>/<runId>/
+ignition/deployments/initial-stack/<grvt-env>/<network>/<runId>/
 ```
 
 Important files:
@@ -72,6 +74,81 @@ Important files:
 - `summary.md`: operator summary of steps and key addresses
 - `params/*.generated.json5`: the generated per-run parameter files
 - `logs/*.stdout.log` and `logs/*.stderr.log`: per-step command output
+- `deployments/<env>/<network>.json`: checked-in current deployment snapshot for operator lookup
+
+## Deployment Checklist
+
+After an initial-stack deployment completes:
+
+1. Run the interactive initial-stack deployment and confirm the run finished cleanly.
+2. Record the deployed treasury vault proxy address from `summary.md` or `manifest.json`.
+3. Find the `GRVTBaseToken` address.
+4. Using the admin key for `GRVTBaseToken`, grant `MINTER_ROLE` to the treasury vault proxy so the vault can mint bridge fee token for L1 -> L2 sends.
+5. Verify the grant onchain before handing the stack to operators.
+
+Why this matters:
+
+- The vault mints the fee token during L1 -> L2 bridge sends to fund BridgeHub `mintValue`.
+- Without minter permission on `grvtBridgeProxyFeeToken`, L1 -> L2 top-ups fail even when the vault has enough asset balance.
+
+Example `cast` commands:
+
+```bash
+cast send <grvt-base-token> \
+  "grantRole(bytes32,address)" \
+  $(cast keccak "MINTER_ROLE") \
+  <treasury-vault-proxy> \
+  --rpc-url $L1_RPC \
+  --private-key $ADMIN_PRIVATE_KEY
+```
+
+```bash
+cast call <grvt-base-token> \
+  "hasRole(bytes32,address)(bool)" \
+  $(cast keccak "MINTER_ROLE") \
+  <treasury-vault-proxy> \
+  --rpc-url $L1_RPC
+```
+
+In this example:
+
+- `<grvt-base-token>` is the `GRVTBaseToken` contract.
+- `<treasury-vault-proxy>` is the treasury vault proxy receiving `MINTER_ROLE`.
+
+## Explorer Verification
+
+The initial-stack flow saves enough metadata to verify every contract deployed by
+the run without manually reconstructing constructor arguments.
+
+On remote networks, the interactive deployment script can run this verification
+automatically as its final step. Localhost runs skip explorer verification.
+
+1. Set `ETHERSCAN_API_KEY` in your environment or `.env`.
+2. Verify the latest run for an environment and network:
+
+```bash
+npm run verify:initial-stack -- --grvt-env testnet --network sepolia --latest
+```
+
+3. Or verify a specific saved run directory:
+
+```bash
+npm run verify:initial-stack -- --run-dir ignition/deployments/initial-stack/testnet/sepolia/2026-03-15T09-52-59-756Z
+```
+
+Useful flags:
+
+- `--dry-run`: print the verification plan without sending explorer requests
+- `--force`: retry even if a contract is already verified
+
+The script verifies:
+
+- each Ignition deployment ID surfaced in the saved manifest
+- the OpenZeppelin `ProxyAdmin` contracts for each transparent proxy
+
+The extra `ProxyAdmin` verification matters because OpenZeppelin v5
+`TransparentUpgradeableProxy` deploys its admin internally, so Ignition does not
+track that admin as a standalone deployment.
 
 ## Related Runbooks
 
