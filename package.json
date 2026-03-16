@@ -20,10 +20,10 @@
     "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost",
     "deploy:initial-stack:interactive": "hardhat run ./scripts/deploy/deploy-initial-stack-interactive.ts --network sepolia",
     "deploy:initial-stack:interactive:local": "hardhat run ./scripts/deploy/deploy-initial-stack-interactive.ts --network localhost",
+    "verify:initial-stack": "tsx ./scripts/verify/verify-initial-stack.ts",
     "yield-recipient:schedule-update": "hardhat ignition deploy ./ignition/modules/YieldRecipientScheduleUpdate.ts",
     "yield-recipient:execute-update": "hardhat ignition deploy ./ignition/modules/YieldRecipientExecuteUpdate.ts",
-    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts",
-    "wallets:generate": "node ./scripts/generate-wallets.mjs"
+    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts"
   },
   "keywords": [],
   "author": "",
@@ -39,6 +39,7 @@
     "hardhat": "^3.1.7",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.2.1",
+    "tsx": "^4.21.0",
     "viem": "^2.45.2"
   },
   "type": "module",

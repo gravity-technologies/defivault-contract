@@ -56,7 +56,8 @@ The script:
 3. collects or reuses parameter values, with grouped prompts for common defaults
 4. writes per-run parameter files under `deployment-artifacts/initial-stack-interactive/<env>/<network>/<runId>/params`
 5. executes the initial stack deployment step-by-step with Ignition
-6. writes `manifest.json`, `summary.md`, and per-step stdout/stderr logs
+6. optionally runs post-deploy explorer verification for remote networks
+7. writes `manifest.json`, `summary.md`, and per-step stdout/stderr logs
 
 ## Artifacts
 
@@ -72,6 +73,41 @@ Important files:
 - `summary.md`: operator summary of steps and key addresses
 - `params/*.generated.json5`: the generated per-run parameter files
 - `logs/*.stdout.log` and `logs/*.stderr.log`: per-step command output
+
+## Explorer Verification
+
+The initial-stack flow saves enough metadata to verify every contract deployed by
+the run without manually reconstructing constructor arguments.
+
+On remote networks, the interactive deployment script can run this verification
+automatically as its final step. Localhost runs skip explorer verification.
+
+1. Set `ETHERSCAN_API_KEY` in your environment or `.env`.
+2. Verify the latest run for an environment and network:
+
+```bash
+npm run verify:initial-stack -- --grvt-env testnet --network sepolia --latest
+```
+
+3. Or verify a specific saved run directory:
+
+```bash
+npm run verify:initial-stack -- --run-dir deployment-artifacts/initial-stack-interactive/testnet/sepolia/2026-03-15T09-52-59-756Z
+```
+
+Useful flags:
+
+- `--dry-run`: print the verification plan without sending explorer requests
+- `--force`: retry even if a contract is already verified
+
+The script verifies:
+
+- each Ignition deployment ID surfaced in the saved manifest
+- the OpenZeppelin `ProxyAdmin` contracts for each transparent proxy
+
+The extra `ProxyAdmin` verification matters because OpenZeppelin v5
+`TransparentUpgradeableProxy` deploys its admin internally, so Ignition does not
+track that admin as a standalone deployment.
 
 ## Related Runbooks
 
