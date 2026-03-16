@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
@@ -9,6 +17,14 @@ import { network } from "hardhat";
 import JSON5 from "json5";
 import * as emoji from "node-emoji";
 import ora from "ora";
+import { initialStackRunDir } from "./initial-stack-artifacts.js";
+import {
+  OPERATION_RECORD_SCHEMA_VERSION,
+  writeOperationRecord,
+  type OperationRecord,
+  type OperationStatus,
+  type OperationStep,
+} from "./operation-records.js";
 import {
   formatEther,
   getAddress,
@@ -26,19 +42,18 @@ import {
  * Role:
  * - Orchestrates the first full deployment of a DefiVault environment from an
  *   operator terminal.
- * - Collects or derives environment-specific parameters, writes per-run
- *   generated parameter files, and then executes the repo's Ignition modules in
- *   a controlled step-by-step order.
- * - Persists a run manifest, generated params, logs, and a human-readable
- *   summary under `deployment-artifacts/` so an operator can inspect or resume
- *   from the resulting artifacts after each step.
+ * - Collects or derives environment-specific parameters, stages temporary
+ *   parameter files, and then executes the repo's Ignition modules in a
+ *   controlled step-by-step order.
+ * - Persists a final canonical `record.json` plus any failure logs under
+ *   `deployment-records/` once the deployment phase completes.
  *
  * Scope:
  * - Intended for greenfield stack deployment flows across localhost and remote
  *   environments.
  * - Non-production GRVT environments (`staging`, `testnet`, and localhost
- *   smoke flows) deploy a MockAaveV3Pool/MockAaveV3AToken pair because GRVT
- *   supplies its own underlying token instead of depending on a public Aave
+ *   smoke flows) deploy a MockAaveV3Pool/MockAaveV3AToken pair around an
+ *   operator-supplied underlying token instead of depending on a public Aave
  *   reserve.
  * - Production uses the live Aave pool/aToken addresses configured in
  *   `ignition/parameters/production/strategy-core.json5` and validates them
@@ -56,7 +71,7 @@ import {
  *
  * Design constraints:
  * - Source parameter files under `ignition/parameters/` remain untouched. This
- *   script writes temporary per-run params instead.
+ *   script only stages temporary params outside `deployment-records`.
  * - Each major step is explicitly confirmed by the operator before execution.
  * - Deployment state is delegated to Ignition wherever possible so the flow is
  *   deterministic and easier to reason about than ad hoc transaction scripts.
@@ -82,7 +97,6 @@ type StepRecord = {
   name: string;
   nextAction?: string;
   notes?: string[];
-  paramsFile?: string;
   startedAt: string;
   status: StepStatus;
 };
@@ -96,6 +110,7 @@ type DeploymentManifest = {
     localMode: boolean;
     parameterDir: string;
     repeatStepConfirmations: boolean;
+    runPostDeployVerification: boolean;
   };
   network: {
     alias: string;
@@ -112,6 +127,7 @@ type DeploymentManifest = {
 type VaultCoreParams = {
   bridgeHub: Address;
   deployAdmin: Address;
+  finalVaultAdmin?: Address;
   grvtBridgeProxyFeeToken: Address;
   l2ChainId: bigint;
   l2ExchangeRecipient: Address;
@@ -169,9 +185,10 @@ type NativeGatewaysParams = {
 type ResolvedParams = {
   aTokenName: string;
   aTokenSymbol: string;
-  mockUnderlyingTokenDecimals: number;
-  mockUnderlyingTokenName: string;
-  mockUnderlyingTokenSymbol: string;
+  productionAuthorityPlan?: {
+    bootstrapVaultAdmin: Address;
+    finalVaultAdmin: Address;
+  };
   nativeGateways: NativeGatewaysParams;
   rolesBootstrap: RolesBootstrapParams;
   strategyCore: StrategyCoreParams;
@@ -235,6 +252,30 @@ type ReadonlyContractMetadata = {
   symbol?: string;
 };
 
+type StrategyPrerequisiteSelections = {
+  aToken?: Address;
+  aavePool?: Address;
+  aTokenName: string;
+  aTokenSymbol: string;
+  strategyName: string;
+  underlyingToken: Address;
+};
+
+type ProxyAdminOwners = {
+  nativeProxyAdminOwner: Address;
+  strategyProxyAdminOwner: Address;
+};
+
+type RoleAndTimelockSelections = {
+  admin: Address;
+  allocator: Address;
+  executors: Address[];
+  minDelay: bigint;
+  pauser: Address;
+  proposers: Address[];
+  rebalancer: Address;
+};
+
 const ERC20_METADATA_ABI = parseAbi([
   "function decimals() view returns (uint8)",
   "function name() view returns (string)",
@@ -257,10 +298,6 @@ const parameterEnvironmentsRoot = resolve(repoRoot, "ignition/parameters");
 const smokePrerequisitesPath = resolve(
   repoRoot,
   "smoke-artifacts/outputs/prerequisites.json",
-);
-const artifactsRoot = resolve(
-  repoRoot,
-  "deployment-artifacts/initial-stack-interactive",
 );
 const rl = createInterface({
   input: process.stdin,
@@ -287,7 +324,13 @@ function readJson5Object(filePath: string): JsonRecord {
 }
 
 function makeRunId(): string {
-  return nowIso().replace(/[:.]/g, "-");
+  const username = userInfo().username.replace(/[^A-Za-z0-9._-]/g, "-");
+  const now = new Date();
+  const year = String(now.getUTCFullYear());
+  const hours = String(now.getUTCHours()).padStart(2, "0");
+  const minutes = String(now.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(now.getUTCSeconds()).padStart(2, "0");
+  return `${year}-${hours}${minutes}${seconds}Z-initial-stack-${username}`;
 }
 
 function ensureDir(path: string) {
@@ -528,28 +571,28 @@ function loadParameterSources(parameterDir: string): ParameterSources {
 
 function resolveOperatorDefaults(
   sources: ParameterSources,
-  deployAdmin: Address,
+  defaultAuthority: Address,
 ): OperatorDefaults {
   return {
     allocator:
-      defaultAddressValue(sources.rolesSource.allocator, deployAdmin) ??
-      deployAdmin,
+      defaultAddressValue(sources.rolesSource.allocator, defaultAuthority) ??
+      defaultAuthority,
     nativeProxyAdminOwner:
       defaultAddressValue(
         sources.nativeGatewaysSource.proxyAdminOwner,
-        deployAdmin,
-      ) ?? deployAdmin,
+        defaultAuthority,
+      ) ?? defaultAuthority,
     pauser:
-      defaultAddressValue(sources.rolesSource.pauser, deployAdmin) ??
-      deployAdmin,
+      defaultAddressValue(sources.rolesSource.pauser, defaultAuthority) ??
+      defaultAuthority,
     rebalancer:
-      defaultAddressValue(sources.rolesSource.rebalancer, deployAdmin) ??
-      deployAdmin,
+      defaultAddressValue(sources.rolesSource.rebalancer, defaultAuthority) ??
+      defaultAuthority,
     strategyProxyAdminOwner:
       defaultAddressValue(
         sources.strategyCoreSource.proxyAdminOwner,
-        deployAdmin,
-      ) ?? deployAdmin,
+        defaultAuthority,
+      ) ?? defaultAuthority,
   };
 }
 
@@ -568,17 +611,18 @@ function resolveSupportFlags(sources: ParameterSources): SupportFlags {
 
 function resolveTimelockDefaults(
   timelockSource: JsonRecord,
-  deployAdmin: Address,
+  defaultAuthority: Address,
 ): TimelockDefaults {
   return {
     admin:
-      defaultAddressValue(timelockSource.admin, deployAdmin) ?? deployAdmin,
+      defaultAddressValue(timelockSource.admin, defaultAuthority) ??
+      defaultAuthority,
     executors: defaultAddressArrayValue(timelockSource.executors, [
-      deployAdmin,
+      defaultAuthority,
     ]),
     minDelay: parseBigintLike(timelockSource.minDelay ?? "86400n", "minDelay"),
     proposers: defaultAddressArrayValue(timelockSource.proposers, [
-      deployAdmin,
+      defaultAuthority,
     ]),
   };
 }
@@ -609,14 +653,6 @@ function defaultATokenName(
 
 function defaultATokenSymbol(metadata: ReadonlyContractMetadata): string {
   return `am${metadata.symbol ?? "TOKEN"}`;
-}
-
-function defaultMockUnderlyingToken(grvtEnvironment: GrvtEnvironment) {
-  return {
-    decimals: 6,
-    name: `Mock ${environmentLabel(grvtEnvironment)} USDT`,
-    symbol: "mUSDT",
-  };
 }
 
 function defaultStrategyName(
@@ -810,6 +846,24 @@ async function askUseDefaults(
   return askConfirm(prompt, defaultYes);
 }
 
+async function chooseConfiguredValues<T>(args: {
+  available?: boolean;
+  lines: string[];
+  prompt: string;
+  title: string;
+  promptForCustom: () => Promise<T>;
+  useDefaults: () => T;
+}): Promise<T> {
+  if (
+    (args.available ?? true) &&
+    (await askUseDefaults(args.title, args.lines, args.prompt))
+  ) {
+    return args.useDefaults();
+  }
+
+  return args.promptForCustom();
+}
+
 async function askAddressArray(
   prompt: string,
   defaultValue: Address[],
@@ -886,60 +940,165 @@ function classifyFailureHint(message: string): string | undefined {
   return undefined;
 }
 
-function manifestSummary(manifest: DeploymentManifest): string {
-  const keyLines = manifest.steps.flatMap((step) => {
-    if (step.addresses === undefined) return [];
-    return Object.entries(step.addresses).map(
-      ([name, address]) => `- ${step.name}: ${name} = ${address}`,
-    );
-  });
+function toOperationStepStatus(status: StepStatus): OperationStatus {
+  if (status === "completed") return "complete";
+  if (status === "aborted") return "aborted";
+  return "prepared";
+}
 
-  return [
-    "# Initial Stack Deployment Summary",
-    "",
-    `- Run ID: \`${manifest.runId}\``,
-    `- Created At: \`${manifest.createdAt}\``,
-    `- GRVT Environment: \`${manifest.environment.grvtEnv}\``,
-    `- Aave Mode: \`${manifest.environment.aaveMode}\``,
-    `- Parameter Dir: \`${relativePath(manifest.environment.parameterDir)}\``,
-    `- Repeat Step Confirmations: \`${String(manifest.environment.repeatStepConfirmations)}\``,
-    `- Network: \`${manifest.network.name}\` (chainId \`${manifest.network.chainId}\`)`,
-    `- Deployer: \`${manifest.network.deployer}\``,
-    `- Artifacts Dir: \`${manifest.artifactsDir}\``,
-    "",
-    "## Source Parameter Files",
-    ...Object.entries(manifest.sourceParameterFiles).map(
-      ([name, file]) => `- ${name}: \`${relativePath(file)}\``,
+function initialStackRecordStatus(
+  manifest: DeploymentManifest,
+): OperationStatus {
+  if (manifest.steps.some((step) => step.status === "aborted")) {
+    return "aborted";
+  }
+  if (
+    manifest.steps.length > 0 &&
+    manifest.steps.every((step) => step.status === "completed")
+  ) {
+    return manifest.environment.grvtEnv === "production"
+      ? "awaiting_handoff"
+      : "complete";
+  }
+  return "prepared";
+}
+
+function stepAddressesOrUndefined(
+  manifest: DeploymentManifest,
+  stepName: string,
+): Record<string, string> | undefined {
+  return manifest.steps.find((step) => step.name === stepName)?.addresses;
+}
+
+function buildInitialStackOperationRecord(
+  manifest: DeploymentManifest,
+): OperationRecord {
+  const vaultCoreAddresses = stepAddressesOrUndefined(
+    manifest,
+    "Vault core deployment",
+  );
+  const strategyCoreAddresses = stepAddressesOrUndefined(
+    manifest,
+    "Strategy core deployment",
+  );
+  const timelockAddresses = stepAddressesOrUndefined(
+    manifest,
+    "Yield recipient timelock bootstrap",
+  );
+  const nativeGatewayAddresses = stepAddressesOrUndefined(
+    manifest,
+    "Native gateways deployment",
+  );
+  const longLivedAuthority =
+    typeof manifest.resolvedParams.productionAuthorityPlan === "object" &&
+    manifest.resolvedParams.productionAuthorityPlan !== null &&
+    typeof (
+      manifest.resolvedParams.productionAuthorityPlan as {
+        finalVaultAdmin?: unknown;
+      }
+    ).finalVaultAdmin === "string"
+      ? (
+          manifest.resolvedParams.productionAuthorityPlan as {
+            finalVaultAdmin: string;
+          }
+        ).finalVaultAdmin
+      : String(
+          (manifest.resolvedParams.vaultCore as { deployAdmin?: unknown })
+            .deployAdmin ?? manifest.network.deployer,
+        );
+
+  return {
+    actor: {
+      longLivedAuthority,
+      signer: manifest.network.deployer,
+    },
+    chainId: manifest.network.chainId,
+    checklist:
+      manifest.environment.grvtEnv === "production"
+        ? [
+            "Run ops:production-admin-handoff before treating this deployment as live.",
+          ]
+        : [
+            "Review the saved record and run manual funding/allocation smoke checks.",
+          ],
+    createdAt: manifest.createdAt,
+    environment: manifest.environment.grvtEnv,
+    inputs: {
+      aaveMode: manifest.environment.aaveMode,
+      localMode: manifest.environment.localMode,
+      networkAlias: manifest.network.alias,
+      parameterDir: relativePath(manifest.environment.parameterDir),
+      repeatStepConfirmations: manifest.environment.repeatStepConfirmations,
+      resolvedParams: manifest.resolvedParams,
+      runPostDeployVerification: manifest.environment.runPostDeployVerification,
+      sourceParameterFiles: Object.fromEntries(
+        Object.entries(manifest.sourceParameterFiles).map(([key, value]) => [
+          key,
+          relativePath(value),
+        ]),
+      ),
+    },
+    kind: "initial-stack",
+    mode: "direct",
+    network: manifest.network.name,
+    outputs: {
+      networkAlias: manifest.network.alias,
+      nativeBridgeGatewayImplementation:
+        nativeGatewayAddresses?.nativeBridgeGatewayImplementation,
+      nativeBridgeGatewayProxy:
+        nativeGatewayAddresses?.nativeBridgeGatewayProxy,
+      nativeBridgeGatewayProxyAdmin:
+        nativeGatewayAddresses?.nativeBridgeGatewayProxyAdmin,
+      nativeVaultGateway: nativeGatewayAddresses?.nativeVaultGateway,
+      strategyImplementation: strategyCoreAddresses?.strategyImplementation,
+      strategyProxy: strategyCoreAddresses?.strategyProxy,
+      strategyProxyAdmin: strategyCoreAddresses?.strategyProxyAdmin,
+      vaultImplementation: vaultCoreAddresses?.vaultImplementation,
+      vaultProxy: vaultCoreAddresses?.vaultProxy,
+      vaultProxyAdmin: vaultCoreAddresses?.vaultProxyAdmin,
+      yieldRecipientTimelockController:
+        timelockAddresses?.yieldRecipientTimelockController,
+    },
+    recordId: manifest.runId,
+    schemaVersion: OPERATION_RECORD_SCHEMA_VERSION,
+    status: initialStackRecordStatus(manifest),
+    steps: manifest.steps.map(
+      (step): OperationStep => ({
+        addresses: step.addresses,
+        artifacts:
+          step.logFiles === undefined
+            ? undefined
+            : [
+                { path: relativePath(step.logFiles.stdout) },
+                { path: relativePath(step.logFiles.stderr) },
+              ],
+        command: step.command,
+        completedAt: step.completedAt,
+        deploymentId: extractDeploymentId(step.command),
+        duration: step.duration,
+        label: step.name,
+        logFiles:
+          step.logFiles === undefined
+            ? undefined
+            : {
+                stderr: relativePath(step.logFiles.stderr),
+                stdout: relativePath(step.logFiles.stdout),
+              },
+        nextAction: step.nextAction,
+        notes: [
+          ...(step.notes ?? []),
+          ...(step.nextAction === undefined ? [] : [step.nextAction]),
+          ...(step.command === undefined ? [] : [step.command]),
+        ],
+        startedAt: step.startedAt,
+        status: toOperationStepStatus(step.status),
+      }),
     ),
-    "",
-    "## Steps",
-    ...manifest.steps.map((step) => {
-      const lines = [`- ${step.name}: ${step.status}`];
-      if (step.duration !== undefined) {
-        lines.push(`  - duration: \`${step.duration}\``);
-      }
-      if (step.paramsFile !== undefined) {
-        lines.push(`  - params: \`${relativePath(step.paramsFile)}\``);
-      }
-      if (step.logFiles !== undefined) {
-        lines.push(`  - stdout: \`${relativePath(step.logFiles.stdout)}\``);
-        lines.push(`  - stderr: \`${relativePath(step.logFiles.stderr)}\``);
-      }
-      if (step.nextAction !== undefined) {
-        lines.push(`  - next: ${step.nextAction}`);
-      }
-      return lines.join("\n");
-    }),
-    "",
-    "## Key Addresses",
-    ...(keyLines.length > 0 ? keyLines : ["- none recorded"]),
-    "",
-  ].join("\n");
+  };
 }
 
 function persistManifest(runDir: string, manifest: DeploymentManifest) {
-  writeJson(join(runDir, "manifest.json"), manifest);
-  writeFileSync(join(runDir, "summary.md"), `${manifestSummary(manifest)}\n`);
+  writeOperationRecord(runDir, buildInitialStackOperationRecord(manifest));
 }
 
 async function readTokenMetadata(
@@ -964,6 +1123,91 @@ async function readTokenMetadata(
     }
   }
   return metadata;
+}
+
+async function requireDeployedContract(
+  publicClient: {
+    getBytecode(args: { address: Address }): Promise<Hex | undefined>;
+  },
+  address: Address,
+  label: string,
+) {
+  const bytecode = await publicClient.getBytecode({ address });
+  if (bytecode === undefined || bytecode === "0x") {
+    throw new Error(`${label} is not a deployed contract: ${address}`);
+  }
+}
+
+function requireUsdtMetadata(
+  metadata: ReadonlyContractMetadata,
+  address: Address,
+): void {
+  if (metadata.symbol === undefined) {
+    throw new Error(`USDT token metadata is missing symbol(): ${address}`);
+  }
+  if (metadata.decimals === undefined) {
+    throw new Error(`USDT token metadata is missing decimals(): ${address}`);
+  }
+  if (metadata.symbol.toUpperCase() !== "USDT") {
+    throw new Error(
+      `configured token symbol must be USDT, received ${metadata.symbol}: ${address}`,
+    );
+  }
+  if (metadata.decimals !== 6) {
+    throw new Error(
+      `configured USDT token must use 6 decimals, received ${String(metadata.decimals)}: ${address}`,
+    );
+  }
+}
+
+async function validateUsdtToken(args: {
+  address: Address;
+  label: string;
+  publicClient: PublicClient;
+}): Promise<ReadonlyContractMetadata> {
+  await requireDeployedContract(args.publicClient, args.address, args.label);
+  const metadata = await readTokenMetadata(args.publicClient, args.address);
+  requireUsdtMetadata(metadata, args.address);
+  renderTokenMetadataSummary(metadata);
+  return metadata;
+}
+
+async function resolveUsdtTokenAddress(args: {
+  configuredAddress?: Address;
+  prompt: string;
+  publicClient: PublicClient;
+}): Promise<{ metadata: ReadonlyContractMetadata; token: Address }> {
+  if (args.configuredAddress !== undefined) {
+    const metadata = await validateUsdtToken({
+      address: args.configuredAddress,
+      label: "Configured USDT token",
+      publicClient: args.publicClient,
+    });
+    return {
+      metadata,
+      token: args.configuredAddress,
+    };
+  }
+
+  const token = await askAddress(args.prompt);
+
+  try {
+    const metadata = await validateUsdtToken({
+      address: token,
+      label: args.prompt,
+      publicClient: args.publicClient,
+    });
+    return { metadata, token };
+  } catch (error) {
+    console.log(
+      chalk.yellow(
+        `${emoji.get("warning")} ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ),
+    );
+    return resolveUsdtTokenAddress(args);
+  }
 }
 
 async function readProxyAdminAddress(
@@ -994,6 +1238,22 @@ async function validateAaveStrategyPrerequisites(args: {
   publicClient: PublicClient;
   underlyingToken: Address;
 }) {
+  await requireDeployedContract(
+    args.publicClient,
+    args.underlyingToken,
+    "underlying token",
+  );
+  await requireDeployedContract(
+    args.publicClient,
+    args.aTokenAddress,
+    "aToken",
+  );
+  await requireDeployedContract(
+    args.publicClient,
+    args.aavePoolAddress,
+    "Aave pool",
+  );
+
   const linkedUnderlying = normalizeAddress(
     String(
       await args.publicClient.readContract({
@@ -1039,8 +1299,6 @@ async function validateAaveStrategyPrerequisites(args: {
 async function runCommand(
   command: string,
   args: string[],
-  stdoutPath: string,
-  stderrPath: string,
   extraEnv?: Record<string, string>,
 ): Promise<CommandResult> {
   const stdoutChunks: string[] = [];
@@ -1069,8 +1327,6 @@ async function runCommand(
 
   const stdout = stdoutChunks.join("");
   const stderr = stderrChunks.join("");
-  writeFileSync(stdoutPath, stdout);
-  writeFileSync(stderrPath, stderr);
   return { code, stderr, stdout };
 }
 
@@ -1089,7 +1345,7 @@ function readIgnitionDeployedAddresses(
 
 function deploymentCommandText(
   modulePath: string,
-  paramsPath: string,
+  paramsFileName: string,
   deploymentId: string,
   networkName: string,
 ): string {
@@ -1097,9 +1353,17 @@ function deploymentCommandText(
     "npx hardhat ignition deploy",
     modulePath,
     `--network ${networkName}`,
-    `--parameters ${relativePath(paramsPath)}`,
+    `--parameters <temporary:${paramsFileName}>`,
     `--deployment-id ${deploymentId}`,
     "--reset",
+  ].join(" ");
+}
+
+function verificationCommandText(runDir: string): string {
+  return [
+    "npx tsx",
+    "./scripts/verify/verify-initial-stack.ts",
+    `--run-dir ${relativePath(runDir)}`,
   ].join(" ");
 }
 
@@ -1274,13 +1538,6 @@ async function resolveLocalParams(
       defaultATokenName(underlyingMetadata, grvtEnvironment),
     aTokenSymbol:
       aTokenMetadata.symbol ?? defaultATokenSymbol(underlyingMetadata),
-    mockUnderlyingTokenDecimals: underlyingMetadata.decimals ?? 6,
-    mockUnderlyingTokenName:
-      underlyingMetadata.name ??
-      defaultMockUnderlyingToken(grvtEnvironment).name,
-    mockUnderlyingTokenSymbol:
-      underlyingMetadata.symbol ??
-      defaultMockUnderlyingToken(grvtEnvironment).symbol,
     nativeGateways: {
       bridgeHub: localPrereqs.bridgeHub,
       grvtBridgeProxyFeeToken: localPrereqs.grvtBridgeProxyFeeToken,
@@ -1327,6 +1584,292 @@ async function resolveLocalParams(
   };
 }
 
+async function collectVaultCoreParams(args: {
+  deployerAddress: Address;
+  grvtEnvironment: GrvtEnvironment;
+  sources: ParameterSources;
+}): Promise<VaultCoreParams> {
+  const configuredFinalVaultAdmin = defaultAddressValue(
+    args.sources.vaultCoreSource.deployAdmin,
+  );
+  const deployAdmin =
+    args.grvtEnvironment === "production"
+      ? await askAddress(
+          "Bootstrap vault admin / vault ProxyAdmin owner",
+          args.deployerAddress,
+        )
+      : await askAddress(
+          "Vault admin / vault ProxyAdmin owner",
+          defaultAddressValue(
+            args.sources.vaultCoreSource.deployAdmin,
+            args.deployerAddress,
+          ),
+        );
+  const finalVaultAdmin =
+    args.grvtEnvironment === "production"
+      ? await askDistinctAddress(
+          "Final vault admin after handoff",
+          deployAdmin,
+          configuredFinalVaultAdmin,
+        )
+      : undefined;
+  const coreDefaults = {
+    bridgeHub: defaultAddressValue(args.sources.vaultCoreSource.bridgeHub),
+    grvtBridgeProxyFeeToken: defaultAddressValue(
+      args.sources.vaultCoreSource.grvtBridgeProxyFeeToken,
+    ),
+    l2ChainId: parseBigintLike(
+      args.sources.vaultCoreSource.l2ChainId ?? "327n",
+      "l2ChainId",
+    ),
+    l2ExchangeRecipient: defaultAddressValue(
+      args.sources.vaultCoreSource.l2ExchangeRecipient,
+      deployAdmin,
+    ),
+    wrappedNativeToken: defaultAddressValue(
+      args.sources.vaultCoreSource.wrappedNativeToken,
+    ),
+    yieldRecipient: defaultAddressValue(
+      args.sources.vaultCoreSource.yieldRecipient,
+    ),
+  };
+
+  const defaultsAvailable =
+    coreDefaults.bridgeHub !== undefined &&
+    coreDefaults.grvtBridgeProxyFeeToken !== undefined &&
+    coreDefaults.l2ExchangeRecipient !== undefined &&
+    coreDefaults.wrappedNativeToken !== undefined &&
+    coreDefaults.yieldRecipient !== undefined &&
+    !sameAddress(coreDefaults.yieldRecipient, deployAdmin);
+
+  const selectedCoreValues = await chooseConfiguredValues({
+    available: defaultsAvailable,
+    lines: [
+      `bridgeHub: ${coreDefaults.bridgeHub}`,
+      `fee token: ${coreDefaults.grvtBridgeProxyFeeToken}`,
+      `l2ChainId: ${bigintText(coreDefaults.l2ChainId)}`,
+      `l2ExchangeRecipient: ${coreDefaults.l2ExchangeRecipient}`,
+      `wrappedNativeToken: ${coreDefaults.wrappedNativeToken}`,
+      `yieldRecipient: ${coreDefaults.yieldRecipient}`,
+    ],
+    prompt: "Use these vault/core defaults?",
+    title: "Default vault/core values",
+    promptForCustom: async () => ({
+      bridgeHub: await askAddress("BridgeHub address", coreDefaults.bridgeHub),
+      grvtBridgeProxyFeeToken: await askAddress(
+        "GRVT bridge-proxy fee token",
+        coreDefaults.grvtBridgeProxyFeeToken,
+      ),
+      l2ChainId: await askBigint("L2 chain id", coreDefaults.l2ChainId),
+      l2ExchangeRecipient: await askAddress(
+        "L2 exchange recipient",
+        coreDefaults.l2ExchangeRecipient,
+      ),
+      wrappedNativeToken: await askAddress(
+        "Wrapped native token",
+        coreDefaults.wrappedNativeToken,
+      ),
+      yieldRecipient: await askDistinctAddress(
+        "Initial yield recipient",
+        deployAdmin,
+        coreDefaults.yieldRecipient,
+      ),
+    }),
+    useDefaults: () => ({
+      bridgeHub: coreDefaults.bridgeHub!,
+      grvtBridgeProxyFeeToken: coreDefaults.grvtBridgeProxyFeeToken!,
+      l2ChainId: coreDefaults.l2ChainId,
+      l2ExchangeRecipient: coreDefaults.l2ExchangeRecipient!,
+      wrappedNativeToken: coreDefaults.wrappedNativeToken!,
+      yieldRecipient: coreDefaults.yieldRecipient!,
+    }),
+  });
+
+  return {
+    deployAdmin,
+    finalVaultAdmin,
+    ...selectedCoreValues,
+  };
+}
+
+async function collectStrategyPrerequisites(args: {
+  aaveMode: AaveMode;
+  grvtEnvironment: GrvtEnvironment;
+  publicClient: PublicClient;
+  strategyCoreSource: JsonRecord;
+}): Promise<StrategyPrerequisiteSelections> {
+  const configuredUsdtAddress = defaultAddressValue(
+    args.strategyCoreSource.underlyingToken,
+  );
+  const selectedUnderlyingToken = await resolveUsdtTokenAddress({
+    configuredAddress: configuredUsdtAddress,
+    prompt:
+      args.aaveMode === "mock-aave"
+        ? "USDT token for mock Aave strategy"
+        : "USDT token for live Aave strategy",
+    publicClient: args.publicClient,
+  });
+  const underlyingToken = selectedUnderlyingToken.token;
+  const metadata = selectedUnderlyingToken.metadata;
+
+  if (args.aaveMode === "mock-aave") {
+    const selections = {
+      aTokenName: defaultATokenName(metadata, args.grvtEnvironment),
+      aTokenSymbol: defaultATokenSymbol(metadata),
+      strategyName: defaultStrategyName(
+        args.strategyCoreSource,
+        metadata,
+        args.grvtEnvironment,
+        args.aaveMode,
+      ),
+      underlyingToken,
+    };
+
+    renderDefaultGroup("Mock Aave deployment defaults", [
+      `underlying token: ${underlyingToken}`,
+      `aToken name: ${selections.aTokenName}`,
+      `aToken symbol: ${selections.aTokenSymbol}`,
+      `strategyName: ${selections.strategyName}`,
+    ]);
+
+    return selections;
+  }
+
+  const liveDefaults = {
+    aToken: defaultAddressValue(args.strategyCoreSource.aToken),
+    aavePool: defaultAddressValue(args.strategyCoreSource.aavePool),
+    strategyName: defaultStrategyName(
+      args.strategyCoreSource,
+      metadata,
+      args.grvtEnvironment,
+      args.aaveMode,
+    ),
+  };
+
+  const liveSelections = await chooseConfiguredValues({
+    available:
+      liveDefaults.aToken !== undefined && liveDefaults.aavePool !== undefined,
+    lines: [
+      `aavePool: ${liveDefaults.aavePool}`,
+      `aToken: ${liveDefaults.aToken}`,
+      `strategyName: ${liveDefaults.strategyName}`,
+    ],
+    prompt: "Use these live Aave values?",
+    title: "Configured live Aave values",
+    promptForCustom: async () => ({
+      aToken: await askAddress("Aave aToken", liveDefaults.aToken),
+      aavePool: await askAddress("Aave pool", liveDefaults.aavePool),
+      strategyName: await askText("Strategy name", liveDefaults.strategyName),
+    }),
+    useDefaults: () => ({
+      aToken: liveDefaults.aToken,
+      aavePool: liveDefaults.aavePool,
+      strategyName: liveDefaults.strategyName,
+    }),
+  });
+
+  return {
+    ...liveSelections,
+    aTokenName: "",
+    aTokenSymbol: "",
+    underlyingToken,
+  };
+}
+
+async function collectProxyAdminOwners(args: {
+  defaultAuthority: Address;
+  sources: ParameterSources;
+}): Promise<ProxyAdminOwners> {
+  const operatorDefaults = resolveOperatorDefaults(
+    args.sources,
+    args.defaultAuthority,
+  );
+
+  return chooseConfiguredValues({
+    lines: [
+      `strategy ProxyAdmin owner: ${operatorDefaults.strategyProxyAdminOwner}`,
+      `native gateway ProxyAdmin owner: ${operatorDefaults.nativeProxyAdminOwner}`,
+    ],
+    prompt: "Use these proxy-admin defaults?",
+    title: "Default proxy-admin owners",
+    promptForCustom: async () => ({
+      nativeProxyAdminOwner: await askAddress(
+        "NativeBridgeGateway ProxyAdmin owner",
+        operatorDefaults.nativeProxyAdminOwner,
+      ),
+      strategyProxyAdminOwner: await askAddress(
+        "Strategy ProxyAdmin owner",
+        operatorDefaults.strategyProxyAdminOwner,
+      ),
+    }),
+    useDefaults: () => ({
+      nativeProxyAdminOwner: operatorDefaults.nativeProxyAdminOwner,
+      strategyProxyAdminOwner: operatorDefaults.strategyProxyAdminOwner,
+    }),
+  });
+}
+
+async function collectRolesAndTimelockSelections(args: {
+  defaultAuthority: Address;
+  sources: ParameterSources;
+}): Promise<RoleAndTimelockSelections> {
+  const operatorDefaults = resolveOperatorDefaults(
+    args.sources,
+    args.defaultAuthority,
+  );
+  const timelockDefaults = resolveTimelockDefaults(
+    args.sources.timelockSource,
+    args.defaultAuthority,
+  );
+
+  return chooseConfiguredValues({
+    lines: [
+      `allocator: ${operatorDefaults.allocator}`,
+      `rebalancer: ${operatorDefaults.rebalancer}`,
+      `pauser: ${operatorDefaults.pauser}`,
+      `timelock minDelay: ${bigintText(timelockDefaults.minDelay)}`,
+      `timelock admin: ${timelockDefaults.admin}`,
+      `timelock proposers: ${timelockDefaults.proposers.join(", ")}`,
+      `timelock executors: ${timelockDefaults.executors.join(", ")}`,
+    ],
+    prompt: "Use these operator-role and timelock defaults?",
+    title: "Default operator roles and timelock settings",
+    promptForCustom: async () => ({
+      admin: await askAddress("Yield timelock admin", timelockDefaults.admin),
+      allocator: await askAddress(
+        "Allocator role holder",
+        operatorDefaults.allocator,
+      ),
+      executors: await askAddressArray(
+        "Yield timelock executors (comma-separated)",
+        timelockDefaults.executors,
+      ),
+      minDelay: await askBigint(
+        "Yield timelock minDelay",
+        timelockDefaults.minDelay,
+      ),
+      pauser: await askAddress("Pauser role holder", operatorDefaults.pauser),
+      proposers: await askAddressArray(
+        "Yield timelock proposers (comma-separated)",
+        timelockDefaults.proposers,
+      ),
+      rebalancer: await askAddress(
+        "Rebalancer role holder",
+        operatorDefaults.rebalancer,
+      ),
+    }),
+    useDefaults: () => ({
+      admin: timelockDefaults.admin,
+      allocator: operatorDefaults.allocator,
+      executors: timelockDefaults.executors,
+      minDelay: timelockDefaults.minDelay,
+      pauser: operatorDefaults.pauser,
+      proposers: timelockDefaults.proposers,
+      rebalancer: operatorDefaults.rebalancer,
+    }),
+  });
+}
+
 async function promptResolvedParams(args: {
   aaveMode: AaveMode;
   deployerAddress: Address;
@@ -1351,263 +1894,30 @@ async function promptResolvedParams(args: {
     "Missing or placeholder values will be asked interactively. Valid defaults can be accepted in groups.",
   );
 
-  const deployAdmin = await askAddress(
-    "Vault admin / vault ProxyAdmin owner",
-    defaultAddressValue(
-      sources.vaultCoreSource.deployAdmin,
-      args.deployerAddress,
-    ),
-  );
-
-  const coreDefaults = {
-    bridgeHub: defaultAddressValue(sources.vaultCoreSource.bridgeHub),
-    grvtBridgeProxyFeeToken: defaultAddressValue(
-      sources.vaultCoreSource.grvtBridgeProxyFeeToken,
-    ),
-    l2ChainId: parseBigintLike(
-      sources.vaultCoreSource.l2ChainId ?? "327n",
-      "l2ChainId",
-    ),
-    l2ExchangeRecipient: defaultAddressValue(
-      sources.vaultCoreSource.l2ExchangeRecipient,
-      deployAdmin,
-    ),
-    wrappedNativeToken: defaultAddressValue(
-      sources.vaultCoreSource.wrappedNativeToken,
-    ),
-    yieldRecipient: defaultAddressValue(sources.vaultCoreSource.yieldRecipient),
-  };
-
-  let bridgeHub: Address;
-  let grvtBridgeProxyFeeToken: Address;
-  let l2ChainId: bigint;
-  let l2ExchangeRecipient: Address;
-  let wrappedNativeToken: Address;
-  let yieldRecipient: Address;
-
-  const canUseCoreDefaults =
-    coreDefaults.bridgeHub !== undefined &&
-    coreDefaults.grvtBridgeProxyFeeToken !== undefined &&
-    coreDefaults.l2ExchangeRecipient !== undefined &&
-    coreDefaults.wrappedNativeToken !== undefined &&
-    coreDefaults.yieldRecipient !== undefined &&
-    !sameAddress(coreDefaults.yieldRecipient, deployAdmin);
-
-  if (
-    canUseCoreDefaults &&
-    (await askUseDefaults(
-      "Default vault/core values",
-      [
-        `bridgeHub: ${coreDefaults.bridgeHub}`,
-        `fee token: ${coreDefaults.grvtBridgeProxyFeeToken}`,
-        `l2ChainId: ${bigintText(coreDefaults.l2ChainId)}`,
-        `l2ExchangeRecipient: ${coreDefaults.l2ExchangeRecipient}`,
-        `wrappedNativeToken: ${coreDefaults.wrappedNativeToken}`,
-        `yieldRecipient: ${coreDefaults.yieldRecipient}`,
-      ],
-      "Use these vault/core defaults?",
-    ))
-  ) {
-    bridgeHub = coreDefaults.bridgeHub!;
-    grvtBridgeProxyFeeToken = coreDefaults.grvtBridgeProxyFeeToken!;
-    l2ChainId = coreDefaults.l2ChainId;
-    l2ExchangeRecipient = coreDefaults.l2ExchangeRecipient!;
-    wrappedNativeToken = coreDefaults.wrappedNativeToken!;
-    yieldRecipient = coreDefaults.yieldRecipient!;
-  } else {
-    bridgeHub = await askAddress("BridgeHub address", coreDefaults.bridgeHub);
-    grvtBridgeProxyFeeToken = await askAddress(
-      "GRVT bridge-proxy fee token",
-      coreDefaults.grvtBridgeProxyFeeToken,
-    );
-    l2ChainId = await askBigint("L2 chain id", coreDefaults.l2ChainId);
-    l2ExchangeRecipient = await askAddress(
-      "L2 exchange recipient",
-      coreDefaults.l2ExchangeRecipient,
-    );
-    wrappedNativeToken = await askAddress(
-      "Wrapped native token",
-      coreDefaults.wrappedNativeToken,
-    );
-    yieldRecipient = await askDistinctAddress(
-      "Initial yield recipient",
-      deployAdmin,
-      coreDefaults.yieldRecipient,
-    );
-  }
-
-  let underlyingToken: Address;
-  let metadata: ReadonlyContractMetadata;
-  let aTokenName = "";
-  let aTokenSymbol = "";
-  let strategyName = "";
-  let aavePool: Address | undefined;
-  let aToken: Address | undefined;
-  let mockUnderlyingTokenName = "";
-  let mockUnderlyingTokenSymbol = "";
-  let mockUnderlyingTokenDecimals = 6;
-
-  if (args.aaveMode === "mock-aave") {
-    const mockUnderlyingDefaults = defaultMockUnderlyingToken(
-      args.grvtEnvironment,
-    );
-    underlyingToken = zeroAddress;
-    mockUnderlyingTokenName = mockUnderlyingDefaults.name;
-    mockUnderlyingTokenSymbol = mockUnderlyingDefaults.symbol;
-    mockUnderlyingTokenDecimals = mockUnderlyingDefaults.decimals;
-    metadata = {
-      decimals: mockUnderlyingTokenDecimals,
-      name: mockUnderlyingTokenName,
-      symbol: mockUnderlyingTokenSymbol,
-    };
-    aTokenName = defaultATokenName(metadata, args.grvtEnvironment);
-    aTokenSymbol = defaultATokenSymbol(metadata);
-    strategyName = defaultStrategyName(
-      sources.strategyCoreSource,
-      metadata,
-      args.grvtEnvironment,
-      args.aaveMode,
-    );
-
-    renderDefaultGroup("Mock Aave deployment defaults", [
-      `underlying token name: ${mockUnderlyingTokenName}`,
-      `underlying token symbol: ${mockUnderlyingTokenSymbol}`,
-      `underlying token decimals: ${String(mockUnderlyingTokenDecimals)}`,
-      `aToken name: ${aTokenName}`,
-      `aToken symbol: ${aTokenSymbol}`,
-      `strategyName: ${strategyName}`,
-    ]);
-  } else {
-    underlyingToken = await askAddress(
-      "Underlying token for live Aave strategy",
-      defaultAddressValue(sources.strategyCoreSource.underlyingToken),
-    );
-    metadata = await readTokenMetadata(args.publicClient, underlyingToken);
-    renderTokenMetadataSummary(metadata);
-
-    const liveDefaults = {
-      aToken: defaultAddressValue(sources.strategyCoreSource.aToken),
-      aavePool: defaultAddressValue(sources.strategyCoreSource.aavePool),
-      strategyName: defaultStrategyName(
-        sources.strategyCoreSource,
-        metadata,
-        args.grvtEnvironment,
-        args.aaveMode,
-      ),
-    };
-
-    if (
-      liveDefaults.aToken !== undefined &&
-      liveDefaults.aavePool !== undefined &&
-      (await askUseDefaults(
-        "Configured live Aave values",
-        [
-          `aavePool: ${liveDefaults.aavePool}`,
-          `aToken: ${liveDefaults.aToken}`,
-          `strategyName: ${liveDefaults.strategyName}`,
-        ],
-        "Use these live Aave values?",
-      ))
-    ) {
-      aavePool = liveDefaults.aavePool;
-      aToken = liveDefaults.aToken;
-      strategyName = liveDefaults.strategyName;
-    } else {
-      aavePool = await askAddress("Aave pool", liveDefaults.aavePool);
-      aToken = await askAddress("Aave aToken", liveDefaults.aToken);
-      strategyName = await askText("Strategy name", liveDefaults.strategyName);
-    }
-  }
-
-  const operatorDefaults = resolveOperatorDefaults(sources, deployAdmin);
-  let strategyProxyAdminOwner: Address;
-  let nativeProxyAdminOwner: Address;
-
-  if (
-    await askUseDefaults(
-      "Default proxy-admin owners",
-      [
-        `strategy ProxyAdmin owner: ${operatorDefaults.strategyProxyAdminOwner}`,
-        `native gateway ProxyAdmin owner: ${operatorDefaults.nativeProxyAdminOwner}`,
-      ],
-      "Use these proxy-admin defaults?",
-    )
-  ) {
-    strategyProxyAdminOwner = operatorDefaults.strategyProxyAdminOwner;
-    nativeProxyAdminOwner = operatorDefaults.nativeProxyAdminOwner;
-  } else {
-    strategyProxyAdminOwner = await askAddress(
-      "Strategy ProxyAdmin owner",
-      operatorDefaults.strategyProxyAdminOwner,
-    );
-    nativeProxyAdminOwner = await askAddress(
-      "NativeBridgeGateway ProxyAdmin owner",
-      operatorDefaults.nativeProxyAdminOwner,
-    );
-  }
-
-  const timelockDefaults = resolveTimelockDefaults(
-    sources.timelockSource,
-    deployAdmin,
-  );
-  let allocator: Address;
-  let rebalancer: Address;
-  let pauser: Address;
-  let minDelay: bigint;
-  let proposers: Address[];
-  let executors: Address[];
-  let timelockAdmin: Address;
-
-  if (
-    await askUseDefaults(
-      "Default operator roles and timelock settings",
-      [
-        `allocator: ${operatorDefaults.allocator}`,
-        `rebalancer: ${operatorDefaults.rebalancer}`,
-        `pauser: ${operatorDefaults.pauser}`,
-        `timelock minDelay: ${bigintText(timelockDefaults.minDelay)}`,
-        `timelock admin: ${timelockDefaults.admin}`,
-        `timelock proposers: ${timelockDefaults.proposers.join(", ")}`,
-        `timelock executors: ${timelockDefaults.executors.join(", ")}`,
-      ],
-      "Use these operator-role and timelock defaults?",
-    )
-  ) {
-    allocator = operatorDefaults.allocator;
-    rebalancer = operatorDefaults.rebalancer;
-    pauser = operatorDefaults.pauser;
-    minDelay = timelockDefaults.minDelay;
-    proposers = timelockDefaults.proposers;
-    executors = timelockDefaults.executors;
-    timelockAdmin = timelockDefaults.admin;
-  } else {
-    allocator = await askAddress(
-      "Allocator role holder",
-      operatorDefaults.allocator,
-    );
-    rebalancer = await askAddress(
-      "Rebalancer role holder",
-      operatorDefaults.rebalancer,
-    );
-    pauser = await askAddress("Pauser role holder", operatorDefaults.pauser);
-    minDelay = await askBigint(
-      "Yield timelock minDelay",
-      timelockDefaults.minDelay,
-    );
-    proposers = await askAddressArray(
-      "Yield timelock proposers (comma-separated)",
-      timelockDefaults.proposers,
-    );
-    executors = await askAddressArray(
-      "Yield timelock executors (comma-separated)",
-      timelockDefaults.executors,
-    );
-    timelockAdmin = await askAddress(
-      "Yield timelock admin",
-      timelockDefaults.admin,
-    );
-  }
-
+  const vaultCore = await collectVaultCoreParams({
+    deployerAddress: args.deployerAddress,
+    grvtEnvironment: args.grvtEnvironment,
+    sources,
+  });
+  const longLivedAuthority =
+    args.grvtEnvironment === "production" &&
+    vaultCore.finalVaultAdmin !== undefined
+      ? vaultCore.finalVaultAdmin
+      : vaultCore.deployAdmin;
+  const strategyPrereqs = await collectStrategyPrerequisites({
+    aaveMode: args.aaveMode,
+    grvtEnvironment: args.grvtEnvironment,
+    publicClient: args.publicClient,
+    strategyCoreSource: sources.strategyCoreSource,
+  });
+  const proxyAdminOwners = await collectProxyAdminOwners({
+    defaultAuthority: longLivedAuthority,
+    sources,
+  });
+  const roleAndTimelockSelections = await collectRolesAndTimelockSelections({
+    defaultAuthority: longLivedAuthority,
+    sources,
+  });
   const strategyCap = await askBigint(
     "Initial strategy cap (0n = Unlimited)",
     parseBigintLike(
@@ -1618,38 +1928,35 @@ async function promptResolvedParams(args: {
   const supportFlags = resolveSupportFlags(sources);
 
   return {
-    aTokenName,
-    aTokenSymbol,
-    mockUnderlyingTokenDecimals,
-    mockUnderlyingTokenName,
-    mockUnderlyingTokenSymbol,
+    aTokenName: strategyPrereqs.aTokenName,
+    aTokenSymbol: strategyPrereqs.aTokenSymbol,
+    productionAuthorityPlan:
+      args.grvtEnvironment === "production" &&
+      vaultCore.finalVaultAdmin !== undefined
+        ? {
+            bootstrapVaultAdmin: vaultCore.deployAdmin,
+            finalVaultAdmin: vaultCore.finalVaultAdmin,
+          }
+        : undefined,
     nativeGateways: {
-      bridgeHub,
-      grvtBridgeProxyFeeToken,
-      proxyAdminOwner: nativeProxyAdminOwner,
-      wrappedNativeToken,
+      bridgeHub: vaultCore.bridgeHub,
+      grvtBridgeProxyFeeToken: vaultCore.grvtBridgeProxyFeeToken,
+      proxyAdminOwner: proxyAdminOwners.nativeProxyAdminOwner,
+      wrappedNativeToken: vaultCore.wrappedNativeToken,
     },
     rolesBootstrap: {
-      allocator,
-      pauser,
-      rebalancer,
+      allocator: roleAndTimelockSelections.allocator,
+      pauser: roleAndTimelockSelections.pauser,
+      rebalancer: roleAndTimelockSelections.rebalancer,
     },
     strategyCore: {
-      aToken,
-      aavePool,
-      proxyAdminOwner: strategyProxyAdminOwner,
-      strategyName,
-      underlyingToken,
+      aToken: strategyPrereqs.aToken,
+      aavePool: strategyPrereqs.aavePool,
+      proxyAdminOwner: proxyAdminOwners.strategyProxyAdminOwner,
+      strategyName: strategyPrereqs.strategyName,
+      underlyingToken: strategyPrereqs.underlyingToken,
     },
-    vaultCore: {
-      bridgeHub,
-      deployAdmin,
-      grvtBridgeProxyFeeToken,
-      l2ChainId,
-      l2ExchangeRecipient,
-      wrappedNativeToken,
-      yieldRecipient,
-    },
+    vaultCore,
     vaultTokenConfig: {
       supported: supportFlags.supported,
     },
@@ -1659,10 +1966,10 @@ async function promptResolvedParams(args: {
       vaultTokenSupported: supportFlags.supported,
     },
     yieldRecipientBootstrap: {
-      admin: timelockAdmin,
-      executors,
-      minDelay,
-      proposers,
+      admin: roleAndTimelockSelections.admin,
+      executors: roleAndTimelockSelections.executors,
+      minDelay: roleAndTimelockSelections.minDelay,
+      proposers: roleAndTimelockSelections.proposers,
     },
   };
 }
@@ -1675,13 +1982,17 @@ function renderResolvedConfig(args: {
 }) {
   renderSection(
     "Resolved Deployment Plan",
-    "These values will be written into temporary per-run parameter files. Source parameter files remain untouched.",
+    "These values will be staged in temporary per-step parameter files. Source parameter files remain untouched.",
   );
   const lines = [
     `${emoji.get("bookmark_tabs")} GRVT environment: ${args.grvtEnvironment}`,
     `${emoji.get("shield")} Aave mode: ${aaveModeLabel(args.aaveMode)}`,
     `${emoji.get("file_folder")} parameter dir: ${relativePath(args.parameterDir)}`,
-    `${emoji.get("bust_in_silhouette")} deployAdmin: ${args.params.vaultCore.deployAdmin}`,
+    `${
+      args.params.productionAuthorityPlan === undefined
+        ? emoji.get("bust_in_silhouette")
+        : emoji.get("construction_worker")
+    } deployAdmin: ${args.params.vaultCore.deployAdmin}`,
     `${emoji.get("link")} bridgeHub: ${args.params.vaultCore.bridgeHub}`,
     `${emoji.get("credit_card")} fee token: ${args.params.vaultCore.grvtBridgeProxyFeeToken}`,
     `${emoji.get("droplet")} wrappedNativeToken: ${args.params.vaultCore.wrappedNativeToken}`,
@@ -1694,14 +2005,20 @@ function renderResolvedConfig(args: {
     `${emoji.get("hourglass")} timelock delay: ${bigintText(args.params.yieldRecipientBootstrap.minDelay)}`,
   ];
 
+  if (args.params.productionAuthorityPlan !== undefined) {
+    lines.push(
+      `${emoji.get("shield")} finalVaultAdmin: ${args.params.productionAuthorityPlan.finalVaultAdmin}`,
+    );
+  }
+
   if (args.aaveMode === "mock-aave") {
     lines.push(
-      `${emoji.get("package")} mock underlying: ${args.params.mockUnderlyingTokenName} (${args.params.mockUnderlyingTokenSymbol}, ${String(args.params.mockUnderlyingTokenDecimals)} decimals)`,
+      `${emoji.get("package")} underlyingToken: ${args.params.strategyCore.underlyingToken}`,
     );
-    lines.push(`${emoji.get("package")} underlyingToken: deployed in Step 1`);
     lines.push(
       `${emoji.get("sparkles")} mock aToken: ${args.params.aTokenName} (${args.params.aTokenSymbol})`,
     );
+    lines.push(`${emoji.get("bank")} mock Aave pool: deployed in Step 1`);
   } else {
     lines.push(
       `${emoji.get("package")} underlyingToken: ${args.params.strategyCore.underlyingToken}`,
@@ -1725,6 +2042,7 @@ function createInitialManifest(
   localMode: boolean,
   parameterDir: string,
   repeatStepConfirmations: boolean,
+  runPostDeployVerification: boolean,
   runId: string,
   runDir: string,
   networkAlias: string,
@@ -1742,6 +2060,7 @@ function createInitialManifest(
       localMode,
       parameterDir,
       repeatStepConfirmations,
+      runPostDeployVerification,
     },
     network: {
       alias: networkAlias,
@@ -1752,9 +2071,10 @@ function createInitialManifest(
     resolvedParams: {
       aTokenName: params.aTokenName,
       aTokenSymbol: params.aTokenSymbol,
-      mockUnderlyingTokenDecimals: params.mockUnderlyingTokenDecimals,
-      mockUnderlyingTokenName: params.mockUnderlyingTokenName,
-      mockUnderlyingTokenSymbol: params.mockUnderlyingTokenSymbol,
+      productionAuthorityPlan:
+        params.productionAuthorityPlan === undefined
+          ? undefined
+          : { ...params.productionAuthorityPlan },
       nativeGateways: {
         ...params.nativeGateways,
       },
@@ -1800,13 +2120,21 @@ function createInitialManifest(
   };
 }
 
+function extractDeploymentId(command: string | undefined): string | undefined {
+  if (command === undefined) {
+    return undefined;
+  }
+
+  const match = command.match(/(?:^|\s)--deployment-id\s+([^\s]+)/);
+  return match?.[1];
+}
+
 function pushStep(
   manifest: DeploymentManifest,
   step: StepRecord,
   runDir: string,
 ) {
   manifest.steps.push(step);
-  persistManifest(runDir, manifest);
 }
 
 function updateStep(
@@ -1819,7 +2147,25 @@ function updateStep(
       candidate.name === step.name && candidate.startedAt === step.startedAt,
   );
   manifest.steps[index] = step;
-  persistManifest(runDir, manifest);
+}
+
+function mergeManifestResolvedSections(
+  manifest: DeploymentManifest,
+  runDir: string,
+  sectionPatches: Record<string, JsonRecord>,
+) {
+  manifest.resolvedParams = {
+    ...manifest.resolvedParams,
+    ...Object.fromEntries(
+      Object.entries(sectionPatches).map(([section, patch]) => [
+        section,
+        {
+          ...(manifest.resolvedParams[section] as JsonRecord | undefined),
+          ...patch,
+        },
+      ]),
+    ),
+  };
 }
 
 function recordResolvedPrerequisites(
@@ -1835,24 +2181,19 @@ function recordResolvedPrerequisites(
   resolvedParams.strategyCore.aavePool = aavePool;
   resolvedParams.vaultTokenConfig.vaultToken = underlyingToken;
   resolvedParams.vaultTokenStrategy.vaultToken = underlyingToken;
-  manifest.resolvedParams = {
-    ...manifest.resolvedParams,
+  mergeManifestResolvedSections(manifest, runDir, {
     strategyCore: {
-      ...(manifest.resolvedParams.strategyCore as JsonRecord),
       underlyingToken,
       aToken,
       aavePool,
     },
     vaultTokenConfig: {
-      ...(manifest.resolvedParams.vaultTokenConfig as JsonRecord),
       vaultToken: underlyingToken,
     },
     vaultTokenStrategy: {
-      ...(manifest.resolvedParams.vaultTokenStrategy as JsonRecord),
       vaultToken: underlyingToken,
     },
-  };
-  persistManifest(runDir, manifest);
+  });
 }
 
 function recordVaultProxy(
@@ -1867,34 +2208,26 @@ function recordVaultProxy(
   resolvedParams.rolesBootstrap.vaultProxy = vaultProxy;
   resolvedParams.yieldRecipientBootstrap.vaultProxy = vaultProxy;
   resolvedParams.nativeGateways.vaultProxy = vaultProxy;
-  manifest.resolvedParams = {
-    ...manifest.resolvedParams,
+  mergeManifestResolvedSections(manifest, runDir, {
     nativeGateways: {
-      ...(manifest.resolvedParams.nativeGateways as JsonRecord),
       vaultProxy,
     },
     rolesBootstrap: {
-      ...(manifest.resolvedParams.rolesBootstrap as JsonRecord),
       vaultProxy,
     },
     strategyCore: {
-      ...(manifest.resolvedParams.strategyCore as JsonRecord),
       vaultProxy,
     },
     vaultTokenConfig: {
-      ...(manifest.resolvedParams.vaultTokenConfig as JsonRecord),
       vaultProxy,
     },
     vaultTokenStrategy: {
-      ...(manifest.resolvedParams.vaultTokenStrategy as JsonRecord),
       vaultProxy,
     },
     yieldRecipientBootstrap: {
-      ...(manifest.resolvedParams.yieldRecipientBootstrap as JsonRecord),
       vaultProxy,
     },
-  };
-  persistManifest(runDir, manifest);
+  });
 }
 
 function recordStrategyProxy(
@@ -1904,14 +2237,40 @@ function recordStrategyProxy(
   strategyProxy: Address,
 ) {
   resolvedParams.vaultTokenStrategy.strategyProxy = strategyProxy;
-  manifest.resolvedParams = {
-    ...manifest.resolvedParams,
+  mergeManifestResolvedSections(manifest, runDir, {
     vaultTokenStrategy: {
-      ...(manifest.resolvedParams.vaultTokenStrategy as JsonRecord),
       strategyProxy,
     },
-  };
-  persistManifest(runDir, manifest);
+  });
+}
+
+function saveCommandLogs(
+  runDir: string,
+  logBaseName: string,
+  output: Pick<CommandResult, "stderr" | "stdout">,
+): { stderr: string; stdout: string } {
+  const logsDir = join(runDir, "logs");
+  ensureDir(logsDir);
+  const stdoutPath = join(logsDir, `${logBaseName}.stdout.log`);
+  const stderrPath = join(logsDir, `${logBaseName}.stderr.log`);
+  writeFileSync(stdoutPath, output.stdout);
+  writeFileSync(stderrPath, output.stderr);
+  return { stderr: stderrPath, stdout: stdoutPath };
+}
+
+async function withTemporaryParamsFile<T>(
+  fileName: string,
+  payload: unknown,
+  callback: (paramsPath: string) => Promise<T>,
+): Promise<T> {
+  const tempDir = mkdtempSync(join(tmpdir(), "defivault-initial-stack-"));
+  const paramsPath = join(tempDir, fileName);
+  writeJson5(paramsPath, payload);
+  try {
+    return await callback(paramsPath);
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
 }
 
 async function runIgnitionStep(args: {
@@ -1931,9 +2290,6 @@ async function runIgnitionStep(args: {
   summaryNotes?: string[];
   nextAction: string;
 }): Promise<Record<string, string>> {
-  const paramsPath = join(args.runDir, "params", args.paramsFileName);
-  writeJson5(paramsPath, { [args.moduleRootKey]: args.modulePayload });
-
   await confirmStep(
     args.stepName,
     args.nextAction,
@@ -1941,7 +2297,7 @@ async function runIgnitionStep(args: {
   );
   const commandText = deploymentCommandText(
     args.modulePath,
-    paramsPath,
+    args.paramsFileName,
     args.deploymentId,
     args.networkName,
   );
@@ -1953,57 +2309,49 @@ async function runIgnitionStep(args: {
     name: args.stepName,
     nextAction: args.nextAction,
     notes: args.summaryNotes,
-    paramsFile: paramsPath,
     startedAt,
     status: "pending",
   };
   pushStep(args.manifest, step, args.runDir);
-
-  const stdoutPath = join(
-    args.runDir,
-    "logs",
-    `${args.paramsFileName}.stdout.log`,
-  );
-  const stderrPath = join(
-    args.runDir,
-    "logs",
-    `${args.paramsFileName}.stderr.log`,
-  );
   const spinner = ora({
     discardStdin: false,
     text: `${emoji.get("rocket")} ${args.stepName} in progress...`,
   }).start();
   const startedAtMs = Date.now();
 
-  const result = await runCommand(
-    "npx",
-    [
-      "hardhat",
-      "ignition",
-      "deploy",
-      args.modulePath,
-      "--network",
-      args.networkName,
-      "--parameters",
-      paramsPath,
-      "--deployment-id",
-      args.deploymentId,
-      "--reset",
-    ],
-    stdoutPath,
-    stderrPath,
-    {
-      HARDHAT_IGNITION_CONFIRM_DEPLOYMENT: "true",
-      HARDHAT_IGNITION_CONFIRM_RESET: "true",
-    },
+  const result = await withTemporaryParamsFile(
+    args.paramsFileName,
+    { [args.moduleRootKey]: args.modulePayload },
+    (paramsPath) =>
+      runCommand(
+        "npx",
+        [
+          "hardhat",
+          "ignition",
+          "deploy",
+          args.modulePath,
+          "--network",
+          args.networkName,
+          "--parameters",
+          paramsPath,
+          "--deployment-id",
+          args.deploymentId,
+          "--reset",
+        ],
+        {
+          HARDHAT_IGNITION_CONFIRM_DEPLOYMENT: "true",
+          HARDHAT_IGNITION_CONFIRM_RESET: "true",
+        },
+      ),
   );
 
   if (result.code !== 0) {
     spinner.fail(`${emoji.get("x")} ${args.stepName} failed`);
     const hint = classifyFailureHint(`${result.stdout}\n${result.stderr}`);
+    const logFiles = saveCommandLogs(args.runDir, args.paramsFileName, result);
     step.duration = formatDuration(Date.now() - startedAtMs);
     step.completedAt = nowIso();
-    step.logFiles = { stderr: stderrPath, stdout: stdoutPath };
+    step.logFiles = logFiles;
     step.notes = [
       ...(step.notes ?? []),
       "Hardhat Ignition returned a non-zero exit code.",
@@ -2035,7 +2383,6 @@ async function runIgnitionStep(args: {
     step.addresses = summaryAddresses;
     step.duration = formatDuration(Date.now() - startedAtMs);
     step.completedAt = nowIso();
-    step.logFiles = { stderr: stderrPath, stdout: stdoutPath };
     step.status = "completed";
     updateStep(args.manifest, step, args.runDir);
 
@@ -2044,20 +2391,16 @@ async function runIgnitionStep(args: {
         console.log(chalk.green(`  ${name}: ${address}`));
       }
     }
-    console.log(
-      chalk.dim(
-        `  logs: ${relativePath(stdoutPath)}, ${relativePath(stderrPath)}`,
-      ),
-    );
     return deployed;
   } catch (error) {
     spinner.fail(`${emoji.get("x")} ${args.stepName} failed`);
     const hint = classifyFailureHint(
       error instanceof Error ? error.message : String(error),
     );
+    const logFiles = saveCommandLogs(args.runDir, args.paramsFileName, result);
     step.duration = formatDuration(Date.now() - startedAtMs);
     step.completedAt = nowIso();
-    step.logFiles = { stderr: stderrPath, stdout: stdoutPath };
+    step.logFiles = logFiles;
     step.notes = [
       ...(step.notes ?? []),
       error instanceof Error ? error.message : String(error),
@@ -2072,7 +2415,82 @@ async function runIgnitionStep(args: {
   }
 }
 
-async function runAavePrerequisiteStep(args: {
+async function runVerificationStep(args: {
+  manifest: DeploymentManifest;
+  repeatStepConfirmations: boolean;
+  runDir: string;
+}) {
+  const stepName = "Explorer verification";
+  const nextAction =
+    "Verify the freshly deployed contracts against the configured explorers and persist the verification logs.";
+
+  await confirmStep(stepName, nextAction, args.repeatStepConfirmations);
+  const commandText = verificationCommandText(args.runDir);
+  console.log(chalk.dim(commandText));
+
+  const step: StepRecord = {
+    command: commandText,
+    name: stepName,
+    nextAction,
+    notes: [
+      "Uses the saved run record to verify each Ignition deployment ID plus the transparent-proxy ProxyAdmin contracts.",
+      ...(process.env.ETHERSCAN_API_KEY === undefined
+        ? [
+            "ETHERSCAN_API_KEY is not set; Hardhat will only use other enabled explorers such as Sourcify.",
+          ]
+        : []),
+    ],
+    startedAt: nowIso(),
+    status: "pending",
+  };
+  pushStep(args.manifest, step, args.runDir);
+  const spinner = ora({
+    discardStdin: false,
+    text: `${emoji.get("mag")} ${stepName} in progress...`,
+  }).start();
+  const startedAtMs = Date.now();
+
+  const result = await runCommand("npx", [
+    "tsx",
+    "./scripts/verify/verify-initial-stack.ts",
+    "--run-dir",
+    args.runDir,
+  ]);
+
+  if (result.code !== 0) {
+    spinner.fail(`${emoji.get("x")} ${stepName} failed`);
+    const logFiles = saveCommandLogs(
+      args.runDir,
+      "verify-initial-stack",
+      result,
+    );
+    step.duration = formatDuration(Date.now() - startedAtMs);
+    step.completedAt = nowIso();
+    step.logFiles = logFiles;
+    step.notes = [
+      ...(step.notes ?? []),
+      "Verification returned a non-zero exit code.",
+      "Fix the explorer prerequisites and rerun `npm run verify:initial-stack -- --run-dir <runDir>`.",
+    ];
+    step.status = "aborted";
+    updateStep(args.manifest, step, args.runDir);
+    throw new Error(
+      `${stepName} failed with code ${result.code}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+  }
+
+  spinner.succeed(
+    `${emoji.get("white_check_mark")} ${stepName} complete (${formatDuration(
+      Date.now() - startedAtMs,
+    )})`,
+  );
+  step.duration = formatDuration(Date.now() - startedAtMs);
+  step.completedAt = nowIso();
+  step.status = "completed";
+  updateStep(args.manifest, step, args.runDir);
+}
+
+type AavePrerequisiteStepArgs = {
   aaveMode: AaveMode;
   grvtEnvironment: GrvtEnvironment;
   localMode: boolean;
@@ -2082,49 +2500,145 @@ async function runAavePrerequisiteStep(args: {
   repeatStepConfirmations: boolean;
   resolvedParams: ResolvedParams;
   runDir: string;
-}) {
-  renderSection(
-    stepLabel(1, "Aave Strategy Prerequisites"),
-    args.localMode
-      ? "This reuses MockAaveV3Pool and MockAaveV3AToken from the smoke artifacts, then verifies the linkage."
-      : args.aaveMode === "mock-aave"
-        ? "This deploys MockAaveV3Pool and MockAaveV3AToken through Ignition, then verifies the linkage."
-        : "This validates the configured live Aave pool and aToken before deploying the strategy.",
-  );
+};
+
+function aavePrerequisiteDescription(args: AavePrerequisiteStepArgs): string {
   if (args.localMode) {
-    await confirmStep(
-      "Mock Aave prerequisite reuse",
-      "Validate the predeployed pool and aToken from the smoke artifacts, then write their addresses into the generated run params.",
-      args.repeatStepConfirmations,
+    return "This reuses MockAaveV3Pool and MockAaveV3AToken from the smoke artifacts, then verifies the linkage.";
+  }
+
+  if (args.aaveMode === "mock-aave") {
+    return "This deploys MockAaveV3Pool and MockAaveV3AToken for the supplied underlying token, then verifies the linkage.";
+  }
+
+  return "This validates the configured live Aave pool and aToken before deploying the strategy.";
+}
+
+function requireAavePrerequisiteAddresses(args: {
+  aToken?: Address;
+  aavePool?: Address;
+  errorMessage: string;
+}) {
+  if (args.aavePool === undefined || args.aToken === undefined) {
+    throw new Error(args.errorMessage);
+  }
+
+  return {
+    aTokenAddress: args.aToken,
+    aavePoolAddress: args.aavePool,
+  };
+}
+
+async function reuseLocalAavePrerequisites(args: AavePrerequisiteStepArgs) {
+  await confirmStep(
+    "Mock Aave prerequisite reuse",
+    "Validate the predeployed pool and aToken from the smoke artifacts, then write their addresses into the generated run params.",
+    args.repeatStepConfirmations,
+  );
+
+  const prereqStep: StepRecord = {
+    name: "Mock Aave prerequisite reuse",
+    nextAction:
+      "Use the deployed pool and aToken for strategy-core and downstream steps.",
+    notes: [
+      `underlyingToken=${args.resolvedParams.strategyCore.underlyingToken}`,
+      `aavePool=${args.resolvedParams.strategyCore.aavePool}`,
+      `aToken=${args.resolvedParams.strategyCore.aToken}`,
+      `aTokenName=${args.resolvedParams.aTokenName}`,
+      `aTokenSymbol=${args.resolvedParams.aTokenSymbol}`,
+    ],
+    startedAt: nowIso(),
+    status: "pending",
+  };
+  pushStep(args.manifest, prereqStep, args.runDir);
+
+  const prereqSpinner = ora({
+    discardStdin: false,
+    text: `${emoji.get("construction")} Validating smoke prerequisite contracts...`,
+  }).start();
+  const startedAtMs = Date.now();
+
+  try {
+    const { aTokenAddress, aavePoolAddress } = requireAavePrerequisiteAddresses(
+      {
+        aToken: args.resolvedParams.strategyCore.aToken,
+        aavePool: args.resolvedParams.strategyCore.aavePool,
+        errorMessage: "local mode requires smoke prerequisite addresses",
+      },
     );
 
-    const prereqStep: StepRecord = {
-      name: "Mock Aave prerequisite reuse",
-      nextAction:
-        "Use the deployed pool and aToken for strategy-core and downstream steps.",
-      notes: [
-        `underlyingToken=${args.resolvedParams.strategyCore.underlyingToken}`,
-        `aTokenName=${args.resolvedParams.aTokenName}`,
-        `aTokenSymbol=${args.resolvedParams.aTokenSymbol}`,
-      ],
-      startedAt: nowIso(),
-      status: "pending",
+    await validateAaveStrategyPrerequisites({
+      aTokenAddress,
+      aaveMode: "mock-aave",
+      aavePoolAddress,
+      publicClient: args.publicClient,
+      underlyingToken: args.resolvedParams.strategyCore.underlyingToken,
+    });
+
+    prereqSpinner.succeed(
+      `${emoji.get("sparkles")} Mock Aave prerequisites reused (${formatDuration(
+        Date.now() - startedAtMs,
+      )})`,
+    );
+    prereqStep.addresses = {
+      aToken: aTokenAddress,
+      aavePool: aavePoolAddress,
+      underlyingToken: args.resolvedParams.strategyCore.underlyingToken,
     };
-    pushStep(args.manifest, prereqStep, args.runDir);
+    prereqStep.duration = formatDuration(Date.now() - startedAtMs);
+    prereqStep.completedAt = nowIso();
+    prereqStep.status = "completed";
+    updateStep(args.manifest, prereqStep, args.runDir);
+    console.log(chalk.green(`  aavePool: ${aavePoolAddress}`));
+    console.log(chalk.green(`  aToken: ${aTokenAddress}`));
 
-    const prereqSpinner = ora({
-      discardStdin: false,
-      text: `${emoji.get("construction")} Validating smoke prerequisite contracts...`,
-    }).start();
-    const startedAtMs = Date.now();
+    recordResolvedPrerequisites(
+      args.manifest,
+      args.runDir,
+      args.resolvedParams,
+      args.resolvedParams.strategyCore.underlyingToken,
+      aavePoolAddress,
+      aTokenAddress,
+    );
+  } catch (error) {
+    prereqSpinner.fail(`${emoji.get("x")} Mock Aave prerequisite reuse failed`);
+    prereqStep.duration = formatDuration(Date.now() - startedAtMs);
+    prereqStep.completedAt = nowIso();
+    prereqStep.notes = [
+      ...(prereqStep.notes ?? []),
+      error instanceof Error ? error.message : String(error),
+    ];
+    prereqStep.status = "aborted";
+    updateStep(args.manifest, prereqStep, args.runDir);
+    throw error;
+  }
+}
 
-    try {
-      const aavePoolAddress = args.resolvedParams.strategyCore.aavePool;
-      const aTokenAddress = args.resolvedParams.strategyCore.aToken;
-
-      if (aavePoolAddress === undefined || aTokenAddress === undefined) {
-        throw new Error("local mode requires smoke prerequisite addresses");
-      }
+async function deployMockAavePrerequisites(args: AavePrerequisiteStepArgs) {
+  const deployed = await runIgnitionStep({
+    deploymentId: `initial-${args.grvtEnvironment}-mock-aave-prerequisites-${args.manifest.runId}`,
+    manifest: args.manifest,
+    modulePath: "./ignition/modules/MockAavePrerequisites.ts",
+    modulePayload: {
+      underlyingToken: args.resolvedParams.strategyCore.underlyingToken,
+      aTokenName: args.resolvedParams.aTokenName,
+      aTokenSymbol: args.resolvedParams.aTokenSymbol,
+    },
+    moduleRootKey: "MockAavePrerequisitesModule",
+    networkName: args.networkName,
+    nextAction:
+      "Use the deployed pool and aToken for strategy-core and downstream steps.",
+    paramsFileName: "mock-aave-prerequisites.generated.json5",
+    repeatStepConfirmations: args.repeatStepConfirmations,
+    runDir: args.runDir,
+    stepName: "Mock Aave prerequisite deployment",
+    summaryAddresses: async (deployment) => {
+      const aavePoolAddress = normalizeAddress(
+        deployment["MockAavePrerequisitesModule#MockAavePool"],
+      );
+      const aTokenAddress = normalizeAddress(
+        deployment["MockAavePrerequisitesModule#MockAaveAToken"],
+      );
 
       await validateAaveStrategyPrerequisites({
         aTokenAddress,
@@ -2134,124 +2648,37 @@ async function runAavePrerequisiteStep(args: {
         underlyingToken: args.resolvedParams.strategyCore.underlyingToken,
       });
 
-      prereqSpinner.succeed(
-        `${emoji.get("sparkles")} Mock Aave prerequisites reused (${formatDuration(
-          Date.now() - startedAtMs,
-        )})`,
-      );
-      prereqStep.addresses = {
+      return {
         aToken: aTokenAddress,
         aavePool: aavePoolAddress,
         underlyingToken: args.resolvedParams.strategyCore.underlyingToken,
       };
-      prereqStep.duration = formatDuration(Date.now() - startedAtMs);
-      prereqStep.completedAt = nowIso();
-      prereqStep.status = "completed";
-      updateStep(args.manifest, prereqStep, args.runDir);
-      console.log(chalk.green(`  aavePool: ${aavePoolAddress}`));
-      console.log(chalk.green(`  aToken: ${aTokenAddress}`));
+    },
+    summaryNotes: [
+      `underlyingToken=${args.resolvedParams.strategyCore.underlyingToken}`,
+      `aTokenName=${args.resolvedParams.aTokenName}`,
+      `aTokenSymbol=${args.resolvedParams.aTokenSymbol}`,
+    ],
+  });
 
-      recordResolvedPrerequisites(
-        args.manifest,
-        args.runDir,
-        args.resolvedParams,
-        args.resolvedParams.strategyCore.underlyingToken,
-        aavePoolAddress,
-        aTokenAddress,
-      );
-      return;
-    } catch (error) {
-      prereqSpinner.fail(
-        `${emoji.get("x")} Mock Aave prerequisite reuse failed`,
-      );
-      prereqStep.duration = formatDuration(Date.now() - startedAtMs);
-      prereqStep.completedAt = nowIso();
-      prereqStep.notes = [
-        ...(prereqStep.notes ?? []),
-        error instanceof Error ? error.message : String(error),
-      ];
-      prereqStep.status = "aborted";
-      updateStep(args.manifest, prereqStep, args.runDir);
-      throw error;
-    }
-  }
+  const aavePoolAddress = normalizeAddress(
+    deployed["MockAavePrerequisitesModule#MockAavePool"],
+  );
+  const aTokenAddress = normalizeAddress(
+    deployed["MockAavePrerequisitesModule#MockAaveAToken"],
+  );
 
-  if (args.aaveMode === "mock-aave") {
-    const deployed = await runIgnitionStep({
-      deploymentId: `initial-${args.grvtEnvironment}-mock-aave-prerequisites-${args.manifest.runId}`,
-      manifest: args.manifest,
-      modulePath: "./ignition/modules/MockAavePrerequisites.ts",
-      modulePayload: {
-        aTokenName: args.resolvedParams.aTokenName,
-        aTokenSymbol: args.resolvedParams.aTokenSymbol,
-        underlyingTokenDecimals:
-          args.resolvedParams.mockUnderlyingTokenDecimals,
-        underlyingTokenName: args.resolvedParams.mockUnderlyingTokenName,
-        underlyingTokenSymbol: args.resolvedParams.mockUnderlyingTokenSymbol,
-      },
-      moduleRootKey: "MockAavePrerequisitesModule",
-      networkName: args.networkName,
-      nextAction:
-        "Use the deployed pool and aToken for strategy-core and downstream steps.",
-      paramsFileName: "mock-aave-prerequisites.generated.json5",
-      repeatStepConfirmations: args.repeatStepConfirmations,
-      runDir: args.runDir,
-      stepName: "Mock Aave prerequisite deployment",
-      summaryAddresses: async (deployment) => {
-        const underlyingToken = normalizeAddress(
-          deployment["MockAavePrerequisitesModule#MockUnderlyingToken"],
-        );
-        const aavePoolAddress = normalizeAddress(
-          deployment["MockAavePrerequisitesModule#MockAavePool"],
-        );
-        const aTokenAddress = normalizeAddress(
-          deployment["MockAavePrerequisitesModule#MockAaveAToken"],
-        );
+  recordResolvedPrerequisites(
+    args.manifest,
+    args.runDir,
+    args.resolvedParams,
+    args.resolvedParams.strategyCore.underlyingToken,
+    aavePoolAddress,
+    aTokenAddress,
+  );
+}
 
-        await validateAaveStrategyPrerequisites({
-          aTokenAddress,
-          aaveMode: "mock-aave",
-          aavePoolAddress,
-          publicClient: args.publicClient,
-          underlyingToken,
-        });
-
-        return {
-          aToken: aTokenAddress,
-          aavePool: aavePoolAddress,
-          underlyingToken,
-        };
-      },
-      summaryNotes: [
-        `underlyingTokenName=${args.resolvedParams.mockUnderlyingTokenName}`,
-        `underlyingTokenSymbol=${args.resolvedParams.mockUnderlyingTokenSymbol}`,
-        `underlyingTokenDecimals=${String(args.resolvedParams.mockUnderlyingTokenDecimals)}`,
-        `aTokenName=${args.resolvedParams.aTokenName}`,
-        `aTokenSymbol=${args.resolvedParams.aTokenSymbol}`,
-      ],
-    });
-
-    const underlyingToken = normalizeAddress(
-      deployed["MockAavePrerequisitesModule#MockUnderlyingToken"],
-    );
-    const aavePoolAddress = normalizeAddress(
-      deployed["MockAavePrerequisitesModule#MockAavePool"],
-    );
-    const aTokenAddress = normalizeAddress(
-      deployed["MockAavePrerequisitesModule#MockAaveAToken"],
-    );
-
-    recordResolvedPrerequisites(
-      args.manifest,
-      args.runDir,
-      args.resolvedParams,
-      underlyingToken,
-      aavePoolAddress,
-      aTokenAddress,
-    );
-    return;
-  }
-
+async function validateLiveAavePrerequisites(args: AavePrerequisiteStepArgs) {
   await confirmStep(
     "Live Aave prerequisite validation",
     "Validate the configured Aave pool and aToken before deploying the strategy.",
@@ -2279,14 +2706,14 @@ async function runAavePrerequisiteStep(args: {
   const startedAtMs = Date.now();
 
   try {
-    const aavePoolAddress = args.resolvedParams.strategyCore.aavePool;
-    const aTokenAddress = args.resolvedParams.strategyCore.aToken;
-
-    if (aavePoolAddress === undefined || aTokenAddress === undefined) {
-      throw new Error(
-        "live Aave mode requires configured aavePool and aToken addresses",
-      );
-    }
+    const { aTokenAddress, aavePoolAddress } = requireAavePrerequisiteAddresses(
+      {
+        aToken: args.resolvedParams.strategyCore.aToken,
+        aavePool: args.resolvedParams.strategyCore.aavePool,
+        errorMessage:
+          "live Aave mode requires configured aavePool and aToken addresses",
+      },
+    );
 
     await validateAaveStrategyPrerequisites({
       aTokenAddress,
@@ -2344,6 +2771,24 @@ async function runAavePrerequisiteStep(args: {
   }
 }
 
+async function runAavePrerequisiteStep(args: AavePrerequisiteStepArgs) {
+  renderSection(
+    stepLabel(1, "Aave Strategy Prerequisites"),
+    aavePrerequisiteDescription(args),
+  );
+  if (args.localMode) {
+    await reuseLocalAavePrerequisites(args);
+    return;
+  }
+
+  if (args.aaveMode === "mock-aave") {
+    await deployMockAavePrerequisites(args);
+    return;
+  }
+
+  await validateLiveAavePrerequisites(args);
+}
+
 async function main() {
   try {
     const currentNetwork = runtimeNetworkName();
@@ -2364,11 +2809,8 @@ async function main() {
     const deployer = normalizeAddress(wallets[0].account.address);
     const chainId = await publicClient.getChainId();
     const displayNetwork = networkDisplayName(currentNetwork, chainId);
-    const runDir = join(artifactsRoot, grvtEnvironment, displayNetwork, runId);
-    const paramsDir = join(runDir, "params");
-    const logsDir = join(runDir, "logs");
-    ensureDir(paramsDir);
-    ensureDir(logsDir);
+    const runDir = initialStackRunDir(repoRoot, grvtEnvironment, runId);
+    ensureDir(runDir);
 
     console.log(
       chalk.bold.green(
@@ -2384,7 +2826,7 @@ async function main() {
     }
     console.log(
       chalk.dim(
-        "This script pauses before every deploy step and writes a full manifest as it goes.",
+        "This script pauses before every deploy step and only writes the saved run record after deployment finishes.",
       ),
     );
     await runPreflight({
@@ -2420,13 +2862,26 @@ async function main() {
         `Per-step confirmations: ${repeatStepConfirmations ? "enabled" : "disabled"}`,
       ),
     );
+    const runPostDeployVerification = localMode
+      ? false
+      : await askConfirm(
+          "Run explorer verification automatically after the deployment steps finish?",
+          true,
+        );
+    console.log(
+      chalk.dim(
+        localMode
+          ? "Automatic explorer verification: disabled for localhost runs."
+          : `Automatic explorer verification: ${runPostDeployVerification ? "enabled" : "disabled"}`,
+      ),
+    );
 
     const startConfirmed = await askConfirm(
-      "Lock this config into a run manifest and start the interactive deployment?",
+      "Start the interactive deployment with these settings?",
       true,
     );
     if (!startConfirmed) {
-      throw new UserAbortError("aborted before manifest creation");
+      throw new UserAbortError("aborted before deployment started");
     }
 
     const manifest = createInitialManifest(
@@ -2435,6 +2890,7 @@ async function main() {
       localMode,
       parameterDir,
       repeatStepConfirmations,
+      runPostDeployVerification,
       runId,
       runDir,
       currentNetwork,
@@ -2443,11 +2899,9 @@ async function main() {
       deployer,
       resolvedParams,
     );
-    persistManifest(runDir, manifest);
     if (localMode) {
       manifest.sourceParameterFiles.localSmokePrerequisites =
         smokePrerequisitesPath;
-      persistManifest(runDir, manifest);
     }
     await runAavePrerequisiteStep({
       aaveMode,
@@ -2711,7 +3165,7 @@ async function main() {
       moduleRootKey: "NativeGatewaysModule",
       networkName: currentNetwork,
       nextAction:
-        "Review the summary, inspect the saved artifacts, and run your preferred post-deploy smoke checks.",
+        "Review the saved record, inspect the saved artifacts, and run your preferred post-deploy smoke checks.",
       paramsFileName: "native-gateways.generated.json5",
       repeatStepConfirmations,
       runDir,
@@ -2743,9 +3197,38 @@ async function main() {
       ],
     });
 
+    if (grvtEnvironment === "production") {
+      console.log(
+        chalk.yellow(
+          `${emoji.get("warning")} Production bootstrap is awaiting admin handoff before this run is considered complete.`,
+        ),
+      );
+      console.log(
+        chalk.white(
+          `Next step: npx hardhat ops:production-admin-handoff --network ${currentNetwork} --record ${relativePath(runDir)}`,
+        ),
+      );
+    }
+
+    persistManifest(runDir, manifest);
+
+    if (runPostDeployVerification) {
+      renderSection(
+        "Explorer Verification",
+        "Verify every deployed contract from this saved run against the configured explorers.",
+      );
+      await runVerificationStep({
+        manifest,
+        repeatStepConfirmations,
+        runDir,
+      });
+    }
+
+    persistManifest(runDir, manifest);
+
     renderSection(
       "Deployment Complete",
-      "The manifest and summary already include the important addresses, generated params, and command logs.",
+      "The run directory contains the canonical record. Raw command logs are only saved when a step fails.",
     );
     console.log(
       chalk.green(
@@ -2754,14 +3237,15 @@ async function main() {
     );
     console.log(chalk.white(`Artifacts: ${relativePath(runDir)}`));
     console.log(
-      chalk.white(`Manifest: ${relativePath(join(runDir, "manifest.json"))}`),
-    );
-    console.log(
-      chalk.white(`Summary: ${relativePath(join(runDir, "summary.md"))}`),
+      chalk.white(`Record: ${relativePath(join(runDir, "record.json"))}`),
     );
     console.log(
       chalk.dim(
-        "Suggested next step: review summary.md, then run your manual funding/allocation smoke checks.",
+        grvtEnvironment === "production"
+          ? "Suggested next step: run ops:production-admin-handoff against this record, then run verification and manual smoke checks."
+          : runPostDeployVerification
+            ? "Suggested next step: review record.json and verification logs, then run your manual funding/allocation smoke checks."
+            : "Suggested next step: review record.json, optionally run `npm run verify:initial-stack -- --run-dir <runDir>`, then run your manual funding/allocation smoke checks.",
       ),
     );
   } catch (error) {
@@ -2770,7 +3254,9 @@ async function main() {
         chalk.yellow(`${emoji.get("pause_button")} ${error.message}`),
       );
       console.log(
-        chalk.dim("Any completed steps remain persisted in the run manifest."),
+        chalk.dim(
+          "No resumable run record was written; in-memory progress was discarded.",
+        ),
       );
       return;
     }

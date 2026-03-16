@@ -16,6 +16,18 @@ Use mock Aave for every non-production GRVT environment in this repository:
 
 This is intentional. GRVT supplies its own underlying token for those environments, so the strategy cannot assume that a public Aave market supports that token address. The mock Aave contracts provide the supply/withdraw surface that `AaveV3Strategy` expects while keeping token control inside the deployment flow.
 
+Current canonical USDT addresses:
+
+- `staging` on Sepolia: `0xd92074957c5bab4d3d065f521ede914dc660bfb5`
+- `production` on Ethereum mainnet: `0xdAC17F958D2ee523a2206206994597C13D831ec7`
+
+If you rotate the staging token, keep these files aligned for the same environment:
+
+- `ignition/parameters/<env>/strategy-core.json5`
+- `ignition/parameters/<env>/vault-token-config.json5`
+- `ignition/parameters/<env>/vault-token-strategy.json5`
+- operational parameter files that use the vault token directly, such as `tasks/parameters/<env>/harvest-yield.json5`
+
 Production is different:
 
 - production uses live Aave addresses
@@ -54,8 +66,8 @@ This repository currently defines one remote Hardhat network alias: `sepolia`.
 1. Export network access for Sepolia:
 
    ```bash
-   export TESTNET_RPC_URL="<sepolia_rpc_url>"
-   export TESTNET_PRIVATE_KEY="<deployer_private_key>"
+   export RPC_URL="<sepolia_rpc_url>"
+   export PRIVATE_KEY="<deployer_private_key>"
    ```
 
 2. Install dependencies and compile:
@@ -278,7 +290,7 @@ Set:
 Deploy:
 
 ```bash
-npm run roles:bootstrap -- \
+npm run deploy:roles-bootstrap -- \
   --network sepolia \
   --parameters ignition/parameters/<env>/roles-bootstrap.json5
 ```

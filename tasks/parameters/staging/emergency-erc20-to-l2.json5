@@ -1,0 +1,10 @@
+{
+  VaultEmergencyErc20ToL2Module: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // ERC20 token address to bridge through the emergency path.
+    token: "0x0000000000000000000000000000000000000000",
+    // Emergency ERC20 amount to bridge in token native units.
+    amount: "0n",
+  },
+}

@@ -3,104 +3,69 @@ import { getAddress } from "viem";
 
 import {
   createDirectOperationRecord,
-  encodeSetYieldRecipient,
   finalizeDirectOperationRecord,
   getClients,
-  parseBigintLike,
   readModuleParams,
   requireAddress,
-  requireBytes32,
   resolveOneOffRecordContext,
   resolveParametersPath,
   resolveRecordAuthority,
-  timelockAbi,
-  ZERO_BYTES32,
+  vaultAbi,
 } from "../utils/one-off-ops.js";
 
-type YieldRecipientScheduleUpdateTaskArgs = {
+type DeallocateAllFromStrategyTaskArgs = {
   parameters?: string;
 };
 
-const action: NewTaskActionFunction<
-  YieldRecipientScheduleUpdateTaskArgs
-> = async ({ parameters }, hre) => {
+const action: NewTaskActionFunction<DeallocateAllFromStrategyTaskArgs> = async (
+  { parameters },
+  hre,
+) => {
   const filePath = resolveParametersPath(parameters);
   const params = readModuleParams(
     filePath,
-    "YieldRecipientScheduleUpdateModule",
+    "VaultDeallocateAllFromStrategyModule",
   );
   const vaultProxy = requireAddress(params, "vaultProxy", filePath);
-  const timelock = requireAddress(
-    params,
-    "yieldRecipientTimelockController",
-    filePath,
-  );
-  const newYieldRecipient = requireAddress(
-    params,
-    "newYieldRecipient",
-    filePath,
-  );
-  const predecessor =
-    params.predecessor === undefined
-      ? ZERO_BYTES32
-      : requireBytes32(params, "predecessor", filePath);
-  const salt =
-    params.salt === undefined
-      ? ZERO_BYTES32
-      : requireBytes32(params, "salt", filePath);
-  const delay =
-    params.delay === undefined
-      ? 86400n
-      : parseBigintLike(params.delay, "delay", filePath);
+  const token = requireAddress(params, "token", filePath);
+  const strategy = requireAddress(params, "strategy", filePath);
   const { publicClient, walletClient } = await getClients(hre);
   const signer = getAddress(walletClient.account.address);
   const context = await resolveOneOffRecordContext({ filePath, hre });
   const prepared = createDirectOperationRecord({
     context,
     filePath,
-    kind: "yield-recipient-schedule-update",
+    kind: "vault-deallocate-all-from-strategy",
     longLivedAuthority: resolveRecordAuthority({
       currentDeployment: context.currentDeployment,
-      timelockController: timelock,
+      vaultProxy,
     }),
     outputs: {
-      timelock,
+      strategy,
+      token,
       vaultProxy,
     },
     resolvedInputs: {
-      delay: delay.toString(),
-      newYieldRecipient,
-      predecessor,
-      salt,
-      timelock,
+      strategy,
+      token,
       vaultProxy,
     },
     signer,
-    stepLabel: "Schedule yield recipient update",
+    stepLabel: "Deallocate all vault token from strategy",
     summary: [
-      "# Schedule yield recipient update",
+      "# Deallocate all vault token from strategy",
       "",
-      `- Timelock: \`${timelock}\``,
       `- Vault proxy: \`${vaultProxy}\``,
-      `- New yield recipient: \`${newYieldRecipient}\``,
-      `- Delay: \`${delay}\``,
-      `- Predecessor: \`${predecessor}\``,
-      `- Salt: \`${salt}\``,
+      `- Token: \`${token}\``,
+      `- Strategy: \`${strategy}\``,
     ],
   });
 
   const hash = await walletClient.writeContract({
-    address: timelock,
-    abi: timelockAbi,
-    functionName: "schedule",
-    args: [
-      vaultProxy,
-      0n,
-      encodeSetYieldRecipient(newYieldRecipient),
-      predecessor,
-      salt,
-      delay,
-    ],
+    address: vaultProxy,
+    abi: vaultAbi,
+    functionName: "deallocateAllVaultTokenFromStrategy",
+    args: [token, strategy],
     account: walletClient.account,
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });

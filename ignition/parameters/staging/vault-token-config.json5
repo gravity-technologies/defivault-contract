@@ -3,7 +3,7 @@
     // Existing staging vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Canonical vault token to enable or disable.
-    vaultToken: "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
+    vaultToken: "0xbBc446B2C84ed42e47cCE723b9Be976226a3A08c",
     supported: true,
   },
 }
