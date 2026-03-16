@@ -1,0 +1,12 @@
+{
+  VaultAllocateToStrategyModule: {
+    // Existing testnet vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token key (ERC20), for example USDT.
+    token: "0x0000000000000000000000000000000000000000",
+    // Existing whitelisted strategy proxy.
+    strategy: "0x0000000000000000000000000000000000000000",
+    // Requested allocation amount in token native units.
+    amount: "0n",
+  },
+}
