@@ -1,0 +1,125 @@
+{
+  "environment": "staging",
+  "network": {
+    "chainId": 11155111,
+    "name": "sepolia"
+  },
+  "schemaVersion": 1,
+  "strategies": {
+    "primary": {
+      "aToken": "0x3Fb741555c4544CA39B6d5ECff261703778ea421",
+      "aavePool": "0xe9ba37d044933F3A32f146BfCf1dE20569e20928",
+      "configuredCap": "0n",
+      "displayName": "AAVE_V3_SEPOLIA_USDT",
+      "implementation": "0x041e14e2D6AF2473Ef2d014D81c39dC338b65E87",
+      "key": "primary",
+      "proxy": "0x2ad953575F9dDC750e06a123E3449B7C19EB95A0",
+      "proxyAdmin": "0x0E03b0b328AC26a5DF1713531d293b5FeE1c25F8",
+      "proxyAdminOwner": "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+      "source": {
+        "artifact": {
+          "deploymentIds": [
+            "initial-staging-mock-aave-prerequisites-2026-03-15T09-42-17-384Z",
+            "initial-staging-vault-core-2026-03-15T09-42-17-384Z",
+            "initial-staging-strategy-core-2026-03-15T09-42-17-384Z",
+            "initial-staging-vault-token-config-2026-03-15T09-42-17-384Z",
+            "initial-staging-vault-token-strategy-2026-03-15T09-42-17-384Z",
+            "initial-staging-roles-2026-03-15T09-42-17-384Z",
+            "initial-staging-yield-recipient-timelock-2026-03-15T09-42-17-384Z",
+            "initial-staging-native-gateways-2026-03-15T09-42-17-384Z"
+          ],
+          "kind": "initial-stack-run",
+          "path": "ignition/deployments/initial-stack/staging/sepolia/2026-03-15T09-42-17-384Z",
+          "runId": "2026-03-15T09-42-17-384Z"
+        },
+        "recordedAt": "2026-03-17T04:53:53.220Z",
+        "type": "initial-stack"
+      },
+      "status": "active",
+      "type": "aave-v3",
+      "vaultToken": "0x498ae013230085ede5216A4b27e50c079DF83133",
+      "vaultTokenStrategyWhitelisted": true,
+      "vaultTokenSupported": true
+    }
+  },
+  "updatedAt": "2026-03-17T04:53:53.221Z",
+  "vault": {
+    "bridgeHub": "0x35A54c8C757806eB6820629bc82d90E056394C92",
+    "deployAdmin": "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+    "grvtBridgeProxyFeeToken": "0xbBc446B2C84ed42e47cCE723b9Be976226a3A08c",
+    "implementation": "0x7760894f54a70aC7F12b2A6234F5D89AD1c72a23",
+    "l2ChainId": "327n",
+    "l2ExchangeRecipient": "0x45CE10dD2014Ad01027b745bf34EB12840BDa881",
+    "proxy": "0xAFe05e028A396c26c1bB73a4C9E1603d60836264",
+    "proxyAdmin": "0x879e03e2b95A582c847a2CC11E93A7238771A0E6",
+    "source": {
+      "artifact": {
+        "deploymentIds": [
+          "initial-staging-mock-aave-prerequisites-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-core-2026-03-15T09-42-17-384Z",
+          "initial-staging-strategy-core-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-token-config-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-token-strategy-2026-03-15T09-42-17-384Z",
+          "initial-staging-roles-2026-03-15T09-42-17-384Z",
+          "initial-staging-yield-recipient-timelock-2026-03-15T09-42-17-384Z",
+          "initial-staging-native-gateways-2026-03-15T09-42-17-384Z"
+        ],
+        "kind": "initial-stack-run",
+        "path": "ignition/deployments/initial-stack/staging/sepolia/2026-03-15T09-42-17-384Z",
+        "runId": "2026-03-15T09-42-17-384Z"
+      },
+      "recordedAt": "2026-03-17T04:53:53.220Z",
+      "type": "initial-stack"
+    },
+    "wrappedNativeToken": "0xC558DBdd856501FCd9aaF1E62eae57A9F0629a3c",
+    "yieldRecipient": "0x243bd52D0765a8F2831f0873D6a99D56c1Daa517"
+  },
+  "yieldRecipientTimelock": {
+    "controller": "0x3820eCb2dd740C1D30C93F1e678cF890b08A1fCd",
+    "source": {
+      "artifact": {
+        "deploymentIds": [
+          "initial-staging-mock-aave-prerequisites-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-core-2026-03-15T09-42-17-384Z",
+          "initial-staging-strategy-core-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-token-config-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-token-strategy-2026-03-15T09-42-17-384Z",
+          "initial-staging-roles-2026-03-15T09-42-17-384Z",
+          "initial-staging-yield-recipient-timelock-2026-03-15T09-42-17-384Z",
+          "initial-staging-native-gateways-2026-03-15T09-42-17-384Z"
+        ],
+        "kind": "initial-stack-run",
+        "path": "ignition/deployments/initial-stack/staging/sepolia/2026-03-15T09-42-17-384Z",
+        "runId": "2026-03-15T09-42-17-384Z"
+      },
+      "recordedAt": "2026-03-17T04:53:53.220Z",
+      "type": "initial-stack"
+    }
+  },
+  "nativeBridge": {
+    "implementation": "0x2c17739897BAB8bE363BE065F0C290d7655C9e9D",
+    "nativeVaultGateway": "0xe9789A40b79178DBD560862220Dce7b81F76F371",
+    "proxy": "0x9e2C44B2FF13074cB62F42DdcF9775791554E7Ba",
+    "proxyAdmin": "0x71eBAa69e4CB9AC97B51B633385fA565bd597248",
+    "proxyAdminOwner": "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+    "source": {
+      "artifact": {
+        "deploymentIds": [
+          "initial-staging-mock-aave-prerequisites-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-core-2026-03-15T09-42-17-384Z",
+          "initial-staging-strategy-core-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-token-config-2026-03-15T09-42-17-384Z",
+          "initial-staging-vault-token-strategy-2026-03-15T09-42-17-384Z",
+          "initial-staging-roles-2026-03-15T09-42-17-384Z",
+          "initial-staging-yield-recipient-timelock-2026-03-15T09-42-17-384Z",
+          "initial-staging-native-gateways-2026-03-15T09-42-17-384Z"
+        ],
+        "kind": "initial-stack-run",
+        "path": "ignition/deployments/initial-stack/staging/sepolia/2026-03-15T09-42-17-384Z",
+        "runId": "2026-03-15T09-42-17-384Z"
+      },
+      "recordedAt": "2026-03-17T04:53:53.220Z",
+      "type": "initial-stack"
+    }
+  }
+}
