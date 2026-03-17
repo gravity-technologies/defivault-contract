@@ -6,8 +6,8 @@
     proxyAdminOwner: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
     // Non-production initial-stack deploys create their own mock Aave pool
     aavePool: "0x0000000000000000000000000000000000000000",
-    // Operator-supplied underlying token for the mock Aave deployment
-    underlyingToken: "0x0000000000000000000000000000000000000000",
+    // Canonical testnet underlying token used by the strategy
+    underlyingToken: "0xd92074957c5bab4d3d065f521ede914dc660bfb5",
     // Non-production initial-stack deploys create their own mock aToken
     aToken: "0x0000000000000000000000000000000000000000",
     // On-chain strategy metadata

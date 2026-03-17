@@ -37,7 +37,7 @@
       },
       "status": "active",
       "type": "aave-v3",
-      "vaultToken": "0x498ae013230085ede5216A4b27e50c079DF83133",
+      "vaultToken": "0xd92074957c5bab4d3d065f521ede914dc660bfb5",
       "vaultTokenStrategyWhitelisted": true,
       "vaultTokenSupported": true
     }

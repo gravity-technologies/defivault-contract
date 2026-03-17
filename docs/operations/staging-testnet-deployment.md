@@ -54,8 +54,8 @@ This repository currently defines one remote Hardhat network alias: `sepolia`.
 1. Export network access for Sepolia:
 
    ```bash
-   export TESTNET_RPC_URL="<sepolia_rpc_url>"
-   export TESTNET_PRIVATE_KEY="<deployer_private_key>"
+   export ETHEREUM_SEPOLIA_RPC_URL="<ethereum_sepolia_rpc_url>"
+   export OPERATOR_PRIVATE_KEY="<operator_private_key>"
    ```
 
 2. Install dependencies and compile:
