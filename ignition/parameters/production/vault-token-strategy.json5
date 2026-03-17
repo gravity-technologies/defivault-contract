@@ -5,7 +5,7 @@
     // Existing production strategy proxy.
     strategyProxy: "0x0000000000000000000000000000000000000000",
     // Canonical vault token key for this strategy binding.
-    vaultToken: "0x0000000000000000000000000000000000000000",
+    vaultToken: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     vaultTokenSupported: true,
     vaultTokenStrategyWhitelisted: true,
     // Keep at zero until governance approves a live cap.

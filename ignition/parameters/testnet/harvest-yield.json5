@@ -5,7 +5,7 @@
     // Harvest request:
     // - token is canonical vault token key (ERC20), never address(0)
     // - if token == wrappedNativeToken, payout is native ETH to yield recipient
-    token: "0x0000000000000000000000000000000000000000",
+    token: "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
     strategy: "0x0000000000000000000000000000000000000000",
     amount: "0n",
     // Minimum yield-recipient-side net receipt:

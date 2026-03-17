@@ -3,7 +3,7 @@
     // Staging vault proxy on the target testnet.
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Canonical vault token key for the harvest.
-    token: "0x0000000000000000000000000000000000000000",
+    token: "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0",
     // Existing whitelisted or withdraw-only strategy proxy.
     strategy: "0x0000000000000000000000000000000000000000",
     // Keep zero until a specific harvest is planned.

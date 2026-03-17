@@ -3,7 +3,7 @@
     // Production vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Canonical vault token key for the harvest.
-    token: "0x0000000000000000000000000000000000000000",
+    token: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     // Existing whitelisted or withdraw-only strategy proxy.
     strategy: "0x0000000000000000000000000000000000000000",
     // Fill per approved production runbook.

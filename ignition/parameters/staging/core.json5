@@ -1,0 +1,26 @@
+{
+  $global: {
+    // zkSync Era Bridgehub on Ethereum Sepolia.
+    bridgeHub: "0x35A54c8C757806eB6820629bc82d90E056394C92",
+    // GRVT bridge-proxy fee token on the staging network.
+    grvtBridgeProxyFeeToken: "0xbBc446B2C84ed42e47cCE723b9Be976226a3A08c",
+    // WETH on Ethereum Sepolia that is accepted by AaveV3
+    wrappedNativeToken: "0xC558DBdd856501FCd9aaF1E62eae57A9F0629a3c",
+  },
+  VaultCoreModule: {
+    // VAULT_ADMIN_ROLE holder and vault proxy admin owner.
+    deployAdmin: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+    // Fill with the real target L2 chain id; zero is an intentional placeholder.
+    l2ChainId: "327n",
+    // Fixed L2 recipient for normal rebalance flows. Set separately from admin/operator EOAs.
+    l2ExchangeRecipient: "0x45CE10dD2014Ad01027b745bf34EB12840BDa881",
+    // Must be non-zero and must not equal deployAdmin.
+    yieldRecipient: "0x243bd52D0765a8F2831f0873D6a99D56c1Daa517",
+  },
+  NativeGatewaysModule: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Owner of the NativeBridgeGateway proxy's ProxyAdmin.
+    proxyAdminOwner: "0x52eeae0D34c6adA2bF5857E6f6F8c762fA522c6D",
+  },
+}
