@@ -60,8 +60,8 @@ Use `.env` only for network credentials. Keep deployment inputs in versioned Ign
 
 Common env vars:
 
-- `TESTNET_RPC_URL`
-- `TESTNET_PRIVATE_KEY`
+- `ETHEREUM_SEPOLIA_RPC_URL`
+- `OPERATOR_PRIVATE_KEY`
 
 Shared parameter rule for vault core and native gateways:
 

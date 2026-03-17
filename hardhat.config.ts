@@ -148,8 +148,8 @@ export default defineConfig({
     sepolia: {
       type: "http",
       chainType: "l1",
-      url: configVariable("TESTNET_RPC_URL"),
-      accounts: [configVariable("TESTNET_PRIVATE_KEY")],
+      url: configVariable("ETHEREUM_SEPOLIA_RPC_URL"),
+      accounts: [configVariable("OPERATOR_PRIVATE_KEY")],
     },
   },
 });

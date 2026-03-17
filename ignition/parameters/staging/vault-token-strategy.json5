@@ -5,7 +5,7 @@
     // Existing staging strategy proxy.
     strategyProxy: "0x0000000000000000000000000000000000000000",
     // Canonical vault token key for this strategy binding.
-    vaultToken: "0xbBc446B2C84ed42e47cCE723b9Be976226a3A08c",
+    vaultToken: "0xd92074957c5bab4d3d065f521ede914dc660bfb5",
     vaultTokenSupported: true,
     vaultTokenStrategyWhitelisted: true,
     // Start conservative; raise only after staged funding and operational validation.
