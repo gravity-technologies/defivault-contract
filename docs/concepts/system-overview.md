@@ -65,6 +65,8 @@ This is the canonical external ETH ingress path.
 
 It accepts ETH, wraps it into the configured wrapped-native token, and forwards the ERC20 balance to the vault so vault accounting remains token-domain based.
 
+Integrations should use `depositToVault()` or a full-gas native `call`. Solidity stipend-based `.transfer()` and `.send()` are not supported because the receive path immediately wraps and forwards the deposit.
+
 ### NativeBridgeGateway
 
 This is the canonical native bridge execution and failed native deposit recovery boundary.

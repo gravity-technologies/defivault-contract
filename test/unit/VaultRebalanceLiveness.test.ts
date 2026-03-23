@@ -334,6 +334,64 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
+  it("rejects stipend-based transfer sends into NativeVaultGateway.receive()", async function () {
+    const { vault, wrappedNative } = await deploySystem();
+    const gateway = await viem.deployContract("NativeVaultGateway", [
+      wrappedNative.address,
+      vault.address,
+    ]);
+    const sender = await viem.deployContract("TestNativeSender", []);
+
+    await admin.sendTransaction({
+      account: admin.account,
+      to: sender.address,
+      value: 3n,
+    });
+
+    await assert.rejects(
+      sender.write.sendViaTransfer([gateway.address, 1n]),
+      /revert|reverted|execution reverted/i,
+    );
+
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 0n);
+    assert.equal(
+      await publicClient.getBalance({ address: gateway.address }),
+      0n,
+    );
+    assert.equal(
+      await publicClient.getBalance({ address: sender.address }),
+      3n,
+    );
+  });
+
+  it("returns false for stipend-based send() into NativeVaultGateway.receive()", async function () {
+    const { vault, wrappedNative } = await deploySystem();
+    const gateway = await viem.deployContract("NativeVaultGateway", [
+      wrappedNative.address,
+      vault.address,
+    ]);
+    const sender = await viem.deployContract("TestNativeSender", []);
+
+    await admin.sendTransaction({
+      account: admin.account,
+      to: sender.address,
+      value: 3n,
+    });
+
+    await sender.write.sendViaSend([gateway.address, 1n]);
+
+    assert.equal(await sender.read.lastSendResult(), false);
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 0n);
+    assert.equal(
+      await publicClient.getBalance({ address: gateway.address }),
+      0n,
+    );
+    assert.equal(
+      await publicClient.getBalance({ address: sender.address }),
+      3n,
+    );
+  });
+
   it("rejects zero-value native vault gateway calls", async function () {
     const { vault, wrappedNative } = await deploySystem();
     const gateway = await viem.deployContract("NativeVaultGateway", [

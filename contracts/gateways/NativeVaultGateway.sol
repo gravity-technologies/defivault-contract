@@ -19,6 +19,9 @@ contract NativeVaultGateway {
     using SafeERC20 for IERC20;
 
     error InvalidParam();
+    error NativeDepositRequiresFullGas();
+
+    uint256 private constant RECEIVE_GAS_STIPEND = 2300;
 
     /// @notice Wrapped-native token used by vault accounting.
     address public immutable wrappedNativeToken;
@@ -52,8 +55,12 @@ contract NativeVaultGateway {
 
     /**
      * @notice Convenience receive path for plain ETH transfers.
+     * @dev Requires more than Solidity's `transfer`/`send` stipend because the gateway immediately
+     *      wraps ETH and transfers wrapped-native into the vault. Integrations should use
+     *      `depositToVault()` or a full-gas native `call`, not stipend-based sends.
      */
     receive() external payable {
+        if (gasleft() <= RECEIVE_GAS_STIPEND) revert NativeDepositRequiresFullGas();
         _depositToVault(msg.sender, msg.value);
     }
 
