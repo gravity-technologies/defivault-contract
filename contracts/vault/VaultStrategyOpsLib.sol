@@ -64,13 +64,16 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Pays harvested proceeds to the configured recipient and measures recipient-side receipt.
+     * @notice Pays harvested proceeds to the configured recipient and normalizes receipt accounting.
      * @dev Wrapped-native vault token is unwrapped and sent as native ETH; all other tokens are transferred as ERC20.
+     *      Successful native payout is treated as `amount` received because the recipient may
+     *      forward or redistribute ETH during the same call and retained balance is not a reliable
+     *      receipt metric.
      * @param vaultToken Vault token used for the harvest.
      * @param wrappedNativeToken Canonical wrapped-native token used for native payouts.
      * @param recipient Treasury/yield recipient.
      * @param amount Amount to forward.
-     * @return received Amount actually observed at the recipient after transfer.
+     * @return received Amount actually counted as received by the recipient logic.
      */
     function payoutHarvestProceeds(
         address vaultToken,
@@ -79,12 +82,9 @@ library VaultStrategyOpsLib {
         uint256 amount
     ) public returns (uint256 received) {
         if (vaultToken == wrappedNativeToken) {
-            uint256 nativeRecipientBefore = recipient.balance;
             IWrappedNative(wrappedNativeToken).withdraw(amount);
             _sendNative(recipient, amount);
-            uint256 nativeRecipientAfter = recipient.balance;
-            if (nativeRecipientAfter < nativeRecipientBefore) revert IL1TreasuryVault.InvalidParam();
-            return nativeRecipientAfter - nativeRecipientBefore;
+            return amount;
         }
 
         IERC20 asset = IERC20(vaultToken);
