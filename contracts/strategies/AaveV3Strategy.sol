@@ -310,9 +310,9 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      * @inheritdoc IYieldStrategy
      * @dev Reverts if `token != underlying` or `amount == 0`.
      *
-     *      Calls `aavePool.withdraw(token, amount, vault)`. Aave redeems aTokens held by
-     *      this strategy and transfers the underlying directly to `vault`, bypassing this
-     *      contract on the return path.
+     *      If the strategy still holds aTokens, calls `aavePool.withdraw(token, amount, vault)`.
+     *      Aave redeems aTokens held by this strategy and transfers the underlying directly to
+     *      `vault`, bypassing this contract on the return path.
      *
      *      After Aave withdraw, any residual underlying held by this strategy (e.g. dust or
      *      direct donations) is swept to `vault`. This prevents permanent non-zero exposure
@@ -332,10 +332,10 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      * @inheritdoc IYieldStrategy
      * @dev Reverts if `token != underlying`.
      *
-     *      Passes `type(uint256).max` to `aavePool.withdraw`, which Aave interprets as
-     *      "withdraw the full aToken balance". The actual amount received may be slightly
-     *      less than `aToken.balanceOf(this)` at the time of the call due to rounding in
-     *      Aave's internal index math.
+     *      If the strategy still holds aTokens, passes `type(uint256).max` to
+     *      `aavePool.withdraw`, which Aave interprets as "withdraw the full aToken balance".
+     *      The actual amount received may be slightly less than `aToken.balanceOf(this)` at the
+     *      time of the call due to rounding in Aave's internal index math.
      *
      *      After Aave withdraw, any residual underlying held by this strategy is swept to
      *      `vault` and included in `received`.
@@ -347,7 +347,11 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
     }
 
     function _deallocateAndSweep(uint256 requested) internal returns (uint256 received) {
-        received = aavePool.withdraw(underlying, requested, vault);
+        // When the Aave position is already fully exited, skip the external withdraw and
+        // sweep any directly held underlying dust back to the vault.
+        if (IERC20(aToken).balanceOf(address(this)) != 0) {
+            received = aavePool.withdraw(underlying, requested, vault);
+        }
         uint256 swept = _sweepUninvestedTokenToVault();
         if (swept != 0) received += swept;
         emit Deallocated(underlying, requested, received);
