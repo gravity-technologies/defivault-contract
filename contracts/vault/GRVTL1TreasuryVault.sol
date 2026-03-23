@@ -173,6 +173,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     mapping(address token => bool forceTrack) private _trackedTvlTokenOverrideValue;
     /// @dev Timelock controller authorized to update yield recipient.
     address private _yieldRecipientTimelockController;
+    /// @dev Per-token allowlist for the generic ERC20 shared-bridge path.
+    mapping(address token => bool bridgeable) private _bridgeableVaultTokens;
 
     /// @dev Reserved storage gap for upgrade-safe layout extension (50 × 32 bytes).
     uint256[50] private __gap;
@@ -478,6 +480,12 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
+    function isBridgeableVaultToken(address vaultToken) external view override returns (bool) {
+        _requireErc20Token(vaultToken);
+        return _bridgeableVaultTokens[vaultToken];
+    }
+
+    /// @inheritdoc IL1TreasuryVault
     function setVaultTokenConfig(address token, VaultTokenConfig calldata cfg) external override onlyVaultAdmin {
         _requireErc20Token(token);
         (bool ok, ) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
@@ -486,6 +494,15 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         emit VaultTokenConfigUpdated(token, cfg);
         _syncSupportedVaultToken(token);
         _syncVaultTokenDirectTvlTracking(token);
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function setBridgeableVaultToken(address token, bool bridgeable) external override onlyVaultAdmin {
+        _requireErc20Token(token);
+        (bool ok, ) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
+        if (!ok) revert InvalidParam();
+        _bridgeableVaultTokens[token] = bridgeable;
+        emit BridgeableVaultTokenUpdated(token, bridgeable);
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -691,6 +708,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /// @inheritdoc IL1TreasuryVault
     function availableErc20ForRebalance(address erc20Token) external view override returns (uint256) {
         if (erc20Token == _wrappedNativeToken) return 0;
+        if (!_bridgeableVaultTokens[erc20Token]) return 0;
         return _availableVaultTokenForRebalance(erc20Token);
     }
 
@@ -866,6 +884,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         uint256 amount
     ) external payable override nonReentrant whenNotPaused onlyRebalancer {
         if (msg.value != 0) revert InvalidParam();
+        if (erc20Token == address(0)) revert InvalidParam();
         if (erc20Token == _wrappedNativeToken) revert InvalidParam();
         _dispatchBridgeOutToL2(erc20Token, amount, false, false);
     }
@@ -902,6 +921,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         uint256 amount
     ) external payable override nonReentrant onlyRebalancerOrAdmin {
         if (msg.value != 0) revert InvalidParam();
+        if (erc20Token == address(0)) revert InvalidParam();
         if (erc20Token == _wrappedNativeToken) revert InvalidParam();
         _dispatchBridgeOutToL2(erc20Token, amount, false, true);
     }
@@ -1185,6 +1205,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      * @param emergency True for emergency mode (supports disabled, pause-bypass behavior).
      */
     function _dispatchBridgeOutToL2(address token, uint256 amount, bool isNativeIntent, bool emergency) internal {
+        if (!isNativeIntent && !_bridgeableVaultTokens[token]) revert TokenNotBridgeable();
+
         VaultBridgeLib.BridgeRequest memory request = VaultBridgeLib.BridgeRequest({
             bridgeHub: _bridgeHub,
             grvtBridgeProxyFeeToken: _grvtBridgeProxyFeeToken,

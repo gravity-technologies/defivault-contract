@@ -84,6 +84,7 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
 
     await token.write.mint([vault.address, 123n]);
     await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
 
     assert.equal(
       await vault.read.availableErc20ForRebalance([token.address]),
@@ -91,11 +92,25 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
     );
   });
 
-  it("returns 0 for supported token with zero idle balance", async function () {
+  it("returns 0 for supported but non-bridgeable token", async function () {
+    const vault = await deployVault();
+    const token = await deployToken();
+
+    await token.write.mint([vault.address, 123n]);
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+
+    assert.equal(
+      await vault.read.availableErc20ForRebalance([token.address]),
+      0n,
+    );
+  });
+
+  it("returns 0 for supported bridgeable token with zero idle balance", async function () {
     const vault = await deployVault();
     const token = await deployToken();
 
     await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
 
     assert.equal(
       await vault.read.availableErc20ForRebalance([token.address]),
@@ -121,6 +136,16 @@ describe("GRVTL1TreasuryVault.availableErc20ForRebalance", async function () {
 
     await assert.rejects(
       vault.write.setVaultTokenConfig([nonErc20.address, { supported: true }]),
+      /InvalidParam/,
+    );
+  });
+
+  it("reverts setBridgeableVaultToken for non-ERC20 contracts", async function () {
+    const vault = await deployVault();
+    const nonErc20 = await deployNonErc20Contract();
+
+    await assert.rejects(
+      vault.write.setBridgeableVaultToken([nonErc20.address, true]),
       /InvalidParam/,
     );
   });

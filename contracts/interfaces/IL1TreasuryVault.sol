@@ -16,6 +16,8 @@ interface IL1TreasuryVault {
     error Paused();
     /// @dev Vault token is not enabled for normal operations.
     error TokenNotSupported();
+    /// @dev Vault token is not approved for the generic ERC20 bridge path.
+    error TokenNotBridgeable();
     /// @dev Strategy is not authorized for the requested vault token.
     error StrategyNotWhitelisted();
     /// @dev Generic invalid input/config guard.
@@ -112,7 +114,8 @@ interface IL1TreasuryVault {
     // --------- Token support & risk controls ---------
     /// @notice Whether a vault token is enabled for normal operations.
     struct VaultTokenConfig {
-        /// @dev True if the token can be used for normal allocate and rebalance calls.
+        /// @dev True if the token can be used for normal custody / allocate flows.
+        ///      Does not imply generic ERC20 bridge compatibility.
         bool supported;
     }
 
@@ -128,6 +131,12 @@ interface IL1TreasuryVault {
 
     /// @notice Returns whether `vaultToken` is currently supported for normal operations.
     function isSupportedVaultToken(address vaultToken) external view returns (bool);
+
+    /// @notice Returns whether `vaultToken` is approved for the generic ERC20 bridge path.
+    function isBridgeableVaultToken(address vaultToken) external view returns (bool);
+
+    /// @notice Updates whether `vaultToken` is approved for the generic ERC20 bridge path.
+    function setBridgeableVaultToken(address vaultToken, bool bridgeable) external;
 
     // --------- Strategy registry (whitelist) ---------
     /// @notice Settings for one `(vaultToken, strategy)` pair.
@@ -246,6 +255,9 @@ interface IL1TreasuryVault {
 
     /// @notice Emitted when admin TVL token override settings change.
     event TrackedTvlTokenOverrideUpdated(address indexed token, bool enabled, bool forceTrack);
+
+    /// @notice Emitted when generic ERC20 bridge eligibility changes for a vault token.
+    event BridgeableVaultTokenUpdated(address indexed vaultToken, bool bridgeable);
 
     /// @notice Emitted when harvested yield is paid to the yield recipient.
     event YieldHarvested(

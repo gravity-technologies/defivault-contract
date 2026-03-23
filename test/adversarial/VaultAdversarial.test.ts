@@ -64,6 +64,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
         supported: true,
       },
     ]);
+    await vault.write.setBridgeableVaultToken([tokenAddress, true]);
 
     const vaultAsAllocator = await viem.getContractAt(
       "GRVTL1TreasuryVault",

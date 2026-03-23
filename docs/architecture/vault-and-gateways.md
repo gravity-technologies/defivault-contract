@@ -53,13 +53,20 @@ The current implemented strategy is [AaveV3Strategy](../../contracts/strategies/
 Normal top-up flow:
 
 1. rebalancer calls `rebalanceNativeToL2(amount)` or `rebalanceErc20ToL2(token, amount)`
-2. vault checks pause and support rules
+2. vault checks pause rules plus bridge eligibility
 3. bridge execution cost is funded through base-token minting
 4. ERC20 path submits the two-bridges request directly through `BridgeHub`
 5. native path transfers wrapped-native plus the fee token to `NativeBridgeGateway`
 6. `NativeBridgeGateway` unwraps, becomes the deposit sender, and submits the native bridge request
 
-Emergency top-up flow uses `emergencyNativeToL2` and `emergencyErc20ToL2`. These bypass normal pause/support restrictions but remain role-gated.
+`supported` and `bridgeable` are intentionally separate:
+
+- `supported` means the token is approved for vault custody and normal vault accounting
+- `bridgeable` means the token is approved for the generic ERC20 shared-bridge path
+
+This separation matters because some ERC20s may be safe to custody but unsafe to bridge through the generic path without a token-specific adapter.
+
+Emergency top-up flow uses `emergencyNativeToL2` and `emergencyErc20ToL2`. These bypass normal pause restrictions but still enforce bridge eligibility and remain role-gated.
 
 ## Native ETH Boundaries
 

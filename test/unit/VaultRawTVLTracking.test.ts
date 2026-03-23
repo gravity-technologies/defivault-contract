@@ -132,6 +132,7 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
       token.address,
       supportedTokenConfig,
     ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
     await token.write.mint([vault.address, 25n]);
     await vault.write.setVaultTokenConfig([
       token.address,

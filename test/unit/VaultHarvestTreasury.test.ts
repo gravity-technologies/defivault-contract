@@ -186,6 +186,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     await vault.write.grantRole([await vault.read.PAUSER_ROLE(), addr(pauser)]);
 
     await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
 
     const stratA = await viem.deployContract("MockYieldStrategy", [
       vault.address,

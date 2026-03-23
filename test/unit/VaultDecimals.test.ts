@@ -76,6 +76,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
           supported: true,
         },
       ]);
+      await vault.write.setBridgeableVaultToken([token.address, true]);
 
       const strategy = await viem.deployContract("MockYieldStrategy", [
         vault.address,
