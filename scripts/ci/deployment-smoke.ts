@@ -217,11 +217,13 @@ async function main() {
       "0x0000000000000000000000000000000000000e11",
   );
 
-  const bridgeHub = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
   const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
     "Mock Base",
     "mBASE",
     18,
+  ]);
+  const bridgeHub = await viem.deployContract("MockBridgehub", [
+    grvtBridgeProxyFeeToken.address,
   ]);
   const wrappedNativeToken = await viem.deployContract("MockWETH");
   const underlyingToken = await viem.deployContract("MockERC20", [
@@ -561,6 +563,12 @@ async function main() {
     "nativeBridgeGateway.bridgeHub",
     await nativeBridgeGateway.read.bridgeHub(),
     bridgeHub.address,
+  );
+  recordEq(
+    assertions,
+    "nativeBridgeGateway.nativeTokenVault",
+    await nativeBridgeGateway.read.nativeTokenVault(),
+    await bridgeHub.read.nativeTokenVault(),
   );
   recordEq(
     assertions,
