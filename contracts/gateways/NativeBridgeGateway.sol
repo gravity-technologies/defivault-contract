@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IWrappedNative} from "../external/IWrappedNative.sol";
+import {ZkSyncAssetRouterEncoding} from "../external/ZkSyncAssetRouterEncoding.sol";
 import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
 
 /**
@@ -22,6 +23,9 @@ import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
  *      - The vault transfers wrapped-native and the fee token into this gateway before `bridgeNativeToL2`.
  *      - If a native deposit later fails on zkSync, BridgeHub recovery is claimed externally back to this gateway.
  *      - `recoverClaimedNativeDeposit` then wraps the already-claimed ETH and returns the normalized funds to the vault.
+ *
+ *      Native bridge payloads use Matter Labs' current asset-router sentinel for ETH (`address(1)`),
+ *      centralized via `ZkSyncAssetRouterEncoding` so production code and mocks/tests stay aligned.
  *
  *      ### Upgrade safety
  *      Constructor logic is disabled on the implementation and all mutable configuration is assigned through
@@ -149,7 +153,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
                 refundRecipient: refundRecipient,
                 secondBridgeAddress: sharedBridge,
                 secondBridgeValue: amount,
-                secondBridgeCalldata: abi.encode(address(0), amount, l2Recipient)
+                secondBridgeCalldata: ZkSyncAssetRouterEncoding.encodeLegacyNativeDeposit(amount, l2Recipient)
             })
         );
 

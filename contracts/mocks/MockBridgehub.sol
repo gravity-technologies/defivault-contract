@@ -4,6 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
+import {ZkSyncAssetRouterEncoding} from "../external/ZkSyncAssetRouterEncoding.sol";
 
 contract MockBridgehub is IL1ZkSyncBridgeHub {
     using SafeERC20 for IERC20;
@@ -40,6 +41,10 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
         return _sharedBridge;
     }
 
+    function nativeTokenAddress() external pure returns (address) {
+        return ZkSyncAssetRouterEncoding.nativeTokenAddress();
+    }
+
     function l2TransactionBaseCost(uint256, uint256, uint256, uint256) external pure override returns (uint256) {
         return 1;
     }
@@ -55,7 +60,7 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
         lastRefundRecipient = request.refundRecipient;
         lastDepositSender = msg.sender;
 
-        if (token == address(0)) {
+        if (ZkSyncAssetRouterEncoding.isNativeToken(token)) {
             require(request.secondBridgeValue == amount, "BAD_NATIVE_SECOND_BRIDGE_VALUE");
             require(msg.value == amount, "BAD_NATIVE_MSG_VALUE");
         } else {
@@ -105,7 +110,7 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
         deposit.claimed = true;
         lastClaimedTxHash = l2TxHash;
 
-        if (l1Token == address(0)) {
+        if (ZkSyncAssetRouterEncoding.isNativeToken(l1Token)) {
             (bool ok, ) = depositSender.call{value: amount}("");
             require(ok, "NATIVE_CLAIM_FAILED");
             return;
