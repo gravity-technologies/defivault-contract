@@ -14,6 +14,14 @@ import {IWrappedNative} from "../external/IWrappedNative.sol";
  *        reaches vault custody.
  *      - This contract stays intentionally stateless in normal flow and should not retain persistent ETH or
  *        wrapped-native.
+ *
+ *      Stuck-funds policy:
+ *      The gateway only wraps and forwards `msg.value` received in the current call. It has no sweep or rescue
+ *      mechanism, and intentionally carries no admin role that could introduce one. Any value that arrives outside
+ *      the normal deposit path — forced ETH via `SELFDESTRUCT` / `SENDALL`, direct ERC20 `transfer`, or accidental
+ *      wrapped-native sends — is permanently unrecoverable by design. Integrators and monitoring must not assume
+ *      the gateway can never hold a balance; they should treat any residual balance as a donation to the contract
+ *      address.
  */
 contract NativeVaultGateway {
     using SafeERC20 for IERC20;
