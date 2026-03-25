@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { encodeFunctionData, zeroAddress } from "viem";
+import { encodeFunctionData } from "viem";
 
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
@@ -193,8 +193,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     await vault.write.rebalanceNativeToL2([12n]);
 
+    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
     assert.equal(await bridgeHub.read.requestCount(), 1n);
-    assert.equal(await bridgeHub.read.lastToken(), zeroAddress);
+    assert.equal(await bridgeHub.read.lastToken(), nativeTokenAddress);
     assert.equal(await bridgeHub.read.lastAmount(), 12n);
     assert.equal(await bridgeHub.read.lastSecondBridgeValue(), 12n);
     assert.equal(await bridgeHub.read.lastMsgValue(), 12n);
@@ -252,8 +253,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     await vault.write.emergencyNativeToL2([9n]);
 
+    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
     assert.equal(await bridgeHub.read.requestCount(), 1n);
-    assert.equal(await bridgeHub.read.lastToken(), zeroAddress);
+    assert.equal(await bridgeHub.read.lastToken(), nativeTokenAddress);
     assert.equal(await bridgeHub.read.lastSecondBridgeValue(), 9n);
     assert.equal(await bridgeHub.read.lastMsgValue(), 9n);
     assert.equal(
@@ -383,10 +385,11 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     await vault.write.rebalanceNativeToL2([12n]);
 
     const bridgeTxHash = await bridgeHub.read.lastTxHash();
+    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
     await bridgeHub.write.claimFailedDeposit([
       270n,
       nativeBridgeGateway.address,
-      zeroAddress,
+      nativeTokenAddress,
       12n,
       bridgeTxHash,
       0n,
