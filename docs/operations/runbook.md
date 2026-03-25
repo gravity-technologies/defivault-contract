@@ -369,6 +369,8 @@ After call:
 ## Native ETH Operational Notes
 
 - planned external ETH ingress should go through `NativeVaultGateway`
+- integrations should call `depositToVault()` or use a full-gas native `call`
+- do not rely on Solidity `.transfer()` or `.send()` for native ingress through `NativeVaultGateway`
 - direct ETH sent to the vault is not normal operation
 - strategy positions remain ERC20-only
 - sweep unexpected native ETH only through `sweepNativeToYieldRecipient(amount)` with explicit operator rationale
