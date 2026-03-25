@@ -12,7 +12,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * - strategyProxy: existing AaveV3Strategy proxy address.
  * - upgradeCallData: optional calldata for post-upgrade initialization (defaults to 0x).
  */
-export default buildModule("StrategyUpgradeModule", (m) => {
+export default buildModule("StrategyUpgradeModule", (m: any) => {
   const proxyAdmin = m.getParameter("proxyAdmin");
   const strategyProxy = m.getParameter("strategyProxy");
   const upgradeCallData = m.getParameter("upgradeCallData", "0x");

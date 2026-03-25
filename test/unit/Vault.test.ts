@@ -194,6 +194,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
   it("blocks allocations, harvests, and normal rebalances when paused but allows defensive exits", async function () {
     const {
       vaultAsAllocator,
+      vaultAsAdmin,
       vaultAsRebalancer,
       vaultAsPauser,
       token,
@@ -228,7 +229,8 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       stratA.address,
       100_000n,
     ]);
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 200_000n]);
+    await vaultAsAdmin.write.unpause();
+    await vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 200_000n]);
     assert.equal(await bridge.read.lastAmount(), 200_000n);
   });
 
@@ -272,7 +274,13 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       token.address,
       stratA.address,
     ]);
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 100_000n]);
+    await viem.assertions.revertWithCustomError(
+      vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 100_000n]),
+      vaultAsRebalancer,
+      "TokenNotSupported",
+    );
+    await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+    await vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 100_000n]);
     assert.equal(await bridge.read.lastAmount(), 100_000n);
   });
 
@@ -710,7 +718,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     assert.equal(await vault.read.l2ChainId(), 270n);
   });
 
-  it("validates rebalance and emergency input constraints", async function () {
+  it("validates rebalance input constraints", async function () {
     const { vaultAsRebalancer, token } = await deployBase();
     const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -721,16 +729,6 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
     await viem.assertions.revertWithCustomError(
       vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 0n]),
-      vaultAsRebalancer,
-      "InvalidParam",
-    );
-    await viem.assertions.revertWithCustomError(
-      vaultAsRebalancer.write.emergencyErc20ToL2([zeroAddress, 10n]),
-      vaultAsRebalancer,
-      "InvalidParam",
-    );
-    await viem.assertions.revertWithCustomError(
-      vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 0n]),
       vaultAsRebalancer,
       "InvalidParam",
     );
@@ -757,22 +755,12 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
   });
 
-  it("reverts emergency send when msg.value is non-zero", async function () {
-    const { vaultAsRebalancer, token } = await deployBase();
-
-    await viem.assertions.revertWithCustomError(
-      vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 100_000n], {
-        value: 1n,
-      }),
-      vaultAsRebalancer,
-      "InvalidParam",
-    );
-  });
-
-  it("emergency send can unwind from strategy when idle is insufficient", async function () {
+  it("manual deallocation can restore idle liquidity for later rebalance", async function () {
     const {
       vault,
       vaultAsAllocator,
+      vaultAsAdmin,
+      vaultAsPauser,
       vaultAsRebalancer,
       token,
       stratA,
@@ -784,7 +772,14 @@ describe("GRVTL1TreasuryVault core flows", async function () {
       stratA.address,
       1_700_000n,
     ]);
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 500_000n]);
+    await vaultAsPauser.write.pause();
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      stratA.address,
+      500_000n,
+    ]);
+    await vaultAsAdmin.write.unpause();
+    await vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 500_000n]);
 
     assert.equal(await bridge.read.lastAmount(), 500_000n);
     assert.ok(

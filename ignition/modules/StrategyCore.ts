@@ -17,7 +17,7 @@ import { transparentUpgradeableProxyArtifact } from "./shared/transparentProxyAr
  * - aToken: corresponding Aave aToken.
  * - strategyName: metadata label (defaults to AAVE_V3_UNDERLYING).
  */
-export default buildModule("StrategyCoreModule", (m) => {
+export default buildModule("StrategyCoreModule", (m: any) => {
   const vaultProxy = m.getParameter("vaultProxy");
   const proxyAdminOwner = m.getParameter("proxyAdminOwner");
   const aavePool = m.getParameter("aavePool");

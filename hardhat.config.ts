@@ -20,6 +20,19 @@ const SOLIDITY_OPTIMIZER_SETTINGS = {
   runs: 200,
 } as const;
 
+/** Solc outputs required by repo tooling. */
+const DEFAULT_OUTPUT_SELECTION = {
+  "*": {
+    "*": [
+      "abi",
+      "evm.bytecode",
+      "evm.deployedBytecode",
+      "evm.methodIdentifiers",
+      "metadata",
+    ],
+  },
+} as const;
+
 /** Upstream OZ packaged artifacts in deployment flows were compiled with 0.8.27. */
 const OPENZEPPELIN_PROXY_COMPILER_VERSION = "0.8.27" as const;
 
@@ -64,6 +77,7 @@ const DEFAULT_COMPILER = {
   version: DEFAULT_SOLIDITY_VERSION,
   settings: {
     optimizer: { ...SOLIDITY_OPTIMIZER_SETTINGS },
+    outputSelection: DEFAULT_OUTPUT_SELECTION,
   },
 };
 
@@ -72,12 +86,19 @@ const OPENZEPPELIN_PROXY_OVERRIDE = {
   version: OPENZEPPELIN_PROXY_COMPILER_VERSION,
   settings: {
     optimizer: { ...SOLIDITY_OPTIMIZER_SETTINGS },
+    outputSelection: DEFAULT_OUTPUT_SELECTION,
   },
 };
 
 /** Source-level compiler overrides for packaged OZ contracts used by deployment tooling. */
 const OPENZEPPELIN_PROXY_SOURCE_OVERRIDES = {
   "@openzeppelin/contracts/governance/TimelockController.sol":
+    OPENZEPPELIN_PROXY_OVERRIDE,
+  "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol":
+    OPENZEPPELIN_PROXY_OVERRIDE,
+  "@openzeppelin/contracts/proxy/beacon/IBeacon.sol":
+    OPENZEPPELIN_PROXY_OVERRIDE,
+  "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol":
     OPENZEPPELIN_PROXY_OVERRIDE,
   "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol":
     OPENZEPPELIN_PROXY_OVERRIDE,
@@ -88,6 +109,9 @@ const OPENZEPPELIN_PROXY_SOURCE_OVERRIDES = {
 /** Explicit npm sources that Hardhat must build so packaged OZ contracts can be verified. */
 const OPENZEPPELIN_PROXY_NPM_FILES_TO_BUILD = [
   "@openzeppelin/contracts/governance/TimelockController.sol",
+  "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol",
+  "@openzeppelin/contracts/proxy/beacon/IBeacon.sol",
+  "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol",
   "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol",
   "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol",
 ] as const;
@@ -148,7 +172,7 @@ export default defineConfig({
   // Guard vault bytecode growth during development and review.
   contractSizer: {
     strict: true,
-    only: [/GRVTL1TreasuryVault/],
+    only: [/^contracts\/vault\/GRVTL1TreasuryVault\.sol:GRVTL1TreasuryVault$/],
     runOnCompile: false,
     unit: "B",
   },

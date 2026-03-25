@@ -11,7 +11,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * - vaultToken: token address to configure.
  * - supported: value for setVaultTokenConfig(token, { supported }).
  */
-export default buildModule("VaultTokenConfigModule", (m) => {
+export default buildModule("VaultTokenConfigModule", (m: any) => {
   const vaultProxy = m.getParameter("vaultProxy");
   const vaultToken = m.getParameter("vaultToken");
   const supported = m.getParameter("supported", true);

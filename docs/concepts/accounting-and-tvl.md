@@ -38,11 +38,16 @@ Example:
 - `positionBreakdown(USDT)` can include `aUSDT` plus residual `USDT`
 - `strategyExposure(USDT)` returns the one number the vault uses for cap and harvest math
 
-## Why Cost Basis Uses Measured Vault Delta
+## Cost Basis By Strategy Family
 
-`allocateVaultTokenToStrategy(vaultToken, strategy, amount)` increases cost basis by the vault's measured net token outflow during allocation, not by strategy-reported receipt.
+Legacy and V2 now use different entry accounting rules.
 
-Fee-on-transfer example:
+Legacy lanes:
+
+- `allocateVaultTokenToStrategy(vaultToken, strategy, amount)` increases cost basis by the vault's measured net token outflow during allocation,
+- this keeps deposit friction and under-spend behavior out of future harvestable yield.
+
+Example:
 
 - requested allocation: `100`
 - strategy receives: `99`
@@ -50,15 +55,29 @@ Fee-on-transfer example:
 - later exposure: `120`
 - harvestable yield: `20`, not `21`
 
-Partial-pull example:
+V2 lanes:
+
+- `allocate(amount)` returns strategy-reported `invested`,
+- the vault still measures `spent = balanceBefore - balanceAfter`,
+- but V2 cost basis increases by `invested`, not `spent`,
+- entry fee is inferred as `spent - invested` and reimbursed by treasury on tracked flows.
+
+Example:
 
 - requested allocation: `100`
-- strategy actually pulls: `90`
-- stored cost basis: `90`
-- later exposure: `120`
-- harvestable yield: `30`
+- vault-side spent: `100`
+- strategy-reported invested: `99`
+- stored V2 cost basis: `99`
+- treasury reimburses: `1`
 
-This keeps deposit friction and under-spend behavior classified correctly instead of turning them into fake future yield.
+This is a conscious trust tradeoff. V2 treats governance-controlled strategies as trusted for the lower bound on deployed principal. The vault still rejects impossible shapes such as `invested > spent`, but it does not independently prove that `invested` is not too low.
+
+That means:
+
+- legacy stays "measured delta first",
+- V2 is simpler and aligns with unconditional tracked-flow reimbursement,
+- the vault remains authoritative for the stored principal number,
+- but V2 entry accounting depends on honest strategy reporting.
 
 ## Tracked TVL Tokens
 
@@ -110,6 +129,7 @@ For deeper diagnostics:
 
 - [system-overview.md](system-overview.md)
 - [strategy-model.md](strategy-model.md)
+- [v2-accounting-walkthrough.md](v2-accounting-walkthrough.md)
 - [../architecture/vault-and-gateways.md](../architecture/vault-and-gateways.md)
-- [../design-decisions/raw-token-tvl-accounting.md](../design-decisions/raw-token-tvl-accounting.md)
-- [../design-decisions/cached-tracked-tvl-token-registry.md](../design-decisions/cached-tracked-tvl-token-registry.md)
+- [../design-decisions/03-raw-token-tvl-accounting.md](../design-decisions/03-raw-token-tvl-accounting.md)
+- [../design-decisions/04-cached-tracked-tvl-token-registry.md](../design-decisions/04-cached-tracked-tvl-token-registry.md)

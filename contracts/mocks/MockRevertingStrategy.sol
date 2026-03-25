@@ -6,7 +6,7 @@ import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
 
 /**
  * @dev Strategy mock that always reverts on operational methods.
- * Used to test best-effort accounting and emergency unwind skip behavior.
+ * Used to test best-effort accounting and defensive-exit behavior.
  */
 contract MockRevertingStrategy is IYieldStrategy {
     function name() external pure returns (string memory) {

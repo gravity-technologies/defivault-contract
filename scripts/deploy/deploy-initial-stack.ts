@@ -61,7 +61,7 @@ import {
  * - Deploys or wires the Aave prerequisites, vault core, strategy core, vault
  *   token support, strategy binding, roles, yield recipient timelock, and
  *   native gateways.
- * - Reuses smoke deployment prerequisites in local mode instead of asking the
+ * - Reuses local prerequisite values in local mode instead of asking the
  *   operator for those values again.
  *
  * Non-goals:
@@ -674,7 +674,7 @@ function readLocalSmokePrerequisites(
 ): LocalSmokePrerequisites {
   if (!existsSync(filePath)) {
     throw new Error(
-      `local mode requires ${relativePath(filePath)}; run npm run smoke:deployment first`,
+      `local mode requires ${relativePath(filePath)} with prerequisite addresses`,
     );
   }
 
@@ -1503,9 +1503,9 @@ async function resolveLocalParams(
   if (!sameAddress(localPrereqs.deployAdmin, deployerAddress)) {
     throw new Error(
       [
-        `local smoke prerequisites were produced for deployer ${localPrereqs.deployAdmin}`,
+        `local prerequisite values were produced for deployer ${localPrereqs.deployAdmin}`,
         `but current localhost deployer is ${deployerAddress}`,
-        "rerun npm run smoke:deployment against this node",
+        `refresh ${relativePath(smokePrerequisitesPath)} for this node`,
       ].join("; "),
     );
   }
@@ -1521,7 +1521,7 @@ async function resolveLocalParams(
 
   renderSection(
     "Local Config Intake",
-    `Loaded smoke prerequisite values from ${relativePath(smokePrerequisitesPath)} and reused ${grvtEnvironment} parameter defaults for the remaining fields. No interactive prompts will be shown in local mode.`,
+    `Loaded local prerequisite values from ${relativePath(smokePrerequisitesPath)} and reused ${grvtEnvironment} parameter defaults for the remaining fields. No interactive prompts will be shown in local mode.`,
   );
 
   const deployAdmin = localPrereqs.deployAdmin;

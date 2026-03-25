@@ -10,7 +10,7 @@
 ## Deployment State and Audit Trail
 
 Core proxy deployment and bootstrap configuration are managed with Hardhat Ignition.
-Operational strategy moves, yield harvests, and emergency bridge paths are exposed as Hardhat tasks.
+Operational strategy moves, yield harvests, and bridge operations are exposed as Hardhat tasks.
 Vault upgrades use a single Hardhat task. Production prepares multisig calldata after deploying a new implementation with a hot wallet; staging/testnet execute directly with the task signer.
 
 Source of truth for current live state:
@@ -28,6 +28,7 @@ Record these for every deployment:
 
 - proxy addresses
 - implementation addresses
+- helper module addresses
 - ProxyAdmin addresses
 - deployment ids
 - transaction hashes
@@ -38,12 +39,6 @@ Useful commands:
 npx hardhat ignition deployments --network <network>
 npx hardhat ignition status <deployment-id> --network <network>
 npx hardhat ignition transactions <deployment-id> --network <network>
-```
-
-Local smoke orchestration:
-
-```bash
-npm run smoke:deployment
 ```
 
 ## Environment
@@ -85,11 +80,23 @@ npm run deploy:vault -- \
 
 Record:
 
+- `VaultStrategyOpsLib`
+- `VaultBridgeLib`
+- `VaultViewModule`
+- `VaultOpsModule`
 - vault implementation and proxy addresses
 - vault ProxyAdmin address
 - deployment tx hashes
 
 ### 2. Deploy Strategy Core
+
+There are currently three strategy deployment paths in this repo:
+
+- `npm run deploy:strategy`: Aave lane via `ignition/modules/StrategyCore.ts`
+- `npm run deploy:strategy-v2:family` and `npm run deploy:strategy-v2:lane`: beacon-backed Aave V2 family and lanes
+- `npm run deploy:gho-strategy:family` and `npm run deploy:gho-strategy:lane`: beacon-backed GHO / stkGHO family and lanes
+
+#### Aave Strategy
 
 Prepare `ignition/parameters/<env>/strategy-core.json5` with:
 
@@ -113,6 +120,108 @@ Record:
 - strategy implementation and proxy addresses
 - strategy ProxyAdmin address
 - deployment tx hashes
+
+#### Aave V2 Strategy Family
+
+Prepare `ignition/parameters/<env>/strategy-v2-family.json5` with:
+
+- `beaconOwner`
+
+Command:
+
+```bash
+npm run deploy:strategy-v2:family -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/strategy-v2-family.json5
+```
+
+Record:
+
+- strategy implementation address
+- strategy beacon address
+- deployment tx hashes
+- note: this does not deploy a usable strategy proxy
+
+#### Aave V2 Lane
+
+Prepare `ignition/parameters/<env>/strategy-v2-lane.json5` with:
+
+- `strategyBeacon`
+- `vaultProxy`
+- `aavePool`
+- `vaultToken`
+- `aToken`
+- `strategyName`
+
+Command:
+
+```bash
+npm run deploy:strategy-v2:lane -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/strategy-v2-lane.json5
+```
+
+Record:
+
+- strategy proxy address
+- deployment tx hashes
+- this is the usable strategy instance to register in the vault
+
+#### GHO / stkGHO Strategy Family
+
+Prepare `ignition/parameters/<env>/gho-strategy-core.json5` with:
+
+- `beaconOwner`
+
+Command:
+
+```bash
+npm run deploy:gho-strategy:family -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/gho-strategy-core.json5
+```
+
+Record:
+
+- strategy implementation address
+- strategy beacon address
+- deployment tx hashes
+- note: this does not deploy a usable strategy proxy
+
+#### GHO / stkGHO Strategy Lane
+
+Prepare `ignition/parameters/<env>/gho-strategy-lane.json5` with:
+
+- `strategyBeacon`
+- `vaultProxy`
+- `vaultToken`
+- `ghoToken`
+- `stkGhoToken`
+- `gsmAdapter`
+- `stkGhoStakingAdapter`
+- `stkGhoRewardsDistributor`
+- `strategyName`
+
+Command:
+
+```bash
+npm run deploy:gho-strategy:lane -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/gho-strategy-lane.json5
+```
+
+Record:
+
+- strategy proxy address
+- deployment tx hashes
+- this is the usable strategy instance to register in the vault
+
+Additional operator requirement for the GHO lane:
+
+- before reimbursing exits are relied on, admin must rotate `yieldRecipient` to a compatible treasury contract,
+- that treasury must authorize the vault; lane reimbursement config and budget are still an operator responsibility,
+- current intended GHO policy is entry cap `0`, exit cap `7`, `policyActive = true`,
+- incident response should not treat treasury reimbursement as bridgeable liquidity.
 
 ### 3. Configure Supported Vault Tokens
 
@@ -148,6 +257,24 @@ npm run deploy:vault-token-strategy -- \
   --network <network> \
   --parameters ignition/parameters/<env>/vault-token-strategy.json5
 ```
+
+### 4b. Activate V2 Policy For V2 Lanes
+
+Whitelisting a V2 lane does not turn the V2 policy on.
+
+Today `setStrategyPolicyConfig(...)` is not wrapped in a dedicated task or Ignition module.
+Prepare direct admin or multisig calldata against the vault proxy instead.
+
+Recommended configs:
+
+- `AaveV3StrategyV2`: `(0, 0, true)`
+- `GsmStkGhoStrategy`: `(0, 7, true)`
+
+For reimbursing lanes, do not activate policy until:
+
+- `yieldRecipient` is a compatible treasury,
+- the vault is authorized on that treasury,
+- the treasury budget is configured for the correct `(strategy, token)` lane before those reimbursing flows are relied on.
 
 ### 5. Grant Operational Roles
 
@@ -228,6 +355,15 @@ The task deploys the new vault implementation with the active wallet, derives th
 - prints the calldata for `upgradeAndCall` when `requiresMultisig: true`
 - executes the upgrade directly when `requiresMultisig: false`
 
+Before using the task, run:
+
+```bash
+npm run size:check:vault
+npm exec hardhat test test/unit/VaultUpgrade.test.ts
+```
+
+See [vault-upgrades-and-v2-policy.md](vault-upgrades-and-v2-policy.md) for the full upgrade checklist and V2 lane activation flow.
+
 Strategy upgrade:
 
 ```bash
@@ -245,6 +381,9 @@ npm run upgrade:strategy -- \
 5. Confirm supported vault tokens and strategy registry state.
 6. Confirm the configured `nativeBridgeGateway`.
 7. Confirm all deployment outputs and tx hashes are attached to the deployment record.
+8. For beacon-backed V2 strategy deployments, verify each deployment dir separately:
+   - family bootstrap: `npm run verify:v2-strategies -- --deployment-dir <family-ignition-deployment-dir>`
+   - lane proxy: `npm run verify:v2-strategies -- --deployment-dir <lane-ignition-deployment-dir>`
 
 ## Normal Operations
 
@@ -351,13 +490,13 @@ Note:
 1. `pause()`
 2. stop normal allocate and rebalance activity
 3. unwind strategy positions as needed
-4. if urgent L2 liquidity is needed, use emergency bridge flows
+4. if urgent L2 liquidity is needed, deallocate the chosen lanes and then bridge through the normal path after unpausing
 5. reconcile balances and record each action
 
 ### Token De-Support During Incident
 
 1. disable support for the affected vault token
-2. continue defensive exits through deallocation and emergency bridge paths
+2. continue defensive exits through deallocation; if L2 liquidity is needed later, restore support and use the normal bridge path
 3. re-enable only after root cause resolution
 
 ### Suspected Role Compromise
@@ -393,41 +532,20 @@ Operator rules:
   plus recovery atomically
 - recovery should leave `NativeBridgeGateway` with no stranded native or wrapped-native balance
 
-## Emergency Send Checklist
+## Incident-Time L2 Restoration
 
-Commands:
+There is no dedicated emergency bridge method.
 
-```bash
-npm run ops:emergency-native-to-l2 -- \
-  --network <network> \
-  --parameters tasks/parameters/<env>/emergency-native-to-l2.json5
+Use this operator workflow instead:
 
-npm run ops:emergency-erc20-to-l2 -- \
-  --network <network> \
-  --parameters tasks/parameters/<env>/emergency-erc20-to-l2.json5
-```
+1. pause the vault if risk-on actions must stop
+2. deallocate the specific lanes you want to unwind, in the order you choose
+3. restore any required token support flags for the normal bridge path
+4. unpause the vault
+5. run `rebalanceNativeToL2` or `rebalanceErc20ToL2`
+6. confirm bridge execution and remaining idle balances
 
-Parameter shape:
-
-- `vaultProxy`
-- `amount`
-- `token` for ERC20 emergency send only
-
-These commands are task-backed operations, not Ignition deployments.
-
-Before each `emergencyNativeToL2` or `emergencyErc20ToL2`:
-
-1. incident ticket or reference exists
-2. caller has `REBALANCER_ROLE` or `VAULT_ADMIN_ROLE`
-3. token and amount are explicitly reviewed
-4. `msg.value == 0`
-5. emitted bridge metadata is captured
-
-After call:
-
-1. check idle and strategy balances
-2. confirm bridge execution or recipient-side confirmation
-3. record any remaining shortfall
+This keeps bridge behavior identical in normal and incident operation. The only manual step is choosing which positions to unwind first.
 
 ## Native ETH Operational Notes
 
@@ -451,6 +569,7 @@ npm run format
 git diff --exit-code
 npm run typecheck
 npm run test
+npm run test:fork
 ```
 
 Security-sensitive changes should also run:

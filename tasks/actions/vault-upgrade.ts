@@ -60,10 +60,33 @@ const action: NewTaskActionFunction<VaultUpgradeTaskArgs> = async (
   );
   const vaultBridgeLib = await viem.deployContract("VaultBridgeLib", [], {
     client,
+    libraries: {
+      VaultStrategyOpsLib: vaultStrategyOpsLib.address,
+    },
   });
+  const vaultViewModule = await viem.deployContract(
+    "GRVTL1TreasuryVaultViewModule",
+    [],
+    {
+      client,
+      libraries: {
+        VaultStrategyOpsLib: vaultStrategyOpsLib.address,
+      },
+    },
+  );
+  const vaultOpsModule = await viem.deployContract(
+    "GRVTL1TreasuryVaultOpsModule",
+    [],
+    {
+      client,
+      libraries: {
+        VaultStrategyOpsLib: vaultStrategyOpsLib.address,
+      },
+    },
+  );
   const vaultImplementation = await viem.deployContract(
     "GRVTL1TreasuryVault",
-    [],
+    [vaultViewModule.address, vaultOpsModule.address],
     {
       client,
       libraries: {
@@ -108,6 +131,8 @@ const action: NewTaskActionFunction<VaultUpgradeTaskArgs> = async (
       `- Vault implementation: \`${vaultImplementation.address}\``,
       `- VaultStrategyOpsLib: \`${vaultStrategyOpsLib.address}\``,
       `- VaultBridgeLib: \`${vaultBridgeLib.address}\``,
+      `- VaultViewModule: \`${vaultViewModule.address}\``,
+      `- VaultOpsModule: \`${vaultOpsModule.address}\``,
       `- Upgrade calldata: \`${upgradeCalldata}\``,
     ],
   });
@@ -119,6 +144,8 @@ const action: NewTaskActionFunction<VaultUpgradeTaskArgs> = async (
   console.log(`requiresMultisig=${requiresMultisig}`);
   console.log(`vaultStrategyOpsLib=${vaultStrategyOpsLib.address}`);
   console.log(`vaultBridgeLib=${vaultBridgeLib.address}`);
+  console.log(`vaultViewModule=${vaultViewModule.address}`);
+  console.log(`vaultOpsModule=${vaultOpsModule.address}`);
   console.log(`vaultImplementation=${vaultImplementation.address}`);
   console.log(`upgradeCallData=${upgradeCallData}`);
   console.log(`upgradeCalldata=${upgradeCalldata}`);

@@ -4,20 +4,23 @@
 
 - Status: implemented in this repo
 - Audience: integrators, reviewers, operators
-- Purpose: document the current Aave adapter behavior and its assumptions
-- Implemented surfaces: `contracts/strategies/AaveV3Strategy.sol`, `test/fork/AaveMainnetFork.test.ts`
+- Purpose: document the legacy and V2 Aave adapter behavior and their assumptions
+- Implemented surfaces: `contracts/strategies/AaveV3Strategy.sol`, `contracts/strategies/AaveV3StrategyV2.sol`, `test/fork/AaveMainnetFork.test.ts`
 
 ## Scope
 
-This page describes the implemented `AaveV3Strategy` behavior in this repository.
+This page describes both implemented Aave adapters in this repository:
+
+- legacy `AaveV3Strategy`
+- V2 `AaveV3StrategyV2`
 
 Primary users:
 
-- engineers integrating the current Aave adapter
+- engineers integrating the current Aave adapters
 - reviewers validating Aave-specific assumptions
 - operators debugging Aave-based harvest and cap decisions
 
-## Adapter Model
+## Legacy Adapter: `AaveV3Strategy`
 
 Deployment is single-market:
 
@@ -58,9 +61,37 @@ Exposure model:
 - if `aToken` diverges economically from a 1:1 relation with the underlying, exposure-based decisions can drift
 - exact token movement and exact-token reporting remain correct even if exposure math becomes economically inaccurate
 
+## V2 Adapter: `AaveV3StrategyV2`
+
+The V2 Aave lane keeps the same venue assumption but changes the interface shape.
+
+It is:
+
+- a single-lane strategy bound to one `vaultToken`
+- classified as `DirectWrapper`
+- zero-fee in the intended venue model
+- exposed through `allocate(amount)`, `withdraw(amount)`, and `totalExposure()`
+- the vault owns the authoritative principal ledger for the lane
+- V2 entry accounting trusts strategy-reported `invested`, while vault-side balance deltas remain sanity checks only
+
+Operationally this is the baseline V2 lane:
+
+- recommended vault policy is `0` bps entry cap and `0` bps exit cap
+- tracked entry and exit reimbursement comes from treasury configuration, not per-lane booleans
+- residual exposure is ordinary Aave yield above tracked principal
+- normal `deallocate*` calls withdraw tracked principal
+- residual Aave yield stays on the harvest path
+- if the lane is impaired, `deallocateAll` is the loss-recognition path
+
+Migration note:
+
+- do not in-place upgrade a deployed legacy `AaveV3Strategy` into V2
+- upgrade the vault, then deploy a fresh `AaveV3StrategyV2` lane and move capital over operationally
+
 ## Code and Test Surfaces
 
 - Strategy implementation: [../../contracts/strategies/AaveV3Strategy.sol](../../contracts/strategies/AaveV3Strategy.sol)
+- V2 strategy implementation: [../../contracts/strategies/AaveV3StrategyV2.sol](../../contracts/strategies/AaveV3StrategyV2.sol)
 - Aave pool interface: [../../contracts/external/IAaveV3Pool.sol](../../contracts/external/IAaveV3Pool.sol)
 - Fork coverage: [../../test/fork/AaveMainnetFork.test.ts](../../test/fork/AaveMainnetFork.test.ts)
 

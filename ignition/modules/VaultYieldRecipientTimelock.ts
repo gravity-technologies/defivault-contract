@@ -16,7 +16,7 @@ import { timelockControllerArtifact } from "./shared/timelockControllerArtifact.
  * - executors: addresses allowed to execute ready operations.
  * - admin: timelock admin for initial role management.
  */
-export default buildModule("VaultYieldRecipientTimelockModule", (m) => {
+export default buildModule("VaultYieldRecipientTimelockModule", (m: any) => {
   const vaultProxy = m.getParameter("vaultProxy");
   const minDelay = m.getParameter("minDelay", 86400n);
   const proposers = m.getParameter("proposers");

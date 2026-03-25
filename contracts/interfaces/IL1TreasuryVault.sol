@@ -46,7 +46,20 @@ interface IL1TreasuryVault {
     error YieldRecipientTimelockControllerNotSet();
     /// @dev Native bridge gateway is not configured.
     error NativeBridgeGatewayNotSet();
-
+    /// @dev Current or proposed yield recipient is not a reimbursement-compatible treasury contract.
+    error IncompatibleYieldRecipientTreasury(address treasury);
+    /// @dev V2 strategy lane is missing an active fee policy.
+    error V2StrategyPolicyInactive(address token, address strategy);
+    /// @dev One V2 strategy lane policy config is malformed for the requested lane.
+    error InvalidV2StrategyPolicy(address token, address strategy);
+    /// @dev Fee exceeded the configured cap for this lane.
+    error FeeCapExceeded(address token, address strategy, uint256 fee, uint256 maxAllowed);
+    /// @dev V2 strategy accounting does not reconcile with the vault's measured balance deltas.
+    error StrategyAccountingMismatch(address token, address strategy, uint256 strategyReported, uint256 vaultMeasured);
+    /// @dev Exact fee reimbursement failed for a strict policy path.
+    error FeeReimbursementFailed(address token, address strategy, uint256 requested, uint256 received);
+    /// @dev One V2 strategy lane cannot be explicitly finalized and removed in its current state.
+    error InvalidV2StrategyFinalization(address token, address strategy);
     // --------- Roles (RBAC) ---------
     /// @notice Role allowed to configure vault policy and privileged controls.
     function VAULT_ADMIN_ROLE() external view returns (bytes32);
@@ -149,6 +162,18 @@ interface IL1TreasuryVault {
         uint256 cap;
     }
 
+    /// @notice Per-lane fee policy for one `(vaultToken, strategy)` pair.
+    /// @dev Reimbursement is unconditional on tracked flows when `cap > 0 && fee > 0`. Harvest is never reimbursed.
+    struct StrategyPolicyConfig {
+        /// @dev Entry fee cap in bps. 0 = no fee allowed (fail-closed). >0 = fee allowed up to cap.
+        uint16 entryCapBps;
+        /// @dev Exit fee cap in bps. 0 = no fee allowed (fail-closed). >0 = fee allowed up to cap.
+        uint16 exitCapBps;
+        /// @dev When true, normal allocation and harvest are enabled for this lane.
+        ///      Deallocation is allowed regardless of this flag.
+        bool policyActive;
+    }
+
     /// @notice Returns whether strategy is currently allocatable for `vaultToken`.
     function isStrategyWhitelistedForVaultToken(address vaultToken, address strategy) external view returns (bool);
 
@@ -169,6 +194,21 @@ interface IL1TreasuryVault {
         address strategy,
         VaultTokenStrategyConfig calldata cfg
     ) external;
+
+    /// @notice Returns the fee policy for one `(vaultToken, strategy)` pair.
+    function getStrategyPolicyConfig(
+        address vaultToken,
+        address strategy
+    ) external view returns (StrategyPolicyConfig memory);
+
+    /// @notice Returns true when one policy config has been explicitly stored for this lane.
+    function hasStrategyPolicyConfig(address vaultToken, address strategy) external view returns (bool);
+
+    /// @notice Sets the fee policy for one `(vaultToken, strategy)` pair.
+    function setStrategyPolicyConfig(address vaultToken, address strategy, StrategyPolicyConfig calldata cfg) external;
+
+    /// @notice Fully removes one policy-native lane after it has been de-whitelisted and economically drained.
+    function finalizeStrategyRemoval(address vaultToken, address strategy) external;
 
     // --------- Accounting / views ---------
     /// @notice Returns idle balance held directly by vault for `token`.
@@ -215,43 +255,43 @@ interface IL1TreasuryVault {
 
     // --------- Yield operations (via whitelisted strategies) ---------
     /// @notice Emitted when the vault allocates a vault token to a strategy.
-    /// @param vaultToken Vault token used for the strategy position.
-    /// @param strategy Strategy receiving allocation.
-    /// @param amount Requested allocation amount.
-    event VaultTokenAllocatedToStrategy(address indexed vaultToken, address indexed strategy, uint256 amount);
-
-    /// @notice Emitted when requested allocation amount differs from actual vault-side spend.
-    /// @param vaultToken Vault token used for the strategy position.
-    /// @param strategy Strategy receiving allocation.
-    /// @param requested Requested allocation amount.
-    /// @param actualSpent Net vault-side token balance decrease during the allocation call.
-    event VaultTokenAllocationSpentMismatch(
+    event VaultTokenAllocatedToStrategy(
         address indexed vaultToken,
         address indexed strategy,
-        uint256 requested,
-        uint256 actualSpent
+        uint256 amount,
+        uint256 invested,
+        uint256 fee
     );
 
     /// @notice Emitted when the vault pulls a vault token back from a strategy.
-    /// @param vaultToken Vault token used for the strategy position.
-    /// @param strategy Strategy source.
-    /// @param requested Requested withdrawal amount (or implementation max marker).
-    /// @param received Actual measured amount received by vault.
     event VaultTokenDeallocatedFromStrategy(
         address indexed vaultToken,
         address indexed strategy,
         uint256 requested,
-        uint256 received
+        uint256 received,
+        uint256 fee,
+        uint256 loss
     );
 
     /// @notice Emitted when the strategy-reported amount differs from the vault's measured balance change.
     event StrategyReportedReceivedMismatch(
         address indexed vaultToken,
         address indexed strategy,
-        uint256 requested,
         uint256 reported,
-        uint256 actual
+        uint256 measured
     );
+
+    /// @notice Emitted when strategy fee policy is updated for one lane.
+    event StrategyPolicyConfigUpdated(
+        address indexed vaultToken,
+        address indexed strategy,
+        uint16 entryCapBps,
+        uint16 exitCapBps,
+        bool policyActive
+    );
+
+    /// @notice Emitted when one policy-native lane is explicitly finalized and removed from vault state.
+    event StrategyRemovalFinalized(address indexed vaultToken, address indexed strategy);
 
     /// @notice Emitted when admin TVL token override settings change.
     event TrackedTvlTokenOverrideUpdated(address indexed token, bool enabled, bool forceTrack);
@@ -284,16 +324,20 @@ interface IL1TreasuryVault {
     );
 
     /// @notice Allocates vault idle vault-token balance into an approved strategy.
-    /// @dev Cost basis increases by measured vault-side net token balance decrease, not by strategy receipt.
+    /// @dev For V2 lanes, cost basis increases by strategy-reported `invested` (net deployed value),
+    ///      not by measured vault-side spend. Entry fees are unconditionally reimbursed from treasury.
+    ///      Legacy lanes continue to use measured vault-side spend for cost basis.
     /// @param vaultToken Vault token to allocate.
     /// @param strategy Strategy target.
     /// @param amount Requested allocation amount.
     function allocateVaultTokenToStrategy(address vaultToken, address strategy, uint256 amount) external;
 
     /// @notice Deallocates vault-token balance from strategy back into vault idle balance.
+    /// @dev For V2, this consumes `amount` of gross exposure. The vault infers fee = amount - received
+    ///      and unconditionally reimburses from treasury. Residual value stays for harvest.
     /// @param vaultToken Vault token used for the strategy position.
     /// @param strategy Strategy source.
-    /// @param amount Requested amount to withdraw.
+    /// @param amount Requested amount to withdraw (gross exposure to consume).
     /// @return received Actual measured amount received by vault.
     function deallocateVaultTokenFromStrategy(
         address vaultToken,
@@ -301,7 +345,9 @@ interface IL1TreasuryVault {
         uint256 amount
     ) external returns (uint256 received);
 
-    /// @notice Deallocates all strategy-held vault-token balance for a vault token.
+    /// @notice Deallocates all tracked strategy-held vault-token balance for a vault token.
+    /// @dev For V2, this handles impairment: withdrawable = min(costBasis, totalExposure).
+    ///      Loss = costBasis - withdrawable. costBasis is zeroed regardless. Residual stays for harvest.
     /// @param vaultToken Vault token used for the strategy position.
     /// @param strategy Strategy source.
     /// @return received Actual measured amount received by vault.
@@ -314,9 +360,12 @@ interface IL1TreasuryVault {
     function strategyCostBasis(address vaultToken, address strategy) external view returns (uint256);
 
     /// @notice Returns currently harvestable yield for one `(vaultToken, strategy)` pair.
+    /// @dev For V2: `max(0, totalExposure - costBasis)`. Raw residual, not policy-gated.
     function harvestableYield(address vaultToken, address strategy) external view returns (uint256);
 
     /// @notice Harvests strategy yield and pays configured yield recipient.
+    /// @dev Harvest is never reimbursed — any exit fee is GRVT's cost. Exit cap is still enforced.
+    ///      When costBasis == 0, harvest is allowed even if policyActive is false (final residual sweep).
     function harvestYieldFromStrategy(
         address vaultToken,
         address strategy,
@@ -350,9 +399,7 @@ interface IL1TreasuryVault {
         /// @param bridgeTxHash Returned L2 transaction hash identifier.
         bytes32 bridgeTxHash,
         /// @param isNative True when the bridge path used native intent.
-        bool isNative,
-        /// @param emergency True when the bridge path used emergency semantics.
-        bool emergency
+        bool isNative
     );
 
     /// @notice Bridges native ETH to the L2 exchange recipient.
@@ -365,16 +412,4 @@ interface IL1TreasuryVault {
     /// @param amount Token amount to bridge.
     /// @dev Implementations should enforce `msg.value == 0` and fund bridge cost via fee-token minting.
     function rebalanceErc20ToL2(address erc20Token, uint256 amount) external payable;
-
-    // --------- Emergency: force funds back to exchange ---------
-    /// @notice Emergency native bridge function for incident response.
-    /// @param amount Native amount to bridge.
-    /// @dev Emergency flow may bypass normal support/pause policy depending on implementation.
-    function emergencyNativeToL2(uint256 amount) external payable;
-
-    /// @notice Emergency ERC20 bridge function for incident response.
-    /// @param erc20Token ERC20 token to bridge.
-    /// @param amount Token amount to bridge.
-    /// @dev Emergency flow may bypass normal support/pause policy depending on implementation.
-    function emergencyErc20ToL2(address erc20Token, uint256 amount) external payable;
 }

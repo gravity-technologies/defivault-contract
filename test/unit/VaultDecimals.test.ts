@@ -20,7 +20,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
   }
 
   for (const decimals of [6, 8, 18] as const) {
-    it(`handles allocate/deallocate/rebalance/emergency with ${decimals}-decimals token`, async function () {
+    it(`handles allocate/deallocate/rebalance with ${decimals}-decimals token`, async function () {
       const unit = 10n ** BigInt(decimals);
 
       const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
@@ -117,7 +117,12 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
         token.address,
         200_000n * unit,
       ]);
-      await vaultAsRebalancer.write.emergencyErc20ToL2([
+      await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+        token.address,
+        strategy.address,
+        50_000n * unit,
+      ]);
+      await vaultAsRebalancer.write.rebalanceErc20ToL2([
         token.address,
         50_000n * unit,
       ]);
@@ -141,7 +146,7 @@ describe("GRVTL1TreasuryVault decimals coverage", async function () {
       assert.equal(status.skippedStrategies, 0n);
       assert.equal(totals.total, idle + strategyAssets);
       assert.equal(status.total, totals.total);
-      assert.equal(strategyAssets, 250_000n * unit);
+      assert.equal(strategyAssets, 200_000n * unit);
     });
   }
 });

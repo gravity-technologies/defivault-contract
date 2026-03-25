@@ -50,7 +50,7 @@ In `StakedUSDeV2`, cooldown mode turns unstaking into a two-step process:
 For this vault architecture, the impact is direct:
 
 - current `deallocate` and `deallocateAll` accounting expects USDe to return to the vault immediately,
-- the current emergency withdraw path also expects immediate pullback,
+- incident-time operator flows still expect immediate pullback,
 - therefore cooldown-on adds delayed liquidity behavior that the current vault flow does not model directly.
 
 Concrete example:
@@ -106,7 +106,7 @@ Flow:
 Why this fits current vault:
 
 - vault deallocation accounting is immediate balance delta based,
-- emergency unwind expects immediate pullback,
+- incident-time deallocation still expects immediate pullback,
 - no pending-claim state is required.
 
 ## Option B: Cooldown-On Support (Async)
@@ -127,7 +127,7 @@ Additional requirements:
 Tradeoff:
 
 - significantly more logic and more testing,
-- emergency unwind semantics become weaker under active cooldown.
+- incident-time liquidity restoration becomes weaker under active cooldown.
 
 ## Key Considerations Checklist
 
@@ -141,9 +141,10 @@ Tradeoff:
 - Pending cooldown claims must be represented in exposure accounting.
 - Otherwise strategy removal and availability decisions can treat real exposure as zero.
 
-3. Emergency behavior:
+3. Incident-time behavior:
 
-- `emergencySendToL2` tries to unwind positions, but cooldown-on can delay liquidity and reduce how effective that is.
+- there is no separate emergency bridge or auto-unwind surface in the vault,
+- cooldown-on can still delay liquidity, so explicit deallocate-then-rebalance workflows may remain partially blocked.
 
 4. Operational dependency:
 
@@ -173,7 +174,7 @@ Tradeoff:
 ### Direction B (future): Add explicit async-withdraw semantics
 
 - Introduce request/claim lifecycle APIs (or equivalent adapter contract state machine with explicit pending state).
-- Extend runbooks/tests for delayed liquidity, pending claims, and emergency path behavior.
+- Extend runbooks/tests for delayed liquidity, pending claims, and incident-time operator behavior.
 - Use only if business requirements mandate cooldown-on compatibility.
 
 ### Direction C (intermediate): Adapter-only async shim without vault API changes
@@ -194,7 +195,7 @@ Tradeoff:
 ### Option B (cooldown-on async)
 
 - Async state machine + pending-claim accounting: 4-6 days
-- Extra edge-case testing (cooldown windows, repeated requests, emergency behavior): 3-4 days
+- Extra edge-case testing (cooldown windows, repeated requests, incident behavior): 3-4 days
 - Ops controls and runbook hardening: 2 days
 - Total: **~2 to 3 weeks** (before external audit buffer)
 

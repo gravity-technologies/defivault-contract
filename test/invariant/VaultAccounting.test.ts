@@ -91,6 +91,141 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
     return { vault, vaultAsAllocator, vaultAsRebalancer };
   }
 
+  async function deployPolicyVault() {
+    const treasury = await viem.deployContract("MockWithdrawalFeeTreasury");
+    const bridge = await viem.deployContract("MockL1ZkSyncBridgeAdapter");
+    const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
+      "Mock Base",
+      "mBASE",
+      18,
+    ]);
+    const wrappedNative = await viem.deployContract("MockWETH");
+    const { vaultImplementation: vaultImpl } =
+      await deployVaultImplementation(viem);
+    const initData = encodeFunctionData({
+      abi: vaultImpl.abi,
+      functionName: "initialize",
+      args: [
+        addr(admin),
+        bridge.address,
+        grvtBridgeProxyFeeToken.address,
+        270n,
+        addr(l2Recipient),
+        wrappedNative.address,
+        treasury.address,
+      ],
+    });
+    const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
+      vaultImpl.address,
+      addr(admin),
+      initData,
+    ]);
+    const vault = await viem.getContractAt(
+      "GRVTL1TreasuryVault",
+      proxy.address,
+    );
+    await treasury.write.setAuthorizedVault([vault.address, true]);
+
+    const vaultToken = await viem.deployContract("MockERC20", [
+      "USD Coin",
+      "USDC",
+      6,
+    ]);
+    const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
+    const stkGho = await viem.deployContract("MockERC20", [
+      "Staked GHO",
+      "stkGHO",
+      18,
+    ]);
+    const gsm = await viem.deployContract("MockAaveGsm", [
+      gho.address,
+      vaultToken.address,
+    ] as any);
+    const staking = await viem.deployContract("MockStkGhoStaking", [
+      gho.address,
+      stkGho.address,
+    ]);
+    const rewardsDistributor = await viem.deployContract(
+      "MockAngleRewardsDistributor",
+      [stkGho.address],
+    );
+    await gsm.write.setBurnFeeBps([vaultToken.address, 7n]);
+
+    const strategyImpl = await viem.deployContract("GsmStkGhoStrategy");
+    const strategyInitData = encodeFunctionData({
+      abi: strategyImpl.abi,
+      functionName: "initialize",
+      args: [
+        vault.address,
+        vaultToken.address,
+        gho.address,
+        stkGho.address,
+        gsm.address,
+        staking.address,
+        rewardsDistributor.address,
+        "GSM_STKGHO_USDC",
+      ],
+    });
+    const strategyProxy = await viem.deployContract(
+      "TestTransparentUpgradeableProxy",
+      [strategyImpl.address, addr(admin), strategyInitData],
+    );
+    const strategy = await viem.getContractAt(
+      "GsmStkGhoStrategy",
+      strategyProxy.address,
+    );
+
+    await vaultToken.write.mint([vault.address, 200_000n]);
+    await vaultToken.write.mint([treasury.address, 100_000n]);
+    await vault.write.grantRole([
+      await vault.read.ALLOCATOR_ROLE(),
+      addr(allocator),
+    ]);
+    await vault.write.setVaultTokenConfig([
+      vaultToken.address,
+      { supported: true },
+    ]);
+    await vault.write.setVaultTokenStrategyConfig([
+      vaultToken.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+    await treasury.write.setReimbursementConfig([
+      strategy.address,
+      vaultToken.address,
+      10_000n,
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      vaultToken.address,
+      strategy.address,
+      {
+        entryCapBps: 0,
+        exitCapBps: 7,
+        policyActive: true,
+      },
+    ]);
+
+    const vaultAsAllocator = await viem.getContractAt(
+      "GRVTL1TreasuryVault",
+      vault.address,
+      {
+        client: { public: publicClient, wallet: allocator },
+      },
+    );
+
+    return {
+      treasury,
+      vault,
+      vaultToken,
+      gho,
+      stkGho,
+      gsm,
+      staking,
+      strategy,
+      vaultAsAllocator,
+    };
+  }
+
   function componentTotal(
     components: ReadonlyArray<{
       readonly amount: bigint;
@@ -260,5 +395,439 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
 
     assert.ok(status.skippedStrategies > 0n);
     assert.equal(status.total, idle + healthyAssets);
+  });
+
+  it("keeps V2 policy accounting coherent across tracked exits and residual harvest", async function () {
+    const { treasury, vault, vaultToken, strategy, vaultAsAllocator } =
+      await deployPolicyVault();
+
+    function assertTokenTotalsCoherent(
+      totals: { idle: bigint; strategy: bigint; total: bigint },
+      conservative: {
+        idle: bigint;
+        strategy: bigint;
+        total: bigint;
+        skippedStrategies: bigint;
+      },
+      strategyVaultBalance: bigint,
+    ) {
+      assert.equal(totals.total, totals.idle + totals.strategy);
+      assert.equal(totals.strategy, strategyVaultBalance);
+      assert.equal(conservative.total, totals.total);
+      assert.equal(conservative.idle, totals.idle);
+      assert.equal(conservative.strategy, totals.strategy);
+      assert.equal(conservative.skippedStrategies, 0n);
+    }
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      vaultToken.address,
+      strategy.address,
+      100_000n,
+    ]);
+    const allocatedExposure = await strategy.read.totalExposure();
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      allocatedExposure,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      0n,
+    );
+    assertTokenTotalsCoherent(
+      await vault.read.tokenTotals([vaultToken.address]),
+      await vault.read.tokenTotalsConservative([vaultToken.address]),
+      await vaultToken.read.balanceOf([strategy.address]),
+    );
+
+    await vaultToken.write.mint([strategy.address, 20_000n], {
+      account: other.account,
+    });
+    const exposureAfterDust = await strategy.read.totalExposure();
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      exposureAfterDust - allocatedExposure,
+    );
+    assertTokenTotalsCoherent(
+      await vault.read.tokenTotals([vaultToken.address]),
+      await vault.read.tokenTotalsConservative([vaultToken.address]),
+      await vaultToken.read.balanceOf([strategy.address]),
+    );
+
+    const treasuryBeforeTrackedExit = (await vaultToken.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+      vaultToken.address,
+      strategy.address,
+      50_000n,
+    ]);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      allocatedExposure - 50_000n,
+    );
+    const exposureAfterDeallocate = await strategy.read.totalExposure();
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      exposureAfterDeallocate - (allocatedExposure - 50_000n),
+    );
+    assert.ok(
+      treasuryBeforeTrackedExit -
+        (await vaultToken.read.balanceOf([treasury.address])) >
+        0n,
+    );
+    assertTokenTotalsCoherent(
+      await vault.read.tokenTotals([vaultToken.address]),
+      await vault.read.tokenTotalsConservative([vaultToken.address]),
+      await vaultToken.read.balanceOf([strategy.address]),
+    );
+
+    const harvestable = (await vault.read.harvestableYield([
+      vaultToken.address,
+      strategy.address,
+    ])) as bigint;
+    const recipient = (await vault.read.yieldRecipient()) as `0x${string}`;
+    const recipientBeforeHarvest = (await vaultToken.read.balanceOf([
+      recipient,
+    ])) as bigint;
+    await vault.write.harvestYieldFromStrategy([
+      vaultToken.address,
+      strategy.address,
+      harvestable,
+      0n,
+    ]);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      allocatedExposure - 50_000n,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      0n,
+    );
+    assert.ok(
+      (await vaultToken.read.balanceOf([recipient])) > recipientBeforeHarvest,
+    );
+    assertTokenTotalsCoherent(
+      await vault.read.tokenTotals([vaultToken.address]),
+      await vault.read.tokenTotalsConservative([vaultToken.address]),
+      await vaultToken.read.balanceOf([strategy.address]),
+    );
+
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
+      vaultToken.address,
+      strategy.address,
+    ]);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      0n,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      0n,
+    );
+    assertTokenTotalsCoherent(
+      await vault.read.tokenTotals([vaultToken.address]),
+      await vault.read.tokenTotalsConservative([vaultToken.address]),
+      await vaultToken.read.balanceOf([strategy.address]),
+    );
+  });
+
+  it("keeps tracked principal non-negative and raw harvestable yield aligned with total exposure across randomized V2 sequences", async function () {
+    const seeds = [7, 41, 99];
+    const sharePriceSamples = [
+      1_050_000_000_000_000_000n,
+      1_100_000_000_000_000_000n,
+      1_250_000_000_000_000_000n,
+      1_400_000_000_000_000_000n,
+      1_600_000_000_000_000_000n,
+    ];
+    let exercisedTrackedExit = false;
+    let exercisedHarvest = false;
+
+    function assertRawHarvestableYieldIdentity(
+      exposure: bigint,
+      costBasis: bigint,
+      harvestable: bigint,
+    ) {
+      assert.equal(
+        harvestable,
+        exposure > costBasis ? exposure - costBasis : 0n,
+      );
+    }
+
+    for (const seed of seeds) {
+      const {
+        vault,
+        vaultToken,
+        gho,
+        stkGho,
+        staking,
+        strategy,
+        vaultAsAllocator,
+      } = await deployPolicyVault();
+      const rng = mulberry32(seed);
+
+      for (let step = 0; step < 24; step++) {
+        const trackedBefore = (await vault.read.strategyCostBasis([
+          vaultToken.address,
+          strategy.address,
+        ])) as bigint;
+        const exposureBefore = (await strategy.read.totalExposure()) as bigint;
+        const harvestableBefore = (await vault.read.harvestableYield([
+          vaultToken.address,
+          strategy.address,
+        ])) as bigint;
+        assertRawHarvestableYieldIdentity(
+          exposureBefore,
+          trackedBefore,
+          harvestableBefore,
+        );
+
+        const action = Math.floor(rng() * 6);
+
+        if (action === 0) {
+          const idle = (await vault.read.idleTokenBalance([
+            vaultToken.address,
+          ])) as bigint;
+          const maxAmount = idle > 30_000n ? 30_000n : idle;
+          if (maxAmount != 0n) {
+            const amount = 1n + BigInt(Math.floor(rng() * Number(maxAmount)));
+            await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+              vaultToken.address,
+              strategy.address,
+              amount,
+            ]);
+            const trackedAfter = (await vault.read.strategyCostBasis([
+              vaultToken.address,
+              strategy.address,
+            ])) as bigint;
+            assert.ok(trackedAfter > trackedBefore);
+            assert.ok(trackedAfter <= trackedBefore + amount);
+          }
+        } else if (action === 1) {
+          if (trackedBefore >= 1_000n) {
+            const maxAmount = trackedBefore > 25_000n ? 25_000n : trackedBefore;
+            const amount =
+              maxAmount == 1_000n
+                ? 1_000n
+                : 1_000n +
+                  BigInt(Math.floor(rng() * Number(maxAmount - 1_000n + 1n)));
+            exercisedTrackedExit = true;
+
+            await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+              vaultToken.address,
+              strategy.address,
+              amount,
+            ]);
+
+            assert.equal(
+              await vault.read.strategyCostBasis([
+                vaultToken.address,
+                strategy.address,
+              ]),
+              trackedBefore - amount,
+            );
+          }
+        } else if (action === 2) {
+          const sampleIndex = Math.floor(rng() * sharePriceSamples.length);
+          await staking.write.setAssetsPerShareWad([
+            sharePriceSamples[sampleIndex],
+          ]);
+          assert.equal(
+            await vault.read.strategyCostBasis([
+              vaultToken.address,
+              strategy.address,
+            ]),
+            trackedBefore,
+          );
+        } else if (action === 3) {
+          const dust = 1n + BigInt(Math.floor(rng() * 4_000));
+          const dustKind = Math.floor(rng() * 3);
+          if (dustKind === 0) {
+            await vaultToken.write.mint([strategy.address, dust], {
+              account: other.account,
+            });
+          } else if (dustKind === 1) {
+            await gho.write.mint([strategy.address, dust], {
+              account: other.account,
+            });
+          } else {
+            await stkGho.write.mint([strategy.address, dust], {
+              account: other.account,
+            });
+          }
+          assert.equal(
+            await vault.read.strategyCostBasis([
+              vaultToken.address,
+              strategy.address,
+            ]),
+            trackedBefore,
+          );
+        } else if (action === 4) {
+          if (harvestableBefore != 0n) {
+            const amount =
+              harvestableBefore > 1n
+                ? harvestableBefore / 2n
+                : harvestableBefore;
+            exercisedHarvest = true;
+            await vault.write.harvestYieldFromStrategy([
+              vaultToken.address,
+              strategy.address,
+              amount,
+              0n,
+            ]);
+            assert.equal(
+              await vault.read.strategyCostBasis([
+                vaultToken.address,
+                strategy.address,
+              ]),
+              trackedBefore,
+            );
+          }
+        } else {
+          if (trackedBefore > 0n) {
+            exercisedTrackedExit = true;
+            await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
+              vaultToken.address,
+              strategy.address,
+            ]);
+            assert.equal(
+              await vault.read.strategyCostBasis([
+                vaultToken.address,
+                strategy.address,
+              ]),
+              0n,
+            );
+          } else {
+            const dust = 1n + BigInt(Math.floor(rng() * 4_000));
+            await gho.write.mint([strategy.address, dust], {
+              account: other.account,
+            });
+            assert.equal(
+              await vault.read.strategyCostBasis([
+                vaultToken.address,
+                strategy.address,
+              ]),
+              trackedBefore,
+            );
+          }
+        }
+
+        const trackedAfter = (await vault.read.strategyCostBasis([
+          vaultToken.address,
+          strategy.address,
+        ])) as bigint;
+        const exposureAfter = (await strategy.read.totalExposure()) as bigint;
+        const harvestableAfter = (await vault.read.harvestableYield([
+          vaultToken.address,
+          strategy.address,
+        ])) as bigint;
+        assertRawHarvestableYieldIdentity(
+          exposureAfter,
+          trackedAfter,
+          harvestableAfter,
+        );
+        assert.ok(trackedAfter >= 0n);
+      }
+    }
+
+    assert.equal(exercisedTrackedExit, true);
+    assert.equal(exercisedHarvest, true);
+  });
+
+  it("clears impaired V2 cost basis and still allows final residual harvest after policy disable", async function () {
+    const {
+      vault,
+      vaultToken,
+      gho,
+      stkGho,
+      staking,
+      strategy,
+      vaultAsAllocator,
+    } = await deployPolicyVault();
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      vaultToken.address,
+      strategy.address,
+      100_000n,
+    ]);
+    await staking.write.setAssetsPerShareWad([900_000_000_000_000_000n]);
+
+    assert.ok((await strategy.read.totalExposure()) < 100_000n);
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      0n,
+    );
+
+    await vault.write.setStrategyPolicyConfig([
+      vaultToken.address,
+      strategy.address,
+      {
+        entryCapBps: 0,
+        exitCapBps: 7,
+        policyActive: false,
+      },
+    ]);
+
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
+      vaultToken.address,
+      strategy.address,
+    ]);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      0n,
+    );
+    assert.equal(await strategy.read.totalExposure(), 0n);
+
+    await stkGho.write.mint([strategy.address, 5_000n], {
+      account: other.account,
+    });
+    const residualExposure = await strategy.read.totalExposure();
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      residualExposure,
+    );
+
+    const recipient = (await vault.read.yieldRecipient()) as `0x${string}`;
+    const recipientBefore = (await vaultToken.read.balanceOf([
+      recipient,
+    ])) as bigint;
+    await vault.write.harvestYieldFromStrategy([
+      vaultToken.address,
+      strategy.address,
+      residualExposure,
+      0n,
+    ]);
+    const recipientAfter = (await vaultToken.read.balanceOf([
+      recipient,
+    ])) as bigint;
+
+    assert.ok(recipientAfter > recipientBefore);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      0n,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([vaultToken.address, strategy.address]),
+      0n,
+    );
+    assert.equal(await strategy.read.totalExposure(), 0n);
   });
 });

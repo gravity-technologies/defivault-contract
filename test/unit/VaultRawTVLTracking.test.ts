@@ -141,7 +141,19 @@ describe("GRVTL1TreasuryVault raw TVL tracking", async function () {
 
     assert.equal(await vault.read.isTrackedTvlToken([token.address]), true);
 
-    await vault.write.emergencyErc20ToL2([token.address, 25n]);
+    await vault.write.grantRole([
+      await vault.read.REBALANCER_ROLE(),
+      admin.account.address,
+    ]);
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.rebalanceErc20ToL2([token.address, 25n]);
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      unsupportedTokenConfig,
+    ]);
 
     assert.equal(await vault.read.isTrackedTvlToken([token.address]), false);
   });

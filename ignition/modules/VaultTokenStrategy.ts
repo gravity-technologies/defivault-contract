@@ -19,7 +19,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * - `VaultTokenStrategyConfig.active` is lifecycle output-state derived by vault internals.
  *   This module always passes `active: false` on input and lets vault derive final state.
  */
-export default buildModule("VaultTokenStrategyModule", (m) => {
+export default buildModule("VaultTokenStrategyModule", (m: any) => {
   const vaultProxy = m.getParameter("vaultProxy");
   const strategyProxy = m.getParameter("strategyProxy");
   const vaultToken = m.getParameter("vaultToken");

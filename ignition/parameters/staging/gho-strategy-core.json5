@@ -1,0 +1,6 @@
+{
+  GhoStrategyFamilyModule: {
+    // Owner of the GHO strategy family's UpgradeableBeacon.
+    beaconOwner: "0x0000000000000000000000000000000000000000",
+  },
+}

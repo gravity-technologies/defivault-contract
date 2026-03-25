@@ -5,6 +5,11 @@ import { network } from "hardhat";
 import { encodeFunctionData, keccak256, stringToHex } from "viem";
 
 import { expectEventCount, expectEventOnce } from "../helpers/events.js";
+import {
+  configureYieldRecipientTimelockController as sharedConfigureYieldRecipientTimelockController,
+  executeSetYieldRecipientViaTimelock as sharedExecuteSetYieldRecipientViaTimelock,
+  increaseTimeAndMine as sharedIncreaseTimeAndMine,
+} from "../helpers/timelock.js";
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
@@ -43,14 +48,12 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     },
     minDelay: bigint = 2n,
   ) {
-    const timelock = await viem.deployContract("TestTimelockController", [
-      minDelay,
-      [addr(admin)],
-      [addr(admin)],
+    return sharedConfigureYieldRecipientTimelockController(
+      viem,
+      vault,
       addr(admin),
-    ]);
-    await vault.write.setYieldRecipientTimelockController([timelock.address]);
-    return { timelock, minDelay };
+      minDelay,
+    );
   }
 
   async function executeSetYieldRecipientViaTimelock(
@@ -81,58 +84,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     newYieldRecipient: `0x${string}`,
     minDelay: bigint,
   ): Promise<`0x${string}`> {
-    const data = encodeFunctionData({
-      abi: vault.abi as any,
-      functionName: "setYieldRecipient",
-      args: [newYieldRecipient],
-    });
-    const zeroHash =
-      "0x0000000000000000000000000000000000000000000000000000000000000000";
-
-    await timelock.write.schedule([
-      vault.address,
-      0n,
-      data,
-      zeroHash,
-      zeroHash,
+    return sharedExecuteSetYieldRecipientViaTimelock(
+      publicClient as any,
+      vault,
+      timelock as any,
+      newYieldRecipient,
       minDelay,
-    ]);
-    if (minDelay > 0n) {
-      await increaseTimeAndMine(Number(minDelay));
-    }
-
-    return timelock.write.execute([
-      vault.address,
-      0n,
-      data,
-      zeroHash,
-      zeroHash,
-    ]);
+    );
   }
 
   async function increaseTimeAndMine(seconds: number) {
-    await (
-      publicClient as unknown as {
-        request: (args: {
-          method: string;
-          params?: unknown[];
-        }) => Promise<unknown>;
-      }
-    ).request({
-      method: "evm_increaseTime",
-      params: [seconds],
-    });
-    await (
-      publicClient as unknown as {
-        request: (args: {
-          method: string;
-          params?: unknown[];
-        }) => Promise<unknown>;
-      }
-    ).request({
-      method: "evm_mine",
-      params: [],
-    });
+    return sharedIncreaseTimeAndMine(publicClient as any, seconds);
   }
 
   async function deployBase() {
@@ -445,14 +407,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(allocationEvent.amount, 400_000n);
 
-    const mismatchEvent = expectEventOnce(
-      receipt,
-      vault,
-      "VaultTokenAllocationSpentMismatch",
-    );
-    assert.equal(mismatchEvent.requested, 400_000n);
-    assert.equal(mismatchEvent.actualSpent, 300_000n);
-    expectEventCount(receipt, vault, "VaultTokenAllocationSpentMismatch", 1);
+    assert.equal(allocationEvent.invested, 300_000n);
+    assert.equal(allocationEvent.fee, 0n);
 
     assert.equal(
       await vault.read.strategyCostBasis([token.address, stratA.address]),
@@ -484,14 +440,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(allocationEvent.amount, 400_000n);
 
-    const mismatchEvent = expectEventOnce(
-      receipt,
-      vault,
-      "VaultTokenAllocationSpentMismatch",
-    );
-    assert.equal(mismatchEvent.requested, 400_000n);
-    assert.equal(mismatchEvent.actualSpent, 0n);
-    expectEventCount(receipt, vault, "VaultTokenAllocationSpentMismatch", 1);
+    assert.equal(allocationEvent.invested, 0n);
+    assert.equal(allocationEvent.fee, 0n);
 
     assert.equal(
       await vault.read.strategyCostBasis([token.address, stratA.address]),
@@ -630,12 +580,16 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      forwardingTreasury.address,
       minDelay,
     );
 
@@ -738,7 +692,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(harvested.received, 30_000n);
   });
 
-  it("reverts wrapped-native harvest when treasury cannot receive ETH", async function () {
+  it("rejects switching wrapped-native yield recipient to a treasury that cannot receive ETH", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
 
@@ -781,10 +735,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vaultAsAdmin.write.harvestYieldFromStrategy([
         wrappedNative.address,
         wethStrategy.address,
-        30_000n,
-        30_000n,
+        50_000n,
+        50_000n,
       ]),
-      vaultAsAdmin,
+      vault,
       "NativeTransferFailed",
     );
   });
@@ -816,12 +770,16 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      forwardingTreasury.address,
       minDelay,
     );
 
@@ -1094,6 +1052,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, vaultAsAdmin, vaultAsOther } = await deployBase();
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
 
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsOther, addr(other)),
@@ -1109,13 +1071,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      newYieldRecipient.address,
       minDelay,
     );
 
     assert.equal(
       ((await vault.read.yieldRecipient()) as `0x${string}`).toLowerCase(),
-      addr(other).toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
@@ -1266,15 +1228,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("decreases cost basis on deallocate, deallocateAll, and emergency unwind", async function () {
-    const {
-      vault,
-      vaultAsAllocator,
-      vaultAsRebalancer,
-      token,
-      stratA,
-      bridge,
-    } = await deployBase();
+  it("decreases cost basis on deallocate and deallocateAll", async function () {
+    const { vault, vaultAsAllocator, token, stratA } = await deployBase();
 
     await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
@@ -1304,25 +1259,6 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       await vault.read.strategyCostBasis([token.address, stratA.address]),
       0n,
     );
-
-    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
-      token.address,
-      stratA.address,
-      1_600_000n,
-    ]);
-    const costBasisBefore = (await vault.read.strategyCostBasis([
-      token.address,
-      stratA.address,
-    ])) as bigint;
-
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 500_000n]);
-    assert.equal(await bridge.read.lastAmount(), 500_000n);
-
-    const costBasisAfter = (await vault.read.strategyCostBasis([
-      token.address,
-      stratA.address,
-    ])) as bigint;
-    assert.equal(costBasisBefore - costBasisAfter, 100_000n);
   });
 
   it("emits new treasury and harvest events with expected args", async function () {
@@ -1369,11 +1305,14 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(harvestEvent.requested, 10_000n);
     assert.equal(harvestEvent.received, 10_000n);
 
-    const newYieldRecipient = addr(other);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const setHash = await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      newYieldRecipient,
+      newYieldRecipient.address,
       minDelay,
     );
     const setReceipt = await publicClient.waitForTransactionReceipt({
@@ -1390,7 +1329,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(
       (updatedEvent.newYieldRecipient as string).toLowerCase(),
-      newYieldRecipient.toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
@@ -1434,9 +1373,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vault,
       "StrategyReportedReceivedMismatch",
     );
-    assert.equal(mismatch.requested, 10_000n);
     assert.equal(mismatch.reported, 15_000n);
-    assert.equal(mismatch.actual, 10_000n);
+    assert.equal(mismatch.measured, 10_000n);
 
     const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
     assert.equal(harvested.requested, 10_000n);
@@ -1452,14 +1390,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       [addr(admin)],
       addr(admin),
     ]);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
 
     await vault.write.setYieldRecipientTimelockController([timelock.address]);
 
-    const newYieldRecipient = addr(other);
     const data = encodeFunctionData({
       abi: vault.abi as any,
       functionName: "setYieldRecipient",
-      args: [newYieldRecipient],
+      args: [newYieldRecipient.address],
     });
     const zeroHash =
       "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -1482,7 +1423,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     assert.equal(
       ((await vault.read.yieldRecipient()) as `0x${string}`).toLowerCase(),
-      newYieldRecipient.toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
