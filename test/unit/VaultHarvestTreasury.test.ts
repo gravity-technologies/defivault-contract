@@ -531,6 +531,76 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(harvested.received, 30_000n);
   });
 
+  it("counts successful native harvest payout even when treasury forwards ETH onward", async function () {
+    const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
+      await deployBase();
+
+    await vault.write.setVaultTokenConfig([
+      wrappedNative.address,
+      { supported: true },
+    ]);
+    const wethStrategy = await viem.deployContract("MockYieldStrategy", [
+      vault.address,
+      "WETH_STRAT",
+    ]);
+    await vault.write.setVaultTokenStrategyConfig([
+      wrappedNative.address,
+      wethStrategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await wrappedNative.write.deposit({ value: 500_000n });
+    await wrappedNative.write.transfer([vault.address, 500_000n]);
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      wrappedNative.address,
+      wethStrategy.address,
+      400_000n,
+    ]);
+    await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
+
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault, 0n);
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      forwardingTreasury.address,
+      minDelay,
+    );
+
+    const downstreamBefore = await publicClient.getBalance({
+      address: addr(other),
+    });
+    const treasuryBefore = await publicClient.getBalance({
+      address: forwardingTreasury.address,
+    });
+
+    const hash = await vaultAsAdmin.write.harvestYieldFromStrategy([
+      wrappedNative.address,
+      wethStrategy.address,
+      30_000n,
+      30_000n,
+    ]);
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+    const downstreamAfter = await publicClient.getBalance({
+      address: addr(other),
+    });
+    const treasuryAfter = await publicClient.getBalance({
+      address: forwardingTreasury.address,
+    });
+
+    assert.equal(downstreamAfter - downstreamBefore, 30_000n);
+    assert.equal(treasuryAfter - treasuryBefore, 0n);
+
+    const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
+    assert.equal(harvested.requested, 30_000n);
+    assert.equal(harvested.received, 30_000n);
+  });
+
   it("reverts wrapped-native harvest when treasury cannot receive ETH", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
