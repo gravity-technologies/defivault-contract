@@ -11,29 +11,30 @@
 - `GRVTL1TreasuryVault`: upgradeable core vault
 - `NativeVaultGateway`: external ETH -> wrapped-native -> vault ingress
 - `NativeBridgeGateway`: wrapped-native -> ETH bridge execution and failed-deposit recovery
-- `AaveV3Strategy`: current implemented vault-only strategy adapter
+- `AaveV3Strategy`: vault-only adapter for the Aave lane
+- `GsmStkGhoStrategy`: vault-only adapter for the `vaultToken -> GSM -> GHO -> stkGHO` lane
 
 ## Topology
 
 ```text
-                         +----------------------------------+
-                         |          Governance/Admin        |
-                         |   (DEFAULT_ADMIN, VAULT_ADMIN)   |
-                         +-----------------+----------------+
-                                           |
-                                           v
-                         +---------------------------+
-                         |    GRVTL1TreasuryVault    |
-                         +----+-----------------+----+
-                              |                 |
-         allocate/deallocate  |                 | requestL2TransactionTwoBridges(...)
-                              v                 v
-                     +----------------+   +---------------------------+
-                     | AaveV3Strategy |   | BridgeHub + SharedBridge  |
-                     +--------+-------+   +-------------+-------------+
-                              |                           ^
-                              v                           |
-                           Aave V3                NativeBridgeGateway
+                                      +----------------------------------+
+                                      |          Governance/Admin        |
+                                      |   (DEFAULT_ADMIN, VAULT_ADMIN)   |
+                                      +-----------------+----------------+
+                                                        |
+                                                        v
+                         +--------------------------------------------------------------+
+                         |                   GRVTL1TreasuryVault                        |
+                         +----+---------------------------------------------------------+
+                              |                     |                            |
+         allocate/deallocate  |                     |                            | requestL2TransactionTwoBridges(...)
+                              v                     v                            v
+                     +----------------+   +--------------------+   +--------------------------+
+                     | AaveV3Strategy |   | GsmStkGhoStrategy |   | BridgeHub + SharedBridge  |
+                     +--------+-------+   +---------+---------+   +-------------+-------------+
+                              |                     |                           ^
+                              v                     v                           |
+                           Aave V3          GSM -> GHO -> stkGHO        NativeBridgeGateway
 ```
 
 ## Strategy Path
@@ -46,7 +47,10 @@ Normal yield flow:
 4. vault uses `strategyExposure(vaultToken)` for cap and harvest decisions
 5. deallocation measures actual vault-side received balance delta instead of trusting strategy return values
 
-The current implemented strategy is [AaveV3Strategy](../../contracts/strategies/AaveV3Strategy.sol). The current Aave-specific behavior is documented in [../integrations/aave.md](../integrations/aave.md).
+Implemented strategy examples:
+
+- [AaveV3Strategy](../../contracts/strategies/AaveV3Strategy.sol): documented in [../integrations/aave.md](../integrations/aave.md)
+- [GsmStkGhoStrategy](../../contracts/strategies/GsmStkGhoStrategy.sol): documented in [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)
 
 ## L1 -> L2 Bridge Path
 
@@ -120,4 +124,4 @@ Operational deployment steps live in [../operations/runbook.md](../operations/ru
 
 - [../concepts/system-overview.md](../concepts/system-overview.md)
 - [../concepts/accounting-and-tvl.md](../concepts/accounting-and-tvl.md)
-- [../design-decisions/native-boundary-and-gateway-split.md](../design-decisions/native-boundary-and-gateway-split.md)
+- [../design-decisions/05-native-boundary-and-gateway-split.md](../design-decisions/05-native-boundary-and-gateway-split.md)

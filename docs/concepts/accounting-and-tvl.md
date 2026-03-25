@@ -111,5 +111,5 @@ For deeper diagnostics:
 - [system-overview.md](system-overview.md)
 - [strategy-model.md](strategy-model.md)
 - [../architecture/vault-and-gateways.md](../architecture/vault-and-gateways.md)
-- [../design-decisions/raw-token-tvl-accounting.md](../design-decisions/raw-token-tvl-accounting.md)
-- [../design-decisions/cached-tracked-tvl-token-registry.md](../design-decisions/cached-tracked-tvl-token-registry.md)
+- [../design-decisions/03-raw-token-tvl-accounting.md](../design-decisions/03-raw-token-tvl-accounting.md)
+- [../design-decisions/04-cached-tracked-tvl-token-registry.md](../design-decisions/04-cached-tracked-tvl-token-registry.md)

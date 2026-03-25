@@ -1,10 +1,11 @@
+---
+title: "Measured Vault-Delta Cost Basis"
+audience: "contributors, reviewers, auditors"
+purpose: "explain how allocation cost basis is measured and why"
+decision_type: "accounting"
+---
+
 # Measured Vault-Delta Cost Basis
-
-## Metadata
-
-- Audience: contributors, reviewers, auditors
-- Purpose: explain how allocation cost basis is measured and why
-- Decision type: accounting
 
 ## Context
 

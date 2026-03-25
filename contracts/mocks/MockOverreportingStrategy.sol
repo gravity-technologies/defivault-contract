@@ -75,21 +75,27 @@ contract MockOverreportingStrategy is IYieldStrategy {
 
         uint256 tracked = _trackedAssets[token];
         uint256 sendAmount = amount < tracked ? amount : tracked;
-        if (sendAmount == 0) return reportExtra;
+        if (sendAmount == 0) {
+            received = reportExtra;
+            return received;
+        }
 
         IERC20(token).safeTransfer(vault, sendAmount);
         _trackedAssets[token] = tracked - sendAmount;
-        return sendAmount + reportExtra;
+        received = sendAmount + reportExtra;
     }
 
     function deallocateAll(address token) external onlyVault returns (uint256 received) {
         if (token == address(0)) revert InvalidParam();
 
         uint256 tracked = _trackedAssets[token];
-        if (tracked == 0) return reportExtra;
+        if (tracked == 0) {
+            received = reportExtra;
+            return received;
+        }
 
         IERC20(token).safeTransfer(vault, tracked);
         _trackedAssets[token] = 0;
-        return tracked + reportExtra;
+        received = tracked + reportExtra;
     }
 }

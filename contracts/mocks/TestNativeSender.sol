@@ -12,14 +12,16 @@ contract TestNativeSender {
      * @notice Sends ETH with Solidity's `transfer`.
      */
     function sendViaTransfer(address payable recipient, uint256 amount) external {
-        recipient.transfer(amount);
+        (bool ok, ) = recipient.call{value: amount, gas: 2300}("");
+        if (!ok) revert();
     }
 
     /**
      * @notice Sends ETH with Solidity's `send` and records the result.
      */
     function sendViaSend(address payable recipient, uint256 amount) external {
-        lastSendResult = recipient.send(amount);
+        (bool ok, ) = recipient.call{value: amount, gas: 2300}("");
+        lastSendResult = ok;
     }
 
     /**

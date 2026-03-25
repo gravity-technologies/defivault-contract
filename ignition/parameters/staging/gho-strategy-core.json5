@@ -1,0 +1,19 @@
+{
+  GhoStrategyCoreModule: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Owner of the strategy proxy's ProxyAdmin.
+    proxyAdminOwner: "0x0000000000000000000000000000000000000000",
+    // Lane input asset.
+    vaultToken: "0x0000000000000000000000000000000000000000",
+    // GHO token.
+    gho: "0x0000000000000000000000000000000000000000",
+    // stkGHO token.
+    stkGho: "0x0000000000000000000000000000000000000000",
+    // GSM used for vaultToken <-> GHO swaps.
+    gsm: "0x0000000000000000000000000000000000000000",
+    // Staking adapter used for GHO <-> stkGHO conversions.
+    stakingAdapter: "0x0000000000000000000000000000000000000000",
+    strategyName: "GSM_STKGHO_STAGING",
+  },
+}

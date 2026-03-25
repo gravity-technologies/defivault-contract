@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { network } from "hardhat";
 import { encodeFunctionData } from "viem";
 
+import { expectEventOnce } from "../helpers/events.js";
 import { proxyAdminAbi, readProxyAdminAddress } from "../helpers/proxyAdmin.js";
 import {
   deployVaultImplementation,
@@ -186,9 +187,11 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
   });
 
   it("enforces admin-only upgrades via ProxyAdmin ownership", async function () {
-    const { proxy } = await deployVaultProxy();
-    const { vaultImplementation: v2Impl } =
-      await deployVaultV2Implementation(viem);
+    const { proxy, vaultImpl } = await deployVaultProxy();
+    const { vaultImplementation: v2Impl } = await deployVaultV2Implementation(
+      viem,
+      vaultImpl.address,
+    );
 
     const proxyAdmin = await readProxyAdminAddress(publicClient, proxy.address);
     const owner = await publicClient.readContract({
@@ -209,7 +212,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
   });
 
   it("upgrades V1 to V2 while preserving state and enabling V2 initializer", async function () {
-    const { proxy, vault } = await deployVaultProxy();
+    const { proxy, vault, vaultImpl } = await deployVaultProxy();
 
     const token = await viem.deployContract("MockERC20", [
       "Mock USDT",
@@ -283,8 +286,10 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     ]);
     const expectedIdle = await vault.read.idleTokenBalance([token.address]);
 
-    const { vaultImplementation: v2Impl } =
-      await deployVaultV2Implementation(viem);
+    const { vaultImplementation: v2Impl } = await deployVaultV2Implementation(
+      viem,
+      vaultImpl.address,
+    );
     const proxyAdmin = await readProxyAdminAddress(publicClient, proxy.address);
 
     await admin.writeContract({
@@ -294,42 +299,33 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       args: [proxy.address, v2Impl.address, "0x"],
     });
 
-    const vaultV2 = await viem.getContractAt(
-      "GRVTL1TreasuryVaultV2Mock",
-      proxy.address,
-    );
-
     assert.equal(
-      ((await vaultV2.read.bridgeHub()) as `0x${string}`).toLowerCase(),
+      ((await vault.read.bridgeHub()) as `0x${string}`).toLowerCase(),
       (expectedBridgeHub as `0x${string}`).toLowerCase(),
     );
     assert.equal(
       (
-        (await vaultV2.read.grvtBridgeProxyFeeToken()) as `0x${string}`
+        (await vault.read.grvtBridgeProxyFeeToken()) as `0x${string}`
       ).toLowerCase(),
       (expectedBridgeProxyFeeToken as `0x${string}`).toLowerCase(),
     );
-    assert.equal(await vaultV2.read.l2ChainId(), expectedL2ChainId);
+    assert.equal(await vault.read.l2ChainId(), expectedL2ChainId);
     assert.equal(
-      (
-        (await vaultV2.read.l2ExchangeRecipient()) as `0x${string}`
-      ).toLowerCase(),
+      ((await vault.read.l2ExchangeRecipient()) as `0x${string}`).toLowerCase(),
       (expectedRecipient as `0x${string}`).toLowerCase(),
     );
-    assert.equal(await vaultV2.read.paused(), expectedPaused);
+    assert.equal(await vault.read.paused(), expectedPaused);
 
-    const tokenCfgAfter = await vaultV2.read.getVaultTokenConfig([
-      token.address,
-    ]);
+    const tokenCfgAfter = await vault.read.getVaultTokenConfig([token.address]);
     assert.deepEqual(tokenCfgAfter, expectedTokenCfg);
 
-    const strategyCfgAfter = await vaultV2.read.getVaultTokenStrategyConfig([
+    const strategyCfgAfter = await vault.read.getVaultTokenStrategyConfig([
       token.address,
       strategy.address,
     ]);
     assert.deepEqual(strategyCfgAfter, expectedStrategyCfg);
 
-    const strategyList = (await vaultV2.read.getVaultTokenStrategies([
+    const strategyList = (await vault.read.getVaultTokenStrategies([
       token.address,
     ])) as Array<`0x${string}`>;
     assert.ok(
@@ -339,30 +335,37 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     );
 
     assert.equal(
-      await vaultV2.read.idleTokenBalance([token.address]),
+      await vault.read.idleTokenBalance([token.address]),
       expectedIdle,
     );
-    const status = await vaultV2.read.tokenTotalsConservative([token.address]);
+    const status = await vault.read.tokenTotalsConservative([token.address]);
     assert.equal(status.skippedStrategies, 0n);
     assert.ok(status.total >= (expectedIdle as bigint));
 
     assert.equal(
-      await vaultV2.read.hasRole([
-        await vaultV2.read.ALLOCATOR_ROLE(),
+      await vault.read.hasRole([
+        await vault.read.ALLOCATOR_ROLE(),
         addr(allocator),
       ]),
       true,
     );
     assert.equal(
-      await vaultV2.read.hasRole([
-        await vaultV2.read.REBALANCER_ROLE(),
+      await vault.read.hasRole([
+        await vault.read.REBALANCER_ROLE(),
         addr(rebalancer),
       ]),
       true,
     );
 
-    await vaultV2.write.initializeV2([42n]);
-    assert.equal(await vaultV2.read.v2Marker(), 42n);
+    const vaultV2 = await viem.getContractAt(
+      "GRVTL1TreasuryVaultV2Mock",
+      proxy.address,
+    );
+    const initReceipt = await publicClient.waitForTransactionReceipt({
+      hash: await vaultV2.write.initializeV2([42n]),
+    });
+    const initEvent = expectEventOnce(initReceipt, vaultV2, "V2Initialized");
+    assert.equal(initEvent.marker, 42n);
 
     await viem.assertions.revertWithCustomError(
       vaultV2.write.initializeV2([7n]),

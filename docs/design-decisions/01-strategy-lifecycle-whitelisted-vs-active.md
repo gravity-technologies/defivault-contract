@@ -1,10 +1,11 @@
+---
+title: "Strategy Lifecycle: Whitelisted vs Active"
+audience: "contributors, reviewers, operators"
+purpose: "explain why strategy lifecycle uses two flags instead of one"
+decision_type: "state model"
+---
+
 # Strategy Lifecycle: Whitelisted vs Active
-
-## Metadata
-
-- Audience: contributors, reviewers, operators
-- Purpose: explain why strategy lifecycle uses two flags instead of one
-- Decision type: state model
 
 ## Context
 

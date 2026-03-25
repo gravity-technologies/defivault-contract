@@ -62,6 +62,27 @@ This is the current Aave model in this repo:
 
 See [../integrations/aave.md](../integrations/aave.md) for the implemented example.
 
+### Reimbursing tracked-exit strategy
+
+This is the current GHO / stkGHO model in this repo:
+
+- `exactTokenBalance(stkGho)` reports directly held invested stkGHO units
+- `positionBreakdown()` can show `stkGHO` plus residual `GHO` or vault-token dust
+- `strategyExposure()` reports net redeemable vault-token exposure after:
+  - converting stkGHO shares into GHO assets with the staking adapter preview, then
+  - previewing the GSM exit fee
+- `withdrawTracked()` is the V2 tracked path used for reimbursing tracked exits
+
+Rules for this model:
+
+- keep reimbursement-specific behavior on the V2 tracked/residual surface,
+- track vault-funded value through an internal asset claim and backing shares when the invested asset can appreciate without minting extra shares,
+- keep harvest on the plain non-reimbursing path,
+- for the current GHO lane, assume stablecoin inputs such as USDC and USDT that mint 1:1 into GHO through GSM,
+- let the vault measure reimbursement separately from the strategy-path deallocation receipt.
+
+See [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md) for the implemented example.
+
 ### Non-1:1 exposure conversion
 
 Use this model when exposure is not naturally 1:1 with the vault token, for example:
@@ -104,3 +125,4 @@ If conversion depends on oracle-like inputs, document staleness and manipulation
 - [system-overview.md](system-overview.md)
 - [accounting-and-tvl.md](accounting-and-tvl.md)
 - [../integrations/aave.md](../integrations/aave.md)
+- [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)

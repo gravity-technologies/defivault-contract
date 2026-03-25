@@ -5,6 +5,11 @@ import { network } from "hardhat";
 import { encodeFunctionData, keccak256, stringToHex } from "viem";
 
 import { expectEventCount, expectEventOnce } from "../helpers/events.js";
+import {
+  configureYieldRecipientTimelockController as sharedConfigureYieldRecipientTimelockController,
+  executeSetYieldRecipientViaTimelock as sharedExecuteSetYieldRecipientViaTimelock,
+  increaseTimeAndMine as sharedIncreaseTimeAndMine,
+} from "../helpers/timelock.js";
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
@@ -43,14 +48,12 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     },
     minDelay: bigint = 2n,
   ) {
-    const timelock = await viem.deployContract("TestTimelockController", [
-      minDelay,
-      [addr(admin)],
-      [addr(admin)],
+    return sharedConfigureYieldRecipientTimelockController(
+      viem,
+      vault,
       addr(admin),
-    ]);
-    await vault.write.setYieldRecipientTimelockController([timelock.address]);
-    return { timelock, minDelay };
+      minDelay,
+    );
   }
 
   async function executeSetYieldRecipientViaTimelock(
@@ -81,58 +84,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     newYieldRecipient: `0x${string}`,
     minDelay: bigint,
   ): Promise<`0x${string}`> {
-    const data = encodeFunctionData({
-      abi: vault.abi as any,
-      functionName: "setYieldRecipient",
-      args: [newYieldRecipient],
-    });
-    const zeroHash =
-      "0x0000000000000000000000000000000000000000000000000000000000000000";
-
-    await timelock.write.schedule([
-      vault.address,
-      0n,
-      data,
-      zeroHash,
-      zeroHash,
+    return sharedExecuteSetYieldRecipientViaTimelock(
+      publicClient as any,
+      vault,
+      timelock as any,
+      newYieldRecipient,
       minDelay,
-    ]);
-    if (minDelay > 0n) {
-      await increaseTimeAndMine(Number(minDelay));
-    }
-
-    return timelock.write.execute([
-      vault.address,
-      0n,
-      data,
-      zeroHash,
-      zeroHash,
-    ]);
+    );
   }
 
   async function increaseTimeAndMine(seconds: number) {
-    await (
-      publicClient as unknown as {
-        request: (args: {
-          method: string;
-          params?: unknown[];
-        }) => Promise<unknown>;
-      }
-    ).request({
-      method: "evm_increaseTime",
-      params: [seconds],
-    });
-    await (
-      publicClient as unknown as {
-        request: (args: {
-          method: string;
-          params?: unknown[];
-        }) => Promise<unknown>;
-      }
-    ).request({
-      method: "evm_mine",
-      params: [],
-    });
+    return sharedIncreaseTimeAndMine(publicClient as any, seconds);
   }
 
   async function deployBase() {
@@ -494,12 +456,16 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      forwardingTreasury.address,
       minDelay,
     );
 
@@ -680,12 +646,16 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      forwardingTreasury.address,
       minDelay,
     );
 
@@ -958,6 +928,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, vaultAsAdmin, vaultAsOther } = await deployBase();
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
 
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsOther, addr(other)),
@@ -973,13 +947,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      newYieldRecipient.address,
       minDelay,
     );
 
     assert.equal(
       ((await vault.read.yieldRecipient()) as `0x${string}`).toLowerCase(),
-      addr(other).toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
@@ -1233,11 +1207,14 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(harvestEvent.requested, 10_000n);
     assert.equal(harvestEvent.received, 10_000n);
 
-    const newYieldRecipient = addr(other);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const setHash = await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      newYieldRecipient,
+      newYieldRecipient.address,
       minDelay,
     );
     const setReceipt = await publicClient.waitForTransactionReceipt({
@@ -1254,7 +1231,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(
       (updatedEvent.newYieldRecipient as string).toLowerCase(),
-      newYieldRecipient.toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
@@ -1316,14 +1293,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       [addr(admin)],
       addr(admin),
     ]);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
 
     await vault.write.setYieldRecipientTimelockController([timelock.address]);
 
-    const newYieldRecipient = addr(other);
     const data = encodeFunctionData({
       abi: vault.abi as any,
       functionName: "setYieldRecipient",
-      args: [newYieldRecipient],
+      args: [newYieldRecipient.address],
     });
     const zeroHash =
       "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -1346,7 +1326,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     assert.equal(
       ((await vault.read.yieldRecipient()) as `0x${string}`).toLowerCase(),
-      newYieldRecipient.toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 

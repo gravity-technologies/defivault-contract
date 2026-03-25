@@ -77,6 +77,13 @@ Record:
 
 ### 2. Deploy Strategy Core
 
+There are currently two strategy deployment paths in this repo:
+
+- `npm run deploy:strategy`: Aave lane via `ignition/modules/StrategyCore.ts`
+- `npm run deploy:gho-strategy`: GHO / stkGHO lane via `ignition/modules/GhoStrategyCore.ts`
+
+#### Aave Strategy
+
 Prepare `ignition/parameters/<env>/strategy-core.json5` with:
 
 - `vaultProxy`
@@ -99,6 +106,33 @@ Record:
 - strategy implementation and proxy addresses
 - strategy ProxyAdmin address
 - deployment tx hashes
+
+#### GHO / stkGHO Strategy
+
+Prepare `ignition/parameters/<env>/gho-strategy-core.json5` with:
+
+- `vaultProxy`
+- `proxyAdminOwner`
+- `vaultToken`
+- `gho`
+- `stkGho`
+- `gsm`
+- `stakingAdapter`
+- `strategyName`
+
+Command:
+
+```bash
+npm run deploy:gho-strategy -- \
+  --network <network> \
+  --parameters ignition/parameters/<env>/gho-strategy-core.json5
+```
+
+Additional operator requirement for the GHO lane:
+
+- before reimbursing exits are relied on, admin must rotate `yieldRecipient` to a compatible treasury contract,
+- that treasury must authorize the vault and configure reimbursement policy per `(strategy, token)`,
+- paused/admin deallocation and emergency unwind will also depend on that treasury once reimbursement is enabled.
 
 ### 3. Configure Supported Vault Tokens
 

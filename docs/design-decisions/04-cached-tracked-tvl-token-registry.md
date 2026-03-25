@@ -1,10 +1,11 @@
+---
+title: "Cached Tracked TVL-Token Registry"
+audience: "contributors, indexers, operators"
+purpose: "explain why tracked TVL token discovery is cached instead of live-derived"
+decision_type: "reporting and operational resilience"
+---
+
 # Cached Tracked TVL-Token Registry
-
-## Metadata
-
-- Audience: contributors, indexers, operators
-- Purpose: explain why tracked TVL token discovery is cached instead of live-derived
-- Decision type: reporting and operational resilience
 
 ## Context
 
@@ -55,6 +56,6 @@ Deriving tracked tokens from `positionBreakdown(vaultToken)` on demand:
 
 ## Related Docs
 
-- [raw-token-tvl-accounting.md](raw-token-tvl-accounting.md)
+- [03-raw-token-tvl-accounting.md](03-raw-token-tvl-accounting.md)
 - [../concepts/accounting-and-tvl.md](../concepts/accounting-and-tvl.md)
 - [../../contracts/interfaces/IL1TreasuryVault.sol](../../contracts/interfaces/IL1TreasuryVault.sol)
