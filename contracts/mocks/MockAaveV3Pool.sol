@@ -21,6 +21,7 @@ contract MockAaveV3Pool is IAaveV3Pool {
     using SafeERC20 for IERC20;
 
     error InvalidParam();
+    error InvalidWithdraw();
 
     address public immutable underlying;
     address public aToken;
@@ -51,9 +52,13 @@ contract MockAaveV3Pool is IAaveV3Pool {
         if (asset != underlying || to == address(0) || aToken == address(0)) revert InvalidParam();
 
         uint256 balance = IMockAaveV3PoolAToken(aToken).balanceOf(msg.sender);
-        received = amount == type(uint256).max ? balance : amount;
-        if (received > balance) received = balance;
-        if (received == 0) return 0;
+        if (amount == type(uint256).max) {
+            received = balance;
+        } else {
+            if (amount > balance) revert InvalidWithdraw();
+            received = amount;
+        }
+        if (received == 0) revert InvalidWithdraw();
 
         IMockAaveV3PoolAToken(aToken).burn(msg.sender, received);
         IERC20(asset).safeTransfer(to, received);

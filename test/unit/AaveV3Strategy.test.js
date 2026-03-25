@@ -282,6 +282,77 @@ describe("AaveV3Strategy", async function () {
     assert.equal(deallocatedAll.args.received, 61n);
   });
 
+  it("sweeps dust-only underlying after the Aave position is already fully exited", async function () {
+    const { strategy, underlying, aToken } = await deploySystem();
+
+    await underlying.write.mint([vault.account.address, 100n]);
+    await underlying.write.approve([strategy.address, 100n]);
+    await strategy.write.allocate([underlying.address, 100n]);
+    await strategy.write.deallocateAll([underlying.address]);
+
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await underlying.read.balanceOf([strategy.address]), 0n);
+
+    await underlying.write.mint([strategy.address, 2n], {
+      account: outsider.account,
+    });
+    const beforeSweepAll = await underlying.read.balanceOf([
+      vault.account.address,
+    ]);
+    const sweepAllTx = await strategy.write.deallocateAll([underlying.address]);
+    const sweepAllLogs = await decodeStrategyLogs(strategy, sweepAllTx);
+    const afterSweepAll = await underlying.read.balanceOf([
+      vault.account.address,
+    ]);
+    assert.equal(afterSweepAll - beforeSweepAll, 2n);
+    assert.equal(await underlying.read.balanceOf([strategy.address]), 0n);
+    assert.equal(
+      await strategy.read.strategyExposure([underlying.address]),
+      0n,
+    );
+    const sweptAll = findDecodedEvent(sweepAllLogs, "UninvestedTokenSwept");
+    const deallocatedAll = findDecodedEvent(sweepAllLogs, "Deallocated");
+    assert.ok(sweptAll);
+    assert.ok(deallocatedAll);
+    assert.equal(sweptAll.args.amount, 2n);
+    assert.equal(deallocatedAll.args.requested, 2n ** 256n - 1n);
+    assert.equal(deallocatedAll.args.received, 2n);
+
+    await underlying.write.mint([strategy.address, 3n], {
+      account: outsider.account,
+    });
+    const beforeSweepBounded = await underlying.read.balanceOf([
+      vault.account.address,
+    ]);
+    const sweepBoundedTx = await strategy.write.deallocate([
+      underlying.address,
+      1n,
+    ]);
+    const sweepBoundedLogs = await decodeStrategyLogs(strategy, sweepBoundedTx);
+    const afterSweepBounded = await underlying.read.balanceOf([
+      vault.account.address,
+    ]);
+    assert.equal(afterSweepBounded - beforeSweepBounded, 3n);
+    assert.equal(await underlying.read.balanceOf([strategy.address]), 0n);
+    assert.equal(
+      await strategy.read.strategyExposure([underlying.address]),
+      0n,
+    );
+    const sweptBounded = findDecodedEvent(
+      sweepBoundedLogs,
+      "UninvestedTokenSwept",
+    );
+    const deallocatedBounded = findDecodedEvent(
+      sweepBoundedLogs,
+      "Deallocated",
+    );
+    assert.ok(sweptBounded);
+    assert.ok(deallocatedBounded);
+    assert.equal(sweptBounded.args.amount, 3n);
+    assert.equal(deallocatedBounded.args.requested, 1n);
+    assert.equal(deallocatedBounded.args.received, 3n);
+  });
+
   it("enforces onlyVault on mutating methods", async function () {
     const { strategy, underlying } = await deploySystem();
 
