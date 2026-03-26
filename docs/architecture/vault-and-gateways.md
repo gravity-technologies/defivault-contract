@@ -72,6 +72,8 @@ The architecture intentionally keeps raw ETH out of normal vault accounting.
 - the vault receives ERC20 balances, not raw ETH, for normal accounting
 - integrators should use `depositToVault()` or a full-gas native `call`
 - Solidity stipend-based `.transfer()` and `.send()` are intentionally unsupported on the receive path
+- if unexpected ETH or ERC20 balances are stranded on `NativeVaultGateway`, vault admins can recover them with
+  `sweepNative(recipient, amount)` or `sweepToken(token, recipient, amount)`
 
 ### Bridge execution
 

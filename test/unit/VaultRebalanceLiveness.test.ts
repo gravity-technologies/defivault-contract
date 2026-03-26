@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { encodeFunctionData } from "viem";
+import { encodeFunctionData, zeroAddress } from "viem";
 
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault rebalance liveness", async function () {
   const { viem } = await network.connect();
-  const [admin, yieldRecipient] = await viem.getWalletClients();
+  const [admin, yieldRecipient, other] = await viem.getWalletClients();
   const publicClient = await viem.getPublicClient();
   const supportedTokenConfig = { supported: true };
   const unsupportedTokenConfig = { supported: false };
@@ -394,6 +394,69 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
+  it("lets vault admins recover unexpected native ETH held by NativeVaultGateway", async function () {
+    const { vault, wrappedNative } = await deploySystem();
+    const gateway = await viem.deployContract("NativeVaultGateway", [
+      wrappedNative.address,
+      vault.address,
+    ]);
+
+    await (
+      publicClient as unknown as {
+        request: (args: {
+          method: string;
+          params?: unknown[];
+        }) => Promise<unknown>;
+      }
+    ).request({
+      method: "hardhat_setBalance",
+      params: [gateway.address, "0x7"],
+    });
+
+    const recipientBefore = await publicClient.getBalance({
+      address: yieldRecipient.account.address,
+    });
+    await gateway.write.sweepNative([yieldRecipient.account.address, 7n]);
+
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 0n);
+    assert.equal(
+      await publicClient.getBalance({ address: gateway.address }),
+      0n,
+    );
+    assert.equal(
+      await publicClient.getBalance({
+        address: yieldRecipient.account.address,
+      }),
+      recipientBefore + 7n,
+    );
+  });
+
+  it("lets vault admins recover unexpected ERC20 balances held by NativeVaultGateway", async function () {
+    const { vault, wrappedNative } = await deploySystem();
+    const gateway = await viem.deployContract("NativeVaultGateway", [
+      wrappedNative.address,
+      vault.address,
+    ]);
+    const strayToken = await viem.deployContract("MockERC20", [
+      "Stray Token",
+      "STRAY",
+      18,
+    ]);
+
+    await strayToken.write.mint([gateway.address, 9n]);
+    await gateway.write.sweepToken([
+      strayToken.address,
+      yieldRecipient.account.address,
+      9n,
+    ]);
+
+    assert.equal(
+      await strayToken.read.balanceOf([yieldRecipient.account.address]),
+      9n,
+    );
+    assert.equal(await strayToken.read.balanceOf([gateway.address]), 0n);
+  });
+
   it("rejects zero-value native vault gateway calls", async function () {
     const { vault, wrappedNative } = await deploySystem();
     const gateway = await viem.deployContract("NativeVaultGateway", [
@@ -403,6 +466,75 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     await viem.assertions.revertWithCustomError(
       gateway.write.depositToVault({ value: 0n }),
+      gateway,
+      "InvalidParam",
+    );
+  });
+
+  it("restricts NativeVaultGateway rescue sweeps to vault admins and valid balances", async function () {
+    const { vault, wrappedNative } = await deploySystem();
+    const gateway = await viem.deployContract("NativeVaultGateway", [
+      wrappedNative.address,
+      vault.address,
+    ]);
+    const strayToken = await viem.deployContract("MockERC20", [
+      "Stray Token",
+      "STRAY",
+      18,
+    ]);
+    const gatewayAsOther = await viem.getContractAt(
+      "NativeVaultGateway",
+      gateway.address,
+      {
+        client: { public: publicClient, wallet: other },
+      },
+    );
+
+    await viem.assertions.revertWithCustomError(
+      gatewayAsOther.write.sweepNative([other.account.address, 1n]),
+      gatewayAsOther,
+      "Unauthorized",
+    );
+    await viem.assertions.revertWithCustomError(
+      gatewayAsOther.write.sweepToken([
+        strayToken.address,
+        other.account.address,
+        1n,
+      ]),
+      gatewayAsOther,
+      "Unauthorized",
+    );
+
+    await viem.assertions.revertWithCustomError(
+      gateway.write.sweepNative([yieldRecipient.account.address, 1n]),
+      gateway,
+      "InvalidParam",
+    );
+    await viem.assertions.revertWithCustomError(
+      gateway.write.sweepToken([
+        strayToken.address,
+        yieldRecipient.account.address,
+        1n,
+      ]),
+      gateway,
+      "InvalidParam",
+    );
+    await viem.assertions.revertWithCustomError(
+      gateway.write.sweepToken([
+        zeroAddress,
+        yieldRecipient.account.address,
+        1n,
+      ]),
+      gateway,
+      "InvalidParam",
+    );
+    await viem.assertions.revertWithCustomError(
+      gateway.write.sweepNative([zeroAddress, 1n]),
+      gateway,
+      "InvalidParam",
+    );
+    await viem.assertions.revertWithCustomError(
+      gateway.write.sweepToken([strayToken.address, zeroAddress, 1n]),
       gateway,
       "InvalidParam",
     );
