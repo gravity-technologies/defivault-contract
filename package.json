@@ -24,7 +24,8 @@
     "deploy:yield-recipient-timelock": "hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts",
     "deploy:initial-stack:interactive": "hardhat run ./scripts/deploy/deploy-initial-stack-interactive.ts --network sepolia",
     "deploy:initial-stack:interactive:local": "hardhat run ./scripts/deploy/deploy-initial-stack-interactive.ts --network localhost",
-    "wallets:generate": "node ./scripts/generate-wallets.mjs"
+    "registry:sync": "tsx ./scripts/deploy/sync-deployment-registry.ts",
+    "verify:initial-stack": "tsx ./scripts/verify/verify-initial-stack.ts"
   },
   "keywords": [],
   "author": "",
@@ -40,6 +41,7 @@
     "hardhat": "^3.1.7",
     "prettier": "^3.8.1",
     "prettier-plugin-solidity": "^2.2.1",
+    "tsx": "^4.21.0",
     "viem": "^2.45.2"
   },
   "type": "module",

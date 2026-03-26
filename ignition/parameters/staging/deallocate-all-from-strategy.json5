@@ -1,0 +1,10 @@
+{
+  VaultDeallocateAllFromStrategyModule: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token key (ERC20), for example USDT.
+    token: "0x0000000000000000000000000000000000000000",
+    // Existing strategy proxy to fully unwind from.
+    strategy: "0x0000000000000000000000000000000000000000",
+  },
+}
