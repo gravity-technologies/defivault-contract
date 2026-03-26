@@ -18,9 +18,9 @@ export const oneOffOpsTasks: TaskDefinition[] = [
   )
     .addOption({
       name: "env",
-      description: "Target environment: staging, testnet, or all",
+      description: "Target environment: staging or testnet",
       type: ArgumentType.STRING,
-      defaultValue: "all",
+      defaultValue: "staging",
     })
     .addOption({
       name: "strategyKey",
@@ -43,12 +43,6 @@ export const oneOffOpsTasks: TaskDefinition[] = [
     .addOption({
       name: "dryRun",
       description: "Validate and print state without sending transactions",
-      type: ArgumentType.FLAG,
-      defaultValue: false,
-    })
-    .addOption({
-      name: "skipMint",
-      description: "Skip the vault mint step before allocation",
       type: ArgumentType.FLAG,
       defaultValue: false,
     })

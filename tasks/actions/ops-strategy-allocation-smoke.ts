@@ -1,38 +1,31 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import chalk from "chalk";
+import * as emoji from "node-emoji";
+import ora from "ora";
 import type { NewTaskActionFunction } from "hardhat/types/tasks";
 import {
   formatUnits,
-  getAddress,
-  isAddress,
   parseAbi,
   parseUnits,
+  type Abi,
   type Address,
   type Hex,
 } from "viem";
 
+import { loadCompiledVaultAbi } from "../../scripts/report/treasury-vault-state-lib.js";
 import { getClients } from "../utils/one-off-ops.js";
 
+const DEFAULT_STRATEGY_KEY = "primary";
+const DEFAULT_AMOUNT = "10";
 const ENVIRONMENTS = ["staging", "testnet"] as const;
+const SECTION_DIVIDER = chalk.blue("=".repeat(72));
 const repoRoot = process.cwd();
-
-const vaultAbi = parseAbi([
-  "function ALLOCATOR_ROLE() view returns (bytes32)",
-  "function allocateVaultTokenToStrategy(address token,address strategy,uint256 amount)",
-  "function deallocateVaultTokenFromStrategy(address token,address strategy,uint256 amount) returns (uint256 received)",
-  "function deallocateAllVaultTokenFromStrategy(address token,address strategy) returns (uint256 received)",
-  "function hasRole(bytes32 role,address account) view returns (bool)",
-  "function isSupportedVaultToken(address vaultToken) view returns (bool)",
-  "function isStrategyWhitelistedForVaultToken(address vaultToken,address strategy) view returns (bool)",
-  "function paused() view returns (bool)",
-  "function strategyCostBasis(address vaultToken,address strategy) view returns (uint256)",
-]);
 
 const erc20Abi = parseAbi([
   "function balanceOf(address account) view returns (uint256)",
   "function decimals() view returns (uint8)",
-  "function mint(address to,uint256 amount)",
   "function symbol() view returns (string)",
 ]);
 
@@ -48,7 +41,6 @@ type StrategyAllocationSmokeTaskArgs = {
   env: string;
   fullUnwind: boolean;
   partialAmount?: string;
-  skipMint: boolean;
   strategyKey: string;
 };
 
@@ -110,15 +102,52 @@ type PublicClientLike = Clients["publicClient"];
 type WalletClientLike = Clients["walletClient"];
 type WalletAccountLike = NonNullable<WalletClientLike["account"]>;
 
-function parseEnvironment(value: string): "all" | Environment {
-  const normalized = value.toLowerCase();
-  if (normalized === "all") return "all";
-  if (normalized === "staging" || normalized === "testnet") return normalized;
-  throw new Error(`unsupported environment: ${normalized}`);
+function renderSection(title: string, description?: string): void {
+  console.log(`\n${SECTION_DIVIDER}`);
+  console.log(
+    chalk.bold.blue(`${emoji.get("triangular_flag_on_post")} ${title}`),
+  );
+  if (description !== undefined) {
+    console.log(chalk.dim(description));
+  }
+  console.log(SECTION_DIVIDER);
 }
 
-function selectedEnvironments(env: "all" | Environment): Environment[] {
-  return env === "all" ? [...ENVIRONMENTS] : [env];
+function printKeyValue(label: string, value: string): void {
+  console.log(`${chalk.cyan(label)} ${chalk.white(value)}`);
+}
+
+function printSnapshot(
+  label: string,
+  snapshot: Snapshot,
+  decimals: number,
+  symbol: string,
+): void {
+  console.log(chalk.bold(label));
+  printKeyValue(
+    "  Vault balance:",
+    `${formatUnits(snapshot.vaultBalance, decimals)} ${symbol}`,
+  );
+  printKeyValue(
+    "  Strategy exposure:",
+    `${formatUnits(snapshot.strategyExposure, decimals)} ${symbol}`,
+  );
+  printKeyValue(
+    "  Cost basis:",
+    `${formatUnits(snapshot.costBasis, decimals)} ${symbol}`,
+  );
+  printKeyValue(
+    "  aToken balance:",
+    `${formatUnits(snapshot.aTokenBalance, decimals)} ${symbol}`,
+  );
+}
+
+function parseEnvironment(value: string): Environment {
+  const normalized = value.toLowerCase();
+  if (normalized === "staging" || normalized === "testnet") {
+    return normalized;
+  }
+  throw new Error(`unsupported environment: ${normalized}`);
 }
 
 function deploymentRegistryPath(
@@ -137,28 +166,6 @@ function initialStackRoot(environment: Environment, network: string): string {
     environment,
     network,
   );
-}
-
-function latestInitialStackManifestPath(
-  environment: Environment,
-  network: string,
-): string | undefined {
-  const root = initialStackRoot(environment, network);
-  if (!existsSync(root)) return undefined;
-
-  const runDirs = readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  const latestRunDir = runDirs.at(-1);
-  if (latestRunDir === undefined) return undefined;
-
-  return join(root, latestRunDir, "manifest.json");
-}
-
-function relativeToRepo(filePath: string): string {
-  return filePath.replace(`${repoRoot}/`, "");
 }
 
 function resolveDeployment(args: {
@@ -222,14 +229,37 @@ function resolveDeployment(args: {
   };
 }
 
+function latestInitialStackManifestPath(
+  environment: Environment,
+  network: string,
+): string | undefined {
+  const root = initialStackRoot(environment, network);
+  if (!existsSync(root)) return undefined;
+
+  const runDirs = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+
+  const latestRunDir = runDirs.at(-1);
+  if (latestRunDir === undefined) return undefined;
+
+  return join(root, latestRunDir, "manifest.json");
+}
+
+function relativeToRepo(filePath: string): string {
+  return filePath.replace(`${repoRoot}/`, "");
+}
+
 async function readSnapshot(args: {
   aToken: Address;
   publicClient: PublicClientLike;
   strategy: Address;
   token: Address;
+  vaultAbi: Abi;
   vault: Address;
 }): Promise<Snapshot> {
-  const [vaultBalance, aTokenBalance, strategyExposure, costBasis] =
+  const [vaultBalance, aTokenBalance, strategyExposure, rawCostBasis] =
     await Promise.all([
       args.publicClient.readContract({
         address: args.token,
@@ -251,34 +281,18 @@ async function readSnapshot(args: {
       }),
       args.publicClient.readContract({
         address: args.vault,
-        abi: vaultAbi,
+        abi: args.vaultAbi,
         functionName: "strategyCostBasis",
         args: [args.token, args.strategy],
       }),
     ]);
 
-  return { aTokenBalance, costBasis, strategyExposure, vaultBalance };
-}
-
-async function writeMintAndWait(args: {
-  account: WalletAccountLike;
-  amount: bigint;
-  publicClient: PublicClientLike;
-  token: Address;
-  to: Address;
-  walletClient: WalletClientLike;
-}): Promise<Hex> {
-  const { request } = await args.publicClient.simulateContract({
-    account: args.account,
-    address: args.token,
-    abi: erc20Abi,
-    functionName: "mint",
-    args: [args.to, args.amount],
-  });
-
-  const hash = await args.walletClient.writeContract(request);
-  await args.publicClient.waitForTransactionReceipt({ hash });
-  return hash;
+  return {
+    aTokenBalance,
+    costBasis: rawCostBasis as bigint,
+    strategyExposure,
+    vaultBalance,
+  };
 }
 
 async function writeAllocateAndWait(args: {
@@ -287,13 +301,14 @@ async function writeAllocateAndWait(args: {
   publicClient: PublicClientLike;
   strategy: Address;
   token: Address;
+  vaultAbi: Abi;
   vault: Address;
   walletClient: WalletClientLike;
 }): Promise<Hex> {
   const { request } = await args.publicClient.simulateContract({
     account: args.account,
     address: args.vault,
-    abi: vaultAbi,
+    abi: args.vaultAbi,
     functionName: "allocateVaultTokenToStrategy",
     args: [args.token, args.strategy, args.amount],
   });
@@ -309,13 +324,14 @@ async function writePartialDeallocateAndWait(args: {
   publicClient: PublicClientLike;
   strategy: Address;
   token: Address;
+  vaultAbi: Abi;
   vault: Address;
   walletClient: WalletClientLike;
 }): Promise<Hex> {
   const { request } = await args.publicClient.simulateContract({
     account: args.account,
     address: args.vault,
-    abi: vaultAbi,
+    abi: args.vaultAbi,
     functionName: "deallocateVaultTokenFromStrategy",
     args: [args.token, args.strategy, args.amount],
   });
@@ -330,13 +346,14 @@ async function writeDeallocateAllAndWait(args: {
   publicClient: PublicClientLike;
   strategy: Address;
   token: Address;
+  vaultAbi: Abi;
   vault: Address;
   walletClient: WalletClientLike;
 }): Promise<Hex> {
   const { request } = await args.publicClient.simulateContract({
     account: args.account,
     address: args.vault,
-    abi: vaultAbi,
+    abi: args.vaultAbi,
     functionName: "deallocateAllVaultTokenFromStrategy",
     args: [args.token, args.strategy],
   });
@@ -344,27 +361,6 @@ async function writeDeallocateAllAndWait(args: {
   const hash = await args.walletClient.writeContract(request);
   await args.publicClient.waitForTransactionReceipt({ hash });
   return hash;
-}
-
-function printSnapshot(
-  label: string,
-  snapshot: Snapshot,
-  decimals: number,
-  symbol: string,
-): void {
-  console.log(`  ${label}`);
-  console.log(
-    `    vault balance: ${formatUnits(snapshot.vaultBalance, decimals)} ${symbol}`,
-  );
-  console.log(
-    `    strategy exposure: ${formatUnits(snapshot.strategyExposure, decimals)} ${symbol}`,
-  );
-  console.log(
-    `    cost basis: ${formatUnits(snapshot.costBasis, decimals)} ${symbol}`,
-  );
-  console.log(
-    `    aToken balance: ${formatUnits(snapshot.aTokenBalance, decimals)} ${symbol}`,
-  );
 }
 
 async function runEnvironment(args: {
@@ -375,7 +371,7 @@ async function runEnvironment(args: {
   mintAmount: bigint;
   partialAmount: bigint;
   publicClient: PublicClientLike;
-  skipMint: boolean;
+  vaultAbi: Abi;
   walletClient: WalletClientLike;
 }): Promise<void> {
   const {
@@ -386,7 +382,7 @@ async function runEnvironment(args: {
     mintAmount,
     partialAmount,
     publicClient,
-    skipMint,
+    vaultAbi,
     walletClient,
   } = args;
 
@@ -433,12 +429,23 @@ async function runEnvironment(args: {
     args: [allocatorRole, account.address],
   });
 
-  console.log(`\n[${deployment.environment}] ${deployment.source}`);
-  console.log(`  vault: ${deployment.vault}`);
-  console.log(`  token: ${deployment.token} (${symbol}, ${decimals} decimals)`);
-  console.log(`  strategy: ${deployment.strategy} [${deployment.strategyKey}]`);
-  console.log(`  aToken: ${deployment.aToken}`);
-  console.log(`  pool: ${deployment.aavePool}`);
+  renderSection(
+    "Strategy Allocation Smoke",
+    `Environment ${deployment.environment} on ${deployment.network}`,
+  );
+  printKeyValue("Source:", deployment.source);
+  printKeyValue("Vault:", deployment.vault);
+  printKeyValue(
+    "Token:",
+    `${deployment.token} (${symbol}, ${decimals} decimals)`,
+  );
+  printKeyValue(
+    "Strategy:",
+    `${deployment.strategy} [${deployment.strategyKey}]`,
+  );
+  printKeyValue("aToken:", deployment.aToken);
+  printKeyValue("Aave pool:", deployment.aavePool);
+  printKeyValue("Operator:", account.address);
 
   if (paused) {
     throw new Error(`${deployment.environment}: vault is paused`);
@@ -455,161 +462,201 @@ async function runEnvironment(args: {
     );
   }
 
+  console.log(
+    chalk.green(`${emoji.get("white_check_mark")} preflight checks passed`),
+  );
+
   const initial = await readSnapshot({
     aToken: deployment.aToken,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
   });
   printSnapshot("before", initial, decimals, symbol);
 
-  console.log(
-    `  requested amount: ${formatUnits(mintAmount, decimals)} ${symbol}`,
+  if (initial.vaultBalance < mintAmount) {
+    throw new Error(
+      `${deployment.environment}: vault idle balance ${formatUnits(initial.vaultBalance, decimals)} ${symbol} is below requested allocation ${formatUnits(mintAmount, decimals)} ${symbol}`,
+    );
+  }
+
+  printKeyValue(
+    "Requested allocation:",
+    `${formatUnits(mintAmount, decimals)} ${symbol}`,
   );
-  console.log(
-    `  partial deallocation: ${formatUnits(partialAmount, decimals)} ${symbol}`,
+  printKeyValue(
+    "Partial deallocation:",
+    `${formatUnits(partialAmount, decimals)} ${symbol}`,
   );
 
   if (dryRun) {
-    console.log("  dry-run only, no transactions sent");
+    console.log(
+      chalk.yellow(
+        `${emoji.get("warning")} dry-run only, no transactions sent`,
+      ),
+    );
     return;
   }
 
-  if (!skipMint) {
-    const mintHash = await writeMintAndWait({
-      account,
-      amount: mintAmount,
-      publicClient,
-      to: deployment.vault,
-      token: deployment.token,
-      walletClient,
-    });
-    console.log(`  mint tx: ${mintHash}`);
-  } else {
-    console.log("  skipping mint step");
-  }
-
+  const allocateSpinner = ora("Allocating vault funds to strategy").start();
   const allocateHash = await writeAllocateAndWait({
     account,
     amount: mintAmount,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
     walletClient,
   });
-  console.log(`  allocate tx: ${allocateHash}`);
+  allocateSpinner.succeed(`Allocated funds to strategy (${allocateHash})`);
 
   const afterAllocate = await readSnapshot({
     aToken: deployment.aToken,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
   });
   printSnapshot("after allocate", afterAllocate, decimals, symbol);
 
+  const partialSpinner = ora(
+    "Deallocating partial position from strategy",
+  ).start();
   const partialHash = await writePartialDeallocateAndWait({
     account,
     amount: partialAmount,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
     walletClient,
   });
-  console.log(`  partial deallocate tx: ${partialHash}`);
+  partialSpinner.succeed(
+    `Partially deallocated strategy position (${partialHash})`,
+  );
 
   const afterPartial = await readSnapshot({
     aToken: deployment.aToken,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
   });
   printSnapshot("after partial deallocate", afterPartial, decimals, symbol);
 
   if (!fullUnwind) {
+    console.log(
+      chalk.yellow(
+        `${emoji.get("information_source")} stopping after partial deallocation`,
+      ),
+    );
     return;
   }
 
+  const unwindSpinner = ora(
+    "Fully unwinding remaining strategy position",
+  ).start();
   const unwindHash = await writeDeallocateAllAndWait({
     account,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
     walletClient,
   });
-  console.log(`  deallocate-all tx: ${unwindHash}`);
+  unwindSpinner.succeed(`Fully unwound strategy position (${unwindHash})`);
 
   const afterUnwind = await readSnapshot({
     aToken: deployment.aToken,
     publicClient,
     strategy: deployment.strategy,
     token: deployment.token,
+    vaultAbi,
     vault: deployment.vault,
   });
   printSnapshot("after full unwind", afterUnwind, decimals, symbol);
+  console.log(
+    chalk.green(
+      `${emoji.get("tada")} strategy allocation smoke completed successfully`,
+    ),
+  );
 }
 
 const action: NewTaskActionFunction<StrategyAllocationSmokeTaskArgs> = async (
-  { amount, dryRun, env, fullUnwind, partialAmount, skipMint, strategyKey },
+  { amount, dryRun, env, fullUnwind, partialAmount, strategyKey },
   hre,
 ) => {
-  const selectedEnv = parseEnvironment(env);
+  const environment = parseEnvironment(env);
+  const networkName = hre.globalOptions.network;
+  if (networkName === undefined || networkName === "default") {
+    throw new Error(
+      "missing required --network <network> for strategy allocation smoke",
+    );
+  }
+
   const { publicClient, walletClient } = await getClients(hre);
   if (walletClient.account === undefined) {
     throw new Error("selected network has no configured signer");
   }
+
   const account = walletClient.account;
-  const networkName = hre.globalOptions.network ?? "default";
+  const vaultAbi = loadCompiledVaultAbi(repoRoot);
 
-  console.log(`signer: ${account.address}`);
+  renderSection("Setup", "Resolving operator, network, and deployment inputs");
+  printKeyValue("Network:", networkName);
+  printKeyValue("Environment:", environment);
+  printKeyValue("Strategy key:", strategyKey);
+  printKeyValue("Operator:", account.address);
 
-  for (const environment of selectedEnvironments(selectedEnv)) {
-    const deployment = resolveDeployment({
-      environment,
-      network: networkName,
-      strategyKey,
-    });
-    if (!isAddress(deployment.token)) {
-      throw new Error(`invalid token address in ${deployment.source}`);
-    }
-    const decimals = await publicClient.readContract({
-      address: getAddress(deployment.token),
-      abi: erc20Abi,
-      functionName: "decimals",
-    });
-    const mintAmount = parseUnits(amount, decimals);
-    const partialAmountValue =
-      partialAmount === undefined
-        ? mintAmount / 2n
-        : parseUnits(partialAmount, decimals);
+  const resolveSpinner = ora("Resolving deployment metadata").start();
+  const deployment = resolveDeployment({
+    environment,
+    network: networkName,
+    strategyKey,
+  });
+  resolveSpinner.succeed(
+    `Resolved deployment metadata from ${deployment.source}`,
+  );
 
-    if (mintAmount <= 0n) {
-      throw new Error("amount must be greater than 0");
-    }
-    if (partialAmountValue <= 0n) {
-      throw new Error("partial amount must be greater than 0");
-    }
-    if (partialAmountValue > mintAmount) {
-      throw new Error("partial amount must be less than or equal to amount");
-    }
+  const decimals = await publicClient.readContract({
+    address: deployment.token,
+    abi: erc20Abi,
+    functionName: "decimals",
+  });
+  const mintAmount = parseUnits(amount, decimals);
+  const partialAmountValue =
+    partialAmount === undefined
+      ? mintAmount / 2n
+      : parseUnits(partialAmount, decimals);
 
-    await runEnvironment({
-      account,
-      deployment,
-      dryRun,
-      fullUnwind,
-      mintAmount,
-      partialAmount: partialAmountValue,
-      publicClient,
-      skipMint,
-      walletClient,
-    });
+  if (mintAmount <= 0n) {
+    throw new Error("amount must be greater than 0");
   }
+  if (partialAmountValue <= 0n) {
+    throw new Error("partial amount must be greater than 0");
+  }
+  if (partialAmountValue > mintAmount) {
+    throw new Error("partial amount must be less than or equal to amount");
+  }
+
+  await runEnvironment({
+    account,
+    deployment,
+    dryRun,
+    fullUnwind,
+    mintAmount,
+    partialAmount: partialAmountValue,
+    publicClient,
+    vaultAbi,
+    walletClient,
+  });
 };
 
 export default action;
