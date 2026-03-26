@@ -576,6 +576,11 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     const bridgeTxHash = await bridgeHub.read.lastTxHash();
     const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
+    const nativeTokenVault = await bridgeHub.read.nativeTokenVault();
+    assert.notEqual(
+      nativeTokenVault.toLowerCase(),
+      bridgeHub.address.toLowerCase(),
+    );
     await bridgeHub.write.claimFailedDeposit([
       270n,
       nativeBridgeGateway.address,

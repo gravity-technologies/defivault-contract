@@ -4,6 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {IL1AssetRouter} from "../external/IL1AssetRouter.sol";
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {ZkSyncAssetRouterEncoding} from "../external/ZkSyncAssetRouterEncoding.sol";
@@ -26,6 +27,8 @@ import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
  *
  *      Native bridge payloads use Matter Labs' current asset-router sentinel for ETH (`address(1)`),
  *      centralized via `ZkSyncAssetRouterEncoding` so production code and mocks/tests stay aligned.
+ *      Failed native-deposit refunds on the current zkSync stack are paid out by the configured native token vault,
+ *      so this gateway explicitly trusts that contract as its recovery sender.
  *
  *      ### Upgrade safety
  *      Constructor logic is disabled on the implementation and all mutable configuration is assigned through
@@ -57,6 +60,9 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
 
     /// @notice zkSync BridgeHub used for native bridge submissions.
     address public bridgeHub;
+
+    /// @notice zkSync native token vault trusted to send failed native-deposit refunds.
+    address public nativeTokenVault;
 
     /// @notice Per-bridge record keyed by canonical L2 transaction hash.
     mapping(bytes32 bridgeTxHash => NativeBridgeRecord record) public nativeBridgeRecords;
@@ -108,9 +114,13 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
             vault_.code.length == 0
         ) revert InvalidParam();
 
+        address nativeTokenVault_ = _resolveNativeTokenVault(bridgeHub_);
+        if (nativeTokenVault_ == address(0)) revert InvalidParam();
+
         wrappedNativeToken = wrappedNativeToken_;
         grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
         bridgeHub = bridgeHub_;
+        nativeTokenVault = nativeTokenVault_;
         vault = vault_;
     }
 
@@ -189,11 +199,11 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     }
 
     /**
-     * @notice Accepts ETH only from wrapped-native unwraps or the configured shared bridge.
+     * @notice Accepts ETH only from wrapped-native unwraps or the configured zkSync native token vault.
      */
     receive() external payable {
         if (msg.sender == wrappedNativeToken) return;
-        if (msg.sender == IL1ZkSyncBridgeHub(bridgeHub).sharedBridge()) return;
+        if (msg.sender == nativeTokenVault) return;
         revert UnexpectedNativeSender(msg.sender);
     }
 
@@ -202,5 +212,26 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
      */
     fallback() external payable {
         revert InvalidParam();
+    }
+
+    /**
+     * @notice Resolves the zkSync native token vault used by the configured bridge stack.
+     * @dev Reads `sharedBridge()` from `bridgeHub_`, then queries `nativeTokenVault()` on that
+     *      shared bridge / asset-router surface. Returns `address(0)` when the bridge stack is
+     *      misconfigured or does not expose the expected zkSync native-token-vault interface.
+     * @param bridgeHub_ BridgeHub whose shared bridge should be inspected.
+     * @return resolvedNativeTokenVault Native token vault for the current zkSync bridge stack.
+     */
+    function _resolveNativeTokenVault(address bridgeHub_) internal view returns (address resolvedNativeTokenVault) {
+        address sharedBridge = IL1ZkSyncBridgeHub(bridgeHub_).sharedBridge();
+        if (sharedBridge == address(0)) return address(0);
+
+        try IL1AssetRouter(sharedBridge).nativeTokenVault() returns (address nativeTokenVault_) {
+            if (nativeTokenVault_ != address(0) && nativeTokenVault_.code.length != 0) {
+                return nativeTokenVault_;
+            }
+        } catch {}
+
+        return address(0);
     }
 }

@@ -6,6 +6,24 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
 import {ZkSyncAssetRouterEncoding} from "../external/ZkSyncAssetRouterEncoding.sol";
 
+contract MockNativeTokenVault {
+    error Unauthorized();
+    error NativeClaimFailed();
+
+    address public immutable bridgeHub;
+
+    constructor(address bridgeHub_) {
+        bridgeHub = bridgeHub_;
+    }
+
+    function forwardClaim(address recipient) external payable {
+        if (msg.sender != bridgeHub) revert Unauthorized();
+
+        (bool ok, ) = recipient.call{value: msg.value}("");
+        if (!ok) revert NativeClaimFailed();
+    }
+}
+
 contract MockBridgehub is IL1ZkSyncBridgeHub {
     using SafeERC20 for IERC20;
 
@@ -31,10 +49,12 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
     mapping(bytes32 txHash => PendingDeposit deposit) public pendingDeposits;
 
     address private immutable _sharedBridge;
+    address private immutable _nativeTokenVault;
 
     constructor(address grvtBridgeProxyFeeToken_) {
         grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
         _sharedBridge = address(this);
+        _nativeTokenVault = address(new MockNativeTokenVault(address(this)));
     }
 
     function sharedBridge() external view override returns (address) {
@@ -43,6 +63,10 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
 
     function nativeTokenAddress() external pure returns (address) {
         return ZkSyncAssetRouterEncoding.nativeTokenAddress();
+    }
+
+    function nativeTokenVault() external view returns (address) {
+        return _nativeTokenVault;
     }
 
     function l2TransactionBaseCost(uint256, uint256, uint256, uint256) external pure override returns (uint256) {
@@ -111,8 +135,7 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
         lastClaimedTxHash = l2TxHash;
 
         if (ZkSyncAssetRouterEncoding.isNativeToken(l1Token)) {
-            (bool ok, ) = depositSender.call{value: amount}("");
-            require(ok, "NATIVE_CLAIM_FAILED");
+            MockNativeTokenVault(payable(_nativeTokenVault)).forwardClaim{value: amount}(depositSender);
             return;
         }
 
