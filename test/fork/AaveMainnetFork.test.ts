@@ -210,6 +210,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
         supported: true,
       },
     ]);
+    await vault.write.setBridgeableVaultToken([USDT, true]);
 
     await vault.write.setVaultTokenStrategyConfig([
       USDT,

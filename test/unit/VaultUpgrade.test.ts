@@ -238,6 +238,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
         supported: true,
       },
     ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
     await vault.write.setVaultTokenStrategyConfig([
       token.address,
       strategy.address,

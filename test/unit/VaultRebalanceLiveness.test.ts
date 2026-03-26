@@ -110,6 +110,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       token.address,
       supportedTokenConfig,
     ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
     await token.write.mint([vault.address, 200n]);
 
     await vault.write.rebalanceErc20ToL2([token.address, 80n]);
@@ -132,6 +133,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       token.address,
       supportedTokenConfig,
     ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
     await vault.write.setVaultTokenConfig([
       token.address,
       unsupportedTokenConfig,
@@ -162,6 +164,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       token.address,
       supportedTokenConfig,
     ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
     await token.write.mint([vault.address, 50n]);
     await vault.write.pause();
 
@@ -169,6 +172,42 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       vault.write.rebalanceErc20ToL2([token.address, 10n]),
       vault,
       "Paused",
+    );
+  });
+
+  it("reverts rebalanceErc20ToL2 for supported but non-bridgeable tokens", async function () {
+    const { vault, token } = await deploySystem();
+
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await token.write.mint([vault.address, 50n]);
+
+    await viem.assertions.revertWithCustomError(
+      vault.write.rebalanceErc20ToL2([token.address, 10n]),
+      vault,
+      "TokenNotBridgeable",
+    );
+  });
+
+  it("reverts emergencyErc20ToL2 for non-bridgeable tokens even when paused", async function () {
+    const { vault, token } = await deploySystem();
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await token.write.mint([vault.address, 50n]);
+    await vault.write.pause();
+
+    await viem.assertions.revertWithCustomError(
+      vault.write.emergencyErc20ToL2([token.address, 10n]),
+      vault,
+      "TokenNotBridgeable",
     );
   });
 

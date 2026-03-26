@@ -75,6 +75,7 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     await vault.write.grantRole([await vault.read.PAUSER_ROLE(), addr(pauser)]);
 
     await vault.write.setVaultTokenConfig([token.address, { supported: true }]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
 
     const stratA = await viem.deployContract("MockYieldStrategy", [
       vault.address,
@@ -672,6 +673,22 @@ describe("GRVTL1TreasuryVault core flows", async function () {
     );
     await viem.assertions.revertWithCustomError(
       vault.write.setVaultTokenConfig([addr(other), { supported: true }]),
+      vault,
+      "InvalidParam",
+    );
+  });
+
+  it("validates setBridgeableVaultToken auth and token address", async function () {
+    const { vault, vaultAsOther } = await deployBase();
+    const token = await viem.deployContract("MockERC20", ["Other", "OTH", 6]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsOther.write.setBridgeableVaultToken([token.address, true]),
+      vaultAsOther,
+      "Unauthorized",
+    );
+    await viem.assertions.revertWithCustomError(
+      vault.write.setBridgeableVaultToken([addr(other), true]),
       vault,
       "InvalidParam",
     );

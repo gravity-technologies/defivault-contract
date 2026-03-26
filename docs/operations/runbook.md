@@ -295,10 +295,15 @@ Checks:
 
 - caller has `REBALANCER_ROLE`
 - vault is not paused
-- token is supported
+- token is marked `bridgeable` for the generic ERC20 bridge path
 - `msg.value == 0`
 - wrapped-native is not sent through the ERC20 bridge path
 - amount is within `availableErc20ForRebalance(token)` or `availableNativeForRebalance()`
+
+Note:
+
+- `supported` means the token may be held and used by the vault
+- `bridgeable` is a separate admin decision for the generic ERC20 shared-bridge flow
 
 ## Incident Response
 
