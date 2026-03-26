@@ -30,16 +30,12 @@ Use this runbook when:
 
 - the target network is Ethereum Sepolia through this repo's `sepolia` Hardhat network
 - the vault should integrate with a supply/withdraw-only Aave-shaped surface you control
-- the underlying asset is a custom test token address that public Aave does not support
+- the underlying asset already exists on-chain, but public Aave does not support its address
 
 This runbook uses the repository's existing mock contracts:
 
 - `MockAaveV3Pool`
 - `MockAaveV3AToken`
-- optional mock infrastructure from the smoke test path:
-  - `MockERC20`
-  - `MockWETH`
-  - `MockL1ZkSyncBridgeAdapter`
 
 ## Important Environment Note
 
@@ -69,11 +65,11 @@ This repository currently defines one remote Hardhat network alias: `sepolia`.
    - `ignition/parameters/staging`
    - `ignition/parameters/testnet`
 
-4. Decide whether the deployment should reuse existing Sepolia infrastructure or mock all external dependencies.
-
-Use real Sepolia addresses if you already have a valid bridge stack and wrapped native token.
-
-Use mocks for a fully controlled environment if you do not want any dependency on live bridge or token infrastructure.
+4. Confirm you already have deployed addresses for:
+   - the underlying token
+   - `wrappedNativeToken`
+   - `bridgeHub`
+   - `grvtBridgeProxyFeeToken`
 
 ## Deployment Order
 
@@ -91,40 +87,21 @@ Deploy in this order:
 
 ## 1. Deploy External Prerequisites
 
-The exact mock deployment order used in the smoke test is implemented in `scripts/ci/deployment-smoke.ts`. For `staging` or `testnet`, deploy the contracts below in the same order and record every address.
+The exact mock deployment order used in the smoke test is implemented in `scripts/ci/deployment-smoke.ts`. For `staging` or `testnet`, only deploy the Aave-shaped contracts below and bind them to your existing underlying token.
 
 ### Required Aave Mock Contracts
 
 Deploy:
 
-1. `MockERC20` for the custom underlying token
-2. `MockAaveV3Pool(underlyingToken)`
-3. `MockAaveV3AToken(underlyingToken, aavePool, "<name>", "<symbol>")`
-4. call `MockAaveV3Pool.setAToken(aToken)`
+1. `MockAaveV3Pool(underlyingToken)`
+2. `MockAaveV3AToken(underlyingToken, aavePool, "<name>", "<symbol>")`
+3. call `MockAaveV3Pool.setAToken(aToken)`
 
 Recommended values:
 
-- underlying token name: your team-facing token name, for example `Staging USDT`
-- underlying token symbol: a symbol that makes the environment obvious, for example `sUSDT` or `tUSDT`
-- underlying token decimals: match the real asset you are modeling, for example `6` for USDT-like behavior
+- underlying token: the already deployed ERC20 address you want the vault and strategy to use
 - aToken name: for example `Aave Mock Staging USDT`
 - aToken symbol: for example `amUSDT`
-
-### Optional Fully Mocked Dependencies
-
-If this deployment should avoid live Sepolia bridge infrastructure as well, also deploy:
-
-1. `MockL1ZkSyncBridgeAdapter`
-2. `MockERC20` as `grvtBridgeProxyFeeToken`
-3. `MockWETH` as `wrappedNativeToken`
-
-If you already have valid Sepolia addresses for:
-
-- `bridgeHub`
-- `grvtBridgeProxyFeeToken`
-- `wrappedNativeToken`
-
-you may reuse those and only mock the Aave side.
 
 ### Address Checklist
 
@@ -137,25 +114,26 @@ Record:
 - `grvtBridgeProxyFeeToken`
 - `wrappedNativeToken`
 
-## 2. Fill `core.json5`
+## 2. Fill `vault-core.json5`
 
 Update:
 
-- `ignition/parameters/<env>/core.json5`
+- `ignition/parameters/<env>/vault-core.json5`
 
 Set:
 
-- `$global.bridgeHub`
-- `$global.grvtBridgeProxyFeeToken`
-- `$global.wrappedNativeToken`
-- `VaultCoreModule.deployAdmin`
-- `VaultCoreModule.l2ChainId`
-- `VaultCoreModule.l2ExchangeRecipient`
-- `VaultCoreModule.yieldRecipient`
+- `deployAdmin`
+- `bridgeHub`
+- `grvtBridgeProxyFeeToken`
+- `l2ChainId`
+- `l2ExchangeRecipient`
+- `wrappedNativeToken`
+- `yieldRecipient`
 
 Notes:
 
 - `wrappedNativeToken` is independent from the Aave mock underlying token
+- `bridgeHub`, `grvtBridgeProxyFeeToken`, and `wrappedNativeToken` should be your existing deployed addresses
 - `yieldRecipient` must be non-zero and must not equal `deployAdmin`
 
 Deploy:
@@ -163,7 +141,7 @@ Deploy:
 ```bash
 npm run deploy:vault -- \
   --network sepolia \
-  --parameters ignition/parameters/<env>/core.json5
+  --parameters ignition/parameters/<env>/vault-core.json5
 ```
 
 Record:
@@ -309,22 +287,22 @@ npm run deploy:yield-recipient-timelock -- \
 
 Update:
 
-- `ignition/parameters/<env>/core.json5`
+- `ignition/parameters/<env>/native-gateways.json5`
 
 Set:
 
-- `$global.bridgeHub`
-- `$global.grvtBridgeProxyFeeToken`
-- `$global.wrappedNativeToken`
-- `NativeGatewaysModule.vaultProxy`
-- `NativeGatewaysModule.proxyAdminOwner`
+- `vaultProxy`
+- `proxyAdminOwner`
+- `wrappedNativeToken`
+- `grvtBridgeProxyFeeToken`
+- `bridgeHub`
 
 Deploy:
 
 ```bash
 npm run deploy:native-gateways -- \
   --network sepolia \
-  --parameters ignition/parameters/<env>/core.json5
+  --parameters ignition/parameters/<env>/native-gateways.json5
 ```
 
 Record:
@@ -341,7 +319,7 @@ Run these checks before operators start using the environment:
 1. Confirm the vault is unpaused.
 2. Confirm expected role holders.
 3. Confirm `wrappedNativeToken`, `bridgeHub`, `grvtBridgeProxyFeeToken`, `l2ChainId`, and `l2ExchangeRecipient`.
-4. Confirm the mock underlying token is enabled as a supported vault token.
+4. Confirm the chosen underlying token is enabled as a supported vault token.
 5. Confirm the strategy is whitelisted and capped as expected.
 6. Confirm `AaveV3Strategy` points to the deployed mock `aavePool`, `underlyingToken`, and `aToken`.
 
@@ -349,7 +327,7 @@ Run these checks before operators start using the environment:
 
 Run at least one controlled end-to-end cycle:
 
-1. Mint the mock underlying token to the vault funding address.
+1. Fund the vault funding address with the chosen underlying token.
 2. Transfer or deposit that token into the vault.
 3. Call `allocateVaultTokenToStrategy(vaultToken, strategy, amount)`.
 4. Confirm the strategy holds mock `aToken` balance.
@@ -371,7 +349,7 @@ Use the same command shape for both environments and only change `<env>`.
 ```bash
 npm run deploy:vault -- \
   --network sepolia \
-  --parameters ignition/parameters/staging/core.json5
+  --parameters ignition/parameters/staging/vault-core.json5
 ```
 
 ### Testnet
@@ -379,7 +357,7 @@ npm run deploy:vault -- \
 ```bash
 npm run deploy:vault -- \
   --network sepolia \
-  --parameters ignition/parameters/testnet/core.json5
+  --parameters ignition/parameters/testnet/vault-core.json5
 ```
 
 Apply that same `<env>` substitution to:
@@ -389,23 +367,23 @@ Apply that same `<env>` substitution to:
 - `vault-token-strategy.json5`
 - `roles-bootstrap.json5`
 - `yield-recipient-bootstrap.json5`
-- `core.json5`
+- `native-gateways.json5`
 
 ## Recommended Separation Policy
 
 If `staging` and `testnet` are meant to simulate different environments, keep these separate per environment:
 
-- mock underlying token
 - mock Aave pool
 - mock aToken
 - strategy proxy
 - vault proxy
 
-It is acceptable to reuse common Sepolia infrastructure such as:
+It is expected that you reuse existing infrastructure such as:
 
 - a shared `wrappedNativeToken`
 - a shared `bridgeHub`
 - a shared `grvtBridgeProxyFeeToken`
+- a shared underlying token address when both environments intentionally target the same token
 
 only if that matches your operational model and does not blur environment boundaries.
 
