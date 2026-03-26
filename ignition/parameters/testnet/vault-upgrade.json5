@@ -1,9 +1,9 @@
 {
-  VaultUpgradeModule: {
-    // ProxyAdmin controlling vault proxy
-    proxyAdmin: "0x0000000000000000000000000000000000000000",
+  VaultUpgradeTask: {
     // Existing vault proxy
     vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Testnet uses the task signer directly instead of a multisig.
+    requiresMultisig: false,
     // Optional post-upgrade call data
     upgradeCallData: "0x",
   },
