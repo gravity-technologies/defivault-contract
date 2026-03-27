@@ -10,7 +10,6 @@ import {IL1ZkSyncBridgeHub} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IGRVTBridgeProxyFeeToken} from "../external/IGRVTBridgeProxyFeeToken.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
-import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {PositionComponent, ConservativeTokenTotals, TokenTotals} from "../interfaces/IVaultReportingTypes.sol";
 import {VaultBridgeLib} from "./VaultBridgeLib.sol";
 import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
@@ -443,8 +442,12 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (
             newYieldRecipient == address(0) ||
             newYieldRecipient == _yieldRecipient ||
-            newYieldRecipient == address(this)
+            newYieldRecipient == address(this) ||
+            newYieldRecipient.code.length == 0
         ) revert InvalidParam();
+        if (!VaultStrategyOpsLib.isCompatibleWithdrawalFeeTreasury(newYieldRecipient)) {
+            revert IncompatibleYieldRecipientTreasury(newYieldRecipient);
+        }
         address previousYieldRecipient = _yieldRecipient;
         _yieldRecipient = newYieldRecipient;
         emit YieldRecipientUpdated(previousYieldRecipient, newYieldRecipient);
@@ -620,6 +623,9 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         _requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) return 0;
+        if (VaultStrategyOpsLib.isYieldStrategyV2(strategy)) {
+            return VaultStrategyOpsLib.readResidualExposureOrRevert(token, strategy);
+        }
         uint256 exposure = VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy);
         // Cost basis follows measured vault-side net decrease on allocate, not strategy receipt.
         // See README terminology for the worked examples behind this invariant.
@@ -786,13 +792,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         _requireErc20Token(token);
         if (strategy == address(0) || amount == 0) revert InvalidParam();
         if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-        (uint256 reported, uint256 measured) = VaultStrategyOpsLib.deallocateWithBalanceDelta(
-            token,
-            strategy,
-            amount,
-            false
-        );
-        received = _finalizeDeallocation(token, strategy, amount, reported, measured, true, true);
+        received = _deallocateFromStrategy(token, strategy, amount, false);
     }
 
     /**
@@ -813,13 +813,40 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         _requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-        (uint256 reported, uint256 measured) = VaultStrategyOpsLib.deallocateWithBalanceDelta(
+        received = _deallocateFromStrategy(token, strategy, type(uint256).max, true);
+    }
+
+    function _deallocateFromStrategy(
+        address token,
+        address strategy,
+        uint256 requested,
+        bool useAll
+    ) internal returns (uint256 received) {
+        uint256 trackedOutstanding = _strategyCostBasis[token][strategy];
+        VaultStrategyOpsLib.StrategyDeallocationResult memory result = VaultStrategyOpsLib.executeStrategyDeallocation(
             token,
             strategy,
-            type(uint256).max,
+            requested,
+            useAll,
+            trackedOutstanding
+        );
+        uint256 strategyPathReceived = _finalizeDeallocation(
+            token,
+            strategy,
+            requested,
+            result.reported,
+            result.trackedReceived,
+            result.residualReceived,
+            result.trackedReceived,
             true
         );
-        received = _finalizeDeallocation(token, strategy, type(uint256).max, reported, measured, true, true);
+        uint256 reimbursed = _reimburseStrategyWithdrawalFee(
+            token,
+            strategy,
+            result.reportedFee,
+            VaultStrategyOpsLib.cappedReimbursement(result.trackedRequested, result.trackedReceived, result.reportedFee)
+        );
+        return strategyPathReceived + reimbursed;
     }
 
     /**
@@ -849,13 +876,13 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         uint256 maxYield = harvestableYield(token, strategy);
         if (maxYield == 0 || amount > maxYield) revert YieldNotAvailable();
 
-        (uint256 reported, uint256 withdrawnToVault) = VaultStrategyOpsLib.deallocateWithBalanceDelta(
+        (uint256 reported, uint256 withdrawnToVault) = VaultStrategyOpsLib.executeResidualDeallocation(
             token,
             strategy,
             amount,
             false
         );
-        withdrawnToVault = _finalizeDeallocation(token, strategy, amount, reported, withdrawnToVault, false, false);
+        withdrawnToVault = _finalizeDeallocation(token, strategy, amount, reported, 0, withdrawnToVault, 0, false);
         if (withdrawnToVault > maxYield) revert YieldNotAvailable();
 
         received = VaultStrategyOpsLib.payoutHarvestProceeds(token, _wrappedNativeToken, recipient, withdrawnToVault);
@@ -940,32 +967,60 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /**
      * @notice Applies shared post-deallocation accounting and telemetry.
      * @dev Optionally reduces tracked cost basis and optionally re-syncs direct vault-token TVL tracking,
-     *      allowing harvest and emergency unwind paths to reuse the same measured-delta finalizer.
+     *      allowing harvest, reimbursed tracked exits, and emergency unwind paths to reuse the same finalizer.
      * @param token Vault token being deallocated.
      * @param strategy Strategy source.
      * @param requested Amount requested from the strategy.
      * @param reported Amount self-reported by the strategy.
-     * @param received Amount actually measured back at the vault.
-     * @param reduceCostBasis True to reduce tracked cost basis by `received`.
+     * @param trackedReceived Amount actually measured back at the vault from the tracked leg.
+     * @param residualReceived Amount actually measured back at the vault from the residual leg.
+     * @param costBasisReduction Amount to write down from tracked cost basis.
      * @param syncTokenTracking True to re-run direct vault-token TVL tracking sync.
-     * @return The measured `received` amount.
+     * @return finalReceived The amount actually measured back at the vault from the strategy path.
      */
     function _finalizeDeallocation(
         address token,
         address strategy,
         uint256 requested,
         uint256 reported,
-        uint256 received,
-        bool reduceCostBasis,
+        uint256 trackedReceived,
+        uint256 residualReceived,
+        uint256 costBasisReduction,
         bool syncTokenTracking
-    ) internal returns (uint256) {
-        if (reported != received) {
-            emit StrategyReportedReceivedMismatch(token, strategy, requested, reported, received);
+    ) internal returns (uint256 finalReceived) {
+        uint256 totalReceived = trackedReceived + residualReceived;
+        if (reported != totalReceived) {
+            emit StrategyReportedReceivedMismatch(token, strategy, requested, reported, totalReceived);
         }
-        if (reduceCostBasis) _decreaseStrategyCostBasis(token, strategy, received);
-        emit VaultTokenDeallocatedFromStrategy(token, strategy, requested, received);
+        if (costBasisReduction != 0) _decreaseStrategyCostBasis(token, strategy, costBasisReduction);
+        finalReceived = totalReceived;
+        emit VaultTokenDeallocatedFromStrategy(token, strategy, requested, trackedReceived, residualReceived);
         if (syncTokenTracking) _syncVaultTokenDirectTvlTracking(token);
-        return received;
+        return finalReceived;
+    }
+
+    function _reimburseStrategyWithdrawalFee(
+        address token,
+        address strategy,
+        uint256 reportedFee,
+        uint256 cappedFee
+    ) internal returns (uint256 reimbursed) {
+        if (cappedFee == 0) return 0;
+
+        address treasury = _yieldRecipient;
+        (uint256 reported, uint256 measured) = VaultStrategyOpsLib.reimburseWithdrawalFee(
+            token,
+            treasury,
+            strategy,
+            cappedFee
+        );
+        if (reported != cappedFee || measured != cappedFee || measured > _strategyCostBasis[token][strategy]) {
+            revert InvalidParam();
+        }
+
+        _decreaseStrategyCostBasis(token, strategy, measured);
+        emit StrategyWithdrawalFeeReimbursementSettled(token, strategy, treasury, reportedFee, cappedFee, measured);
+        return measured;
     }
 
     /**
@@ -1117,13 +1172,13 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address vaultToken,
         address strategy
     ) internal view returns (address[] memory tokens) {
-        try IYieldStrategy(strategy).tvlTokens(vaultToken) returns (address[] memory data) {
-            tokens = data;
-        } catch {
+        (bool ok, address[] memory data) = VaultStrategyOpsLib.readStrategyTvlTokens(vaultToken, strategy);
+        if (!ok) {
             tokens = new address[](1);
             tokens[0] = vaultToken;
             return tokens;
         }
+        tokens = data;
         for (uint256 i = 0; i < tokens.length; ++i) {
             if (tokens[i] == address(0)) revert InvalidParam();
             for (uint256 j = i + 1; j < tokens.length; ++j) {
@@ -1341,7 +1396,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     /**
      * @notice Finalizes emergency unwind steps returned by the bridge library.
      * @dev Emits skip telemetry for failed steps and applies the shared deallocation finalizer to successful ones
-     *      without re-running tracked-TVL-token reconciliation on every loop iteration.
+     *      plus exact withdrawal-fee reimbursement settlement for reimbursing tracked legs, without re-running
+     *      tracked-TVL-token reconciliation on every loop iteration.
      * @param token Vault token being unwound.
      * @param steps Per-strategy unwind results returned by `VaultBridgeLib`.
      */
@@ -1354,7 +1410,17 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
                 continue;
             }
             if (step.request == 0) continue;
-            _finalizeDeallocation(token, step.strategy, step.request, step.reported, step.got, true, false);
+            _finalizeDeallocation(
+                token,
+                step.strategy,
+                step.request,
+                step.reported,
+                step.trackedReceived,
+                step.residualReceived,
+                step.trackedReceived,
+                false
+            );
+            _reimburseStrategyWithdrawalFee(token, step.strategy, step.reportedFee, step.cappedFee);
         }
     }
 

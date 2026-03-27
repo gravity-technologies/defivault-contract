@@ -20,6 +20,7 @@ The implemented contracts in this repo are:
 - `NativeVaultGateway`
 - `NativeBridgeGateway`
 - `AaveV3Strategy`
+- `GsmStkGhoStrategy`
 
 High-level topology:
 
@@ -28,7 +29,7 @@ External ETH sender
     |
     v
 NativeVaultGateway --> GRVTL1TreasuryVault --> AaveV3Strategy --> Aave
-                               |
+                               |                GsmStkGhoStrategy --> GSM -> GHO -> stkGHO
                                v
                     BridgeHub + SharedBridge
                                ^
@@ -80,7 +81,7 @@ It unwraps wrapped-native into ETH for bridge submission and re-wraps recovered 
 - `token-strategy pair`: one `(vaultToken, strategy)` entry with its own whitelist, active flag, and cap.
 - `exact token balance`: strategy-held balance for one literal ERC20 token address from `exactTokenBalance(token)`.
 - `position breakdown`: diagnostic token list from `positionBreakdown(vaultToken)`.
-- `receipt token`: non-vault-token component token representing the invested position, such as `aUSDT`.
+- `receipt token`: non-vault-token component token representing the invested position, such as `aUSDT` or `stkGHO`.
 - `strategy cost basis`: vault-side accounting basis for one `(vaultToken, strategy)` pair.
 - `strategy exposure`: single-number vault-token exposure returned by `strategyExposure(vaultToken)` for cap and harvest math.
 - `TVL token`: any exact ERC20 token the vault can report in raw token totals.

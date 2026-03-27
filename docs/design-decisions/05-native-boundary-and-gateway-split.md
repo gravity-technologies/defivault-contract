@@ -1,10 +1,11 @@
+---
+title: "Native Boundary and Gateway Split"
+audience: "contributors, reviewers, operators"
+purpose: "explain why native ETH boundaries are split across dedicated contracts"
+decision_type: "architecture and operational boundary"
+---
+
 # Native Boundary and Gateway Split
-
-## Metadata
-
-- Audience: contributors, reviewers, operators
-- Purpose: explain why native ETH boundaries are split across dedicated contracts
-- Decision type: architecture and operational boundary
 
 ## Context
 
@@ -60,4 +61,4 @@ Making the vault the native bridge deposit sender:
 
 - [../concepts/system-overview.md](../concepts/system-overview.md)
 - [../architecture/vault-and-gateways.md](../architecture/vault-and-gateways.md)
-- [explicit-native-bridge-methods.md](explicit-native-bridge-methods.md)
+- [06-explicit-native-bridge-methods.md](06-explicit-native-bridge-methods.md)

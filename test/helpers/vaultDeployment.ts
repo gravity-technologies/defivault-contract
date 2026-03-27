@@ -2,7 +2,11 @@ type DeployContractClient = any;
 
 export async function deployVaultLibraries(viem: DeployContractClient) {
   const strategyOpsLib = await viem.deployContract("VaultStrategyOpsLib");
-  const bridgeLib = await viem.deployContract("VaultBridgeLib");
+  const bridgeLib = await viem.deployContract("VaultBridgeLib", [], {
+    libraries: {
+      VaultStrategyOpsLib: strategyOpsLib.address,
+    },
+  });
 
   return {
     strategyOpsLib,
@@ -23,17 +27,24 @@ export async function deployVaultImplementation(viem: DeployContractClient) {
     { libraries },
   );
 
-  return { strategyOpsLib, bridgeLib, libraries, vaultImplementation };
+  return {
+    strategyOpsLib,
+    bridgeLib,
+    libraries,
+    vaultImplementation,
+  };
 }
 
-export async function deployVaultV2Implementation(viem: DeployContractClient) {
-  const { strategyOpsLib, bridgeLib, libraries } =
-    await deployVaultLibraries(viem);
+export async function deployVaultV2Implementation(
+  viem: DeployContractClient,
+  implementationAddress: `0x${string}`,
+) {
   const vaultImplementation = await viem.deployContract(
     "GRVTL1TreasuryVaultV2Mock",
-    [],
-    { libraries },
+    [implementationAddress],
   );
 
-  return { strategyOpsLib, bridgeLib, libraries, vaultImplementation };
+  return {
+    vaultImplementation,
+  };
 }

@@ -65,11 +65,11 @@ interface IYieldStrategy {
     /// @notice Withdraws a vault token from the strategy back to the vault.
     /// @param vaultToken Vault token to withdraw.
     /// @param amount Requested amount to deallocate.
-    /// @return received Actual amount received by vault.
+    /// @return received Actual amount received by vault from the strategy path.
     function deallocate(address vaultToken, uint256 amount) external returns (uint256 received);
 
     /// @notice Withdraws the maximum available vault token amount from the strategy back to the vault.
     /// @param vaultToken Vault token to withdraw.
-    /// @return received Actual amount received by vault.
+    /// @return received Actual amount received by vault from the strategy path.
     function deallocateAll(address vaultToken) external returns (uint256 received);
 }

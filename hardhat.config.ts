@@ -11,7 +11,7 @@ export default defineConfig({
   plugins: [hardhatToolboxViemPlugin, HardhatContractSizer],
   contractSizer: {
     strict: true,
-    only: [/GRVTL1TreasuryVault/],
+    only: [/^contracts\/vault\/GRVTL1TreasuryVault\.sol:GRVTL1TreasuryVault$/],
     runOnCompile: false,
     unit: "B",
   },

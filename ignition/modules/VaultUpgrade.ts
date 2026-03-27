@@ -45,5 +45,10 @@ export default buildModule("VaultUpgradeModule", (m) => {
     id: "VaultAfterUpgrade",
   });
 
-  return { vaultStrategyOpsLib, vaultBridgeLib, vaultImplementation, vault };
+  return {
+    vaultStrategyOpsLib,
+    vaultBridgeLib,
+    vaultImplementation,
+    vault,
+  };
 });

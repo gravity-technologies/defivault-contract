@@ -1,10 +1,11 @@
+---
+title: "Raw-Token TVL Accounting"
+audience: "contributors, auditors, indexers"
+purpose: "explain why TVL is reported as raw per-token amounts"
+decision_type: "accounting and reporting"
+---
+
 # Raw-Token TVL Accounting
-
-## Metadata
-
-- Audience: contributors, auditors, indexers
-- Purpose: explain why TVL is reported as raw per-token amounts
-- Decision type: accounting and reporting
 
 ## Context
 
@@ -63,5 +64,5 @@ The vault does not convert `aUSDT` into `USDT` during reporting.
 ## Related Docs
 
 - [../concepts/accounting-and-tvl.md](../concepts/accounting-and-tvl.md)
-- [cached-tracked-tvl-token-registry.md](cached-tracked-tvl-token-registry.md)
+- [04-cached-tracked-tvl-token-registry.md](04-cached-tracked-tvl-token-registry.md)
 - [../../contracts/interfaces/IL1TreasuryVault.sol](../../contracts/interfaces/IL1TreasuryVault.sol)

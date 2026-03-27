@@ -1,10 +1,11 @@
+---
+title: "Explicit Native Bridge Methods"
+audience: "contributors, reviewers, operators, integrators"
+purpose: "explain why native bridge intent uses explicit methods instead of a sentinel token"
+decision_type: "API design"
+---
+
 # Explicit Native Bridge Methods
-
-## Metadata
-
-- Audience: contributors, reviewers, operators, integrators
-- Purpose: explain why native bridge intent uses explicit methods instead of a sentinel token
-- Decision type: API design
 
 ## Context
 
@@ -47,6 +48,6 @@ Using `rebalanceErc20ToL2(address(0), amount)` as a native sentinel:
 
 ## Related Docs
 
-- [native-boundary-and-gateway-split.md](native-boundary-and-gateway-split.md)
+- [05-native-boundary-and-gateway-split.md](05-native-boundary-and-gateway-split.md)
 - [../reference/roles-and-permissions.md](../reference/roles-and-permissions.md)
 - [../../contracts/interfaces/IL1TreasuryVault.sol](../../contracts/interfaces/IL1TreasuryVault.sol)

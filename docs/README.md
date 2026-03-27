@@ -30,8 +30,8 @@ This docs tree is organized top-down: start with concepts, then architecture, th
 
 1. [reference/roles-and-permissions.md](reference/roles-and-permissions.md)
 2. [operations/runbook.md](operations/runbook.md)
-3. [design-decisions/native-boundary-and-gateway-split.md](design-decisions/native-boundary-and-gateway-split.md)
-4. [design-decisions/explicit-native-bridge-methods.md](design-decisions/explicit-native-bridge-methods.md)
+3. [design-decisions/05-native-boundary-and-gateway-split.md](design-decisions/05-native-boundary-and-gateway-split.md)
+4. [design-decisions/06-explicit-native-bridge-methods.md](design-decisions/06-explicit-native-bridge-methods.md)
 
 ### Integrator
 
@@ -66,6 +66,7 @@ This docs tree is organized top-down: start with concepts, then architecture, th
   - `NativeVaultGateway`
   - `NativeBridgeGateway`
   - `AaveV3Strategy`
+  - `GsmStkGhoStrategy`
 - Not implemented in this repo:
   - Compound adapter
   - Morpho adapter

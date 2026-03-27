@@ -7,6 +7,7 @@ import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../extern
 import {IGRVTBridgeProxyFeeToken} from "../external/IGRVTBridgeProxyFeeToken.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
 
 library VaultBridgeLib {
     using SafeERC20 for IERC20;
@@ -65,14 +66,29 @@ library VaultBridgeLib {
      * @param request Amount requested from the strategy for this step.
      * @param reported Amount self-reported by the strategy call.
      * @param got Amount actually measured back at the vault.
+     * @param reimbursableFee Capped treasury reimbursement expected for the tracked leg.
      * @param skipped True when the step should be treated as non-fatal and ignored by the vault wrapper.
      */
     struct EmergencyUnwindStep {
         address strategy;
         uint256 request;
         uint256 reported;
-        uint256 got;
+        uint256 trackedRequested;
+        uint256 trackedReceived;
+        uint256 residualReceived;
+        uint256 reportedFee;
+        uint256 cappedFee;
         bool skipped;
+    }
+
+    struct EmergencyDeallocateResult {
+        uint256 reported;
+        uint256 trackedRequested;
+        uint256 trackedReceived;
+        uint256 residualReceived;
+        uint256 reportedFee;
+        uint256 cappedFee;
+        bool ok;
     }
 
     /**
@@ -91,7 +107,7 @@ library VaultBridgeLib {
     /**
      * @notice Prepares an emergency bridge send and unwinds strategies if idle funds are insufficient.
      * @dev Reverts when the token cannot be defensively probed or when the requested amount remains unavailable
-     *      after the bounded unwind loop completes.
+     *      after accounting for bounded tracked reimbursement and the unwind loop completes.
      * @param request Shared bridge request parameters.
      * @param strategies Active strategy list for the token being unwound.
      * @return steps Per-strategy unwind results for the vault to finalize and emit.
@@ -105,10 +121,10 @@ library VaultBridgeLib {
         (bool ok, uint256 idle) = _tryBalanceOf(request.token, address(this));
         if (!ok) revert IL1TreasuryVault.InvalidParam();
         if (idle < request.amount) {
-            (steps, ) = unwindStrategiesForEmergency(strategies, request.token, request.amount - idle);
+            uint256 remainingNeeded;
+            (steps, remainingNeeded) = unwindStrategiesForEmergency(strategies, request.token, request.amount - idle);
+            if (remainingNeeded != 0) revert IL1TreasuryVault.InvalidParam();
         }
-        (ok, idle) = _tryBalanceOf(request.token, address(this));
-        if (!ok || idle < request.amount) revert IL1TreasuryVault.InvalidParam();
     }
 
     /**
@@ -215,26 +231,97 @@ library VaultBridgeLib {
      * @param token Vault token being withdrawn.
      * @param strategy Strategy to call.
      * @param request Requested withdrawal amount.
-     * @return reported Amount self-reported by the strategy.
-     * @return got Amount actually measured back at the vault.
-     * @return ok True when the step completed without revert and did not decrease vault balance.
+     * @param trackedOutstanding Current tracked amount outstanding for `(token, strategy)`.
+     * @return result Structured unwind outcome for the step.
      */
     function tryEmergencyDeallocate(
         address token,
         address strategy,
-        uint256 request
-    ) public returns (uint256 reported, uint256 got, bool ok) {
+        uint256 request,
+        uint256 trackedOutstanding
+    ) public returns (EmergencyDeallocateResult memory result) {
+        if (VaultStrategyOpsLib.isYieldStrategyV2(strategy)) {
+            uint256 remainingRequest = request;
+
+            // Recover already-liquid residual vault token first so emergency unwinds do not depend on
+            // the tracked GSM leg just to sweep balances the strategy already holds directly.
+            (bool exactOk, uint256 directTokenBalance) = VaultStrategyOpsLib.readStrategyExactTokenBalance(
+                token,
+                strategy
+            );
+            if (exactOk && directTokenBalance != 0) {
+                uint256 directResidualRequest = directTokenBalance < remainingRequest
+                    ? directTokenBalance
+                    : remainingRequest;
+                try
+                    VaultStrategyOpsLib.withdrawResidualWithBalanceDelta(token, strategy, directResidualRequest)
+                returns (uint256 residualReported, uint256 measuredResidualReceived) {
+                    result.reported += residualReported;
+                    result.residualReceived += measuredResidualReceived;
+                    if (measuredResidualReceived >= remainingRequest) {
+                        result.ok = true;
+                        return result;
+                    }
+                    remainingRequest -= measuredResidualReceived;
+                } catch {}
+            }
+
+            result.trackedRequested = remainingRequest < trackedOutstanding ? remainingRequest : trackedOutstanding;
+            if (result.trackedRequested != 0) {
+                try
+                    VaultStrategyOpsLib.withdrawTrackedWithBalanceDelta(token, strategy, result.trackedRequested)
+                returns (uint256 trackedReported, uint256 measuredReportedFee, uint256 measuredTrackedReceived) {
+                    result.reported += trackedReported;
+                    result.trackedReceived = measuredTrackedReceived;
+                    result.reportedFee = measuredReportedFee;
+                    result.cappedFee = VaultStrategyOpsLib.cappedReimbursement(
+                        result.trackedRequested,
+                        measuredTrackedReceived,
+                        measuredReportedFee
+                    );
+                } catch {
+                    result.ok = result.residualReceived != 0;
+                    return result;
+                }
+            }
+
+            if (remainingRequest > result.trackedRequested) {
+                uint256 residualRequest = remainingRequest - result.trackedRequested;
+                try VaultStrategyOpsLib.withdrawResidualWithBalanceDelta(token, strategy, residualRequest) returns (
+                    uint256 residualReported,
+                    uint256 measuredResidualReceived
+                ) {
+                    result.reported += residualReported;
+                    result.residualReceived += measuredResidualReceived;
+                } catch {
+                    result.ok = true;
+                    return result;
+                }
+            }
+
+            result.ok = true;
+            return result;
+        }
+
         IERC20 asset = IERC20(token);
         uint256 beforeBal = asset.balanceOf(address(this));
         try IYieldStrategy(strategy).deallocate(token, request) returns (uint256 received_) {
-            reported = received_;
+            result.reported = received_;
         } catch {
-            return (0, 0, false);
+            result.trackedRequested = request;
+            result.ok = false;
+            return result;
         }
         uint256 afterBal = asset.balanceOf(address(this));
-        if (afterBal < beforeBal) return (reported, 0, false);
-        got = afterBal - beforeBal;
-        return (reported, got, true);
+        if (afterBal < beforeBal) {
+            result.trackedRequested = request;
+            result.ok = false;
+            return result;
+        }
+        result.trackedRequested = request;
+        result.trackedReceived = afterBal - beforeBal;
+        result.ok = true;
+        return result;
     }
 
     /**
@@ -264,20 +351,31 @@ library VaultBridgeLib {
                 continue;
             }
 
-            uint256 request = remainingNeeded < exposure ? remainingNeeded : exposure;
+            uint256 trackedOutstanding = IL1TreasuryVault(address(this)).strategyCostBasis(token, strategy);
+            uint256 request = _computeEmergencyRequest(token, strategy, exposure, trackedOutstanding, remainingNeeded);
             steps[i].request = request;
 
-            (uint256 reported, uint256 got, bool deallocateOk) = tryEmergencyDeallocate(token, strategy, request);
-            steps[i].reported = reported;
-            steps[i].got = got;
-            steps[i].skipped = !deallocateOk;
-            if (!deallocateOk) continue;
+            EmergencyDeallocateResult memory result = tryEmergencyDeallocate(
+                token,
+                strategy,
+                request,
+                trackedOutstanding
+            );
+            steps[i].reported = result.reported;
+            steps[i].trackedRequested = result.trackedRequested;
+            steps[i].trackedReceived = result.trackedReceived;
+            steps[i].residualReceived = result.residualReceived;
+            steps[i].reportedFee = result.reportedFee;
+            steps[i].cappedFee = result.cappedFee;
+            steps[i].skipped = !result.ok;
+            if (!result.ok) continue;
 
-            if (got >= remainingNeeded) {
+            uint256 covered = result.trackedReceived + result.residualReceived + result.cappedFee;
+            if (covered >= remainingNeeded) {
                 remainingNeeded = 0;
             } else {
                 unchecked {
-                    remainingNeeded -= got;
+                    remainingNeeded -= covered;
                 }
             }
         }
@@ -291,11 +389,21 @@ library VaultBridgeLib {
      * @return exposure Scalar exposure returned by the strategy when successful.
      */
     function _readStrategyExposure(address token, address strategy) private view returns (bool ok, uint256 exposure) {
-        try IYieldStrategy(strategy).strategyExposure(token) returns (uint256 value) {
-            return (true, value);
-        } catch {
-            return (false, 0);
+        return VaultStrategyOpsLib.readStrategyExposure(token, strategy);
+    }
+
+    function _computeEmergencyRequest(
+        address,
+        address strategy,
+        uint256 exposure,
+        uint256 trackedOutstanding,
+        uint256 remainingNeeded
+    ) private pure returns (uint256 request) {
+        if (trackedOutstanding != 0 && VaultStrategyOpsLib.isYieldStrategyV2(strategy)) {
+            return remainingNeeded;
         }
+
+        return remainingNeeded < exposure ? remainingNeeded : exposure;
     }
 
     /**

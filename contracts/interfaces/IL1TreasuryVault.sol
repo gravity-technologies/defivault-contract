@@ -46,7 +46,8 @@ interface IL1TreasuryVault {
     error YieldRecipientTimelockControllerNotSet();
     /// @dev Native bridge gateway is not configured.
     error NativeBridgeGatewayNotSet();
-
+    /// @dev Current or proposed yield recipient is not a reimbursement-compatible treasury contract.
+    error IncompatibleYieldRecipientTreasury(address treasury);
     // --------- Roles (RBAC) ---------
     /// @notice Role allowed to configure vault policy and privileged controls.
     function VAULT_ADMIN_ROLE() external view returns (bytes32);
@@ -236,12 +237,14 @@ interface IL1TreasuryVault {
     /// @param vaultToken Vault token used for the strategy position.
     /// @param strategy Strategy source.
     /// @param requested Requested withdrawal amount (or implementation max marker).
-    /// @param received Actual measured amount received by vault.
+    /// @param trackedReceived Actual measured amount received by vault from the tracked leg.
+    /// @param residualReceived Actual measured amount received by vault from the residual leg.
     event VaultTokenDeallocatedFromStrategy(
         address indexed vaultToken,
         address indexed strategy,
         uint256 requested,
-        uint256 received
+        uint256 trackedReceived,
+        uint256 residualReceived
     );
 
     /// @notice Emitted when the strategy-reported amount differs from the vault's measured balance change.
@@ -266,6 +269,16 @@ interface IL1TreasuryVault {
         address indexed yieldRecipient,
         uint256 requested,
         uint256 received
+    );
+
+    /// @notice Emitted when a tracked-exit withdrawal-fee reimbursement is settled separately from deallocation.
+    event StrategyWithdrawalFeeReimbursementSettled(
+        address indexed vaultToken,
+        address indexed strategy,
+        address indexed treasury,
+        uint256 reportedFee,
+        uint256 cappedFee,
+        uint256 reimbursed
     );
 
     /// @notice Emitted when yield-recipient timelock controller is configured.

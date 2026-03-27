@@ -212,10 +212,7 @@ async function main() {
     wallets[4]?.account?.address ??
       "0x0000000000000000000000000000000000000d11",
   );
-  const yieldRecipient = normalizeAddress(
-    wallets[5]?.account?.address ??
-      "0x0000000000000000000000000000000000000e11",
-  );
+  const treasuryOwner = deployAdmin;
 
   const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
     "Mock Base",
@@ -231,19 +228,24 @@ async function main() {
     "mUSDT",
     6,
   ]);
-  const aavePool = await viem.deployContract("MockAaveV3Pool", [
-    underlyingToken.address,
+  const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
+  const stkGho = await viem.deployContract("MockERC20", [
+    "Staked GHO",
+    "stkGHO",
+    18,
   ]);
-  const aToken = await viem.deployContract("MockAaveV3AToken", [
-    underlyingToken.address,
-    aavePool.address,
-    "Mock Aave USDT",
-    "aUSDT",
+  const gsm = await viem.deployContract("MockAaveGsm", [gho.address]);
+  const stakingAdapter = await viem.deployContract("MockStkGhoStaking", [
+    gho.address,
+    stkGho.address,
   ]);
-  await aavePool.write.setAToken([aToken.address]);
+  const yieldRecipientTreasury = await viem.deployContract(
+    "YieldRecipientTreasury",
+    [treasuryOwner],
+  );
 
   const l2ChainId = 270n;
-  const strategyName = "AAVE_V3_UNDERLYING";
+  const strategyName = "GSM_STKGHO_USDT";
   const strategyCap = 1_000_000n;
   const smokeRunId = `${Date.now()}`;
 
@@ -252,13 +254,15 @@ async function main() {
     allocator,
     rebalancer,
     pauser,
-    yieldRecipient,
+    yieldRecipientTreasury: yieldRecipientTreasury.address,
     bridgeHub: bridgeHub.address,
     grvtBridgeProxyFeeToken: grvtBridgeProxyFeeToken.address,
     wrappedNativeToken: wrappedNativeToken.address,
     underlyingToken: underlyingToken.address,
-    aavePool: aavePool.address,
-    aToken: aToken.address,
+    gho: gho.address,
+    stkGho: stkGho.address,
+    gsm: gsm.address,
+    stakingAdapter: stakingAdapter.address,
     l2ChainId: `${l2ChainId}n`,
     l2ExchangeRecipient,
     strategyName,
@@ -275,7 +279,7 @@ async function main() {
       l2ChainId: `${l2ChainId}n`,
       l2ExchangeRecipient,
       wrappedNativeToken: wrappedNativeToken.address,
-      yieldRecipient,
+      yieldRecipient: yieldRecipientTreasury.address,
     },
   );
 
@@ -332,18 +336,33 @@ async function main() {
     assertions,
     "vault.yieldRecipient",
     await vault.read.yieldRecipient(),
-    yieldRecipient,
+    yieldRecipientTreasury.address,
+  );
+  recordEq(
+    assertions,
+    "yieldRecipientTreasury.marker",
+    await yieldRecipientTreasury.read.isWithdrawalFeeTreasury(),
+    "0x3529510a",
+  );
+  await yieldRecipientTreasury.write.setAuthorizedVault([vaultProxy, true]);
+  recordEq(
+    assertions,
+    "yieldRecipientTreasury.authorizedVault",
+    await yieldRecipientTreasury.read.isAuthorizedVault([vaultProxy]),
+    true,
   );
 
   const strategyCoreParamsPath = writeModuleParams(
     "strategy-core.temp.json",
-    "StrategyCoreModule",
+    "GhoStrategyCoreModule",
     {
       vaultProxy,
       proxyAdminOwner: deployAdmin,
-      aavePool: aavePool.address,
-      underlyingToken: underlyingToken.address,
-      aToken: aToken.address,
+      vaultToken: underlyingToken.address,
+      gho: gho.address,
+      stkGho: stkGho.address,
+      gsm: gsm.address,
+      stakingAdapter: stakingAdapter.address,
       strategyName,
     },
   );
@@ -351,25 +370,25 @@ async function main() {
   const strategyCoreDeploymentId = `smoke-strategy-core-${smokeRunId}`;
   const strategyCoreDeployedAddresses = await runIgnitionDeploy(
     "ignition-strategy-core",
-    "./ignition/modules/StrategyCore.ts",
+    "./ignition/modules/GhoStrategyCore.ts",
     strategyCoreParamsPath,
     strategyCoreDeploymentId,
     "strategy-core-deployed-addresses.json",
   );
   const strategyImplementation = requiredDeployedAddress(
     strategyCoreDeployedAddresses,
-    "StrategyCoreModule#StrategyImplementation",
+    "GhoStrategyCoreModule#GhoStrategyImplementation",
   );
   const strategyProxy = requiredDeployedAddress(
     strategyCoreDeployedAddresses,
-    "StrategyCoreModule#StrategyProxy",
+    "GhoStrategyCoreModule#GhoStrategyProxy",
   );
   const strategyProxyAdmin = await readProxyAdminAddress(
     publicClient,
     strategyProxy,
   );
 
-  const strategy = await viem.getContractAt("AaveV3Strategy", strategyProxy);
+  const strategy = await viem.getContractAt("GsmStkGhoStrategy", strategyProxy);
   recordEq(
     assertions,
     "strategy.vault",
@@ -378,21 +397,23 @@ async function main() {
   );
   recordEq(
     assertions,
-    "strategy.aavePool",
-    await strategy.read.aavePool(),
-    aavePool.address,
-  );
-  recordEq(
-    assertions,
-    "strategy.underlying",
-    await strategy.read.underlying(),
+    "strategy.vaultToken",
+    await strategy.read.vaultToken(),
     underlyingToken.address,
   );
+  recordEq(assertions, "strategy.gho", await strategy.read.gho(), gho.address);
   recordEq(
     assertions,
-    "strategy.aToken",
-    await strategy.read.aToken(),
-    aToken.address,
+    "strategy.stkGho",
+    await strategy.read.stkGho(),
+    stkGho.address,
+  );
+  recordEq(assertions, "strategy.gsm", await strategy.read.gsm(), gsm.address);
+  recordEq(
+    assertions,
+    "strategy.stakingAdapter",
+    await strategy.read.stakingAdapter(),
+    stakingAdapter.address,
   );
 
   const vaultTokenStrategyParamsPath = writeModuleParams(

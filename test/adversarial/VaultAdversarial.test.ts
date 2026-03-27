@@ -238,7 +238,8 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault,
       "VaultTokenDeallocatedFromStrategy",
     );
-    assert.equal(deallocateEvent.received, 120_000n);
+    assert.equal(deallocateEvent.trackedReceived, 120_000n);
+    assert.equal(deallocateEvent.residualReceived, 0n);
 
     const mismatchEvent = expectEventOnce(
       receipt,
@@ -271,7 +272,8 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       "VaultTokenDeallocatedFromStrategy",
     );
     assert.equal(allDeallocateEvent.requested, 2n ** 256n - 1n);
-    assert.equal(allDeallocateEvent.received, 180_000n);
+    assert.equal(allDeallocateEvent.trackedReceived, 180_000n);
+    assert.equal(allDeallocateEvent.residualReceived, 0n);
   });
 
   it("handles fee-on-transfer token with conservative accounting", async function () {

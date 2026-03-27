@@ -69,6 +69,13 @@ async function main() {
     throw new Error("deployer wallet account is undefined");
   }
 
+  const yieldRecipientCode = await publicClient.getCode({
+    address: params.yieldRecipient,
+  });
+  if (yieldRecipientCode === undefined || yieldRecipientCode === "0x") {
+    throw new Error("yieldRecipient must be a contract address");
+  }
+
   const vaultStrategyOpsLib = await viem.deployContract("VaultStrategyOpsLib");
   const vaultBridgeLib = await viem.deployContract("VaultBridgeLib");
   const libraries = {
