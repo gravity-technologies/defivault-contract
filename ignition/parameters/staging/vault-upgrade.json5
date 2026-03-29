@@ -1,9 +1,9 @@
 {
-  VaultUpgradeModule: {
-    // ProxyAdmin controlling the staging vault proxy.
-    proxyAdmin: "0x0000000000000000000000000000000000000000",
+  VaultUpgradeTask: {
     // Existing staging vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Staging uses the task signer directly instead of a multisig.
+    requiresMultisig: false,
     // Optional post-upgrade initializer call data.
     upgradeCallData: "0x",
   },

@@ -17,17 +17,12 @@
     "deploy:strategy": "hardhat ignition deploy ./ignition/modules/StrategyCore.ts",
     "deploy:vault-token-strategy": "hardhat ignition deploy ./ignition/modules/VaultTokenStrategy.ts",
     "deploy:native-gateways": "hardhat ignition deploy ./ignition/modules/NativeGateways.ts",
-    "claim:failed-native-deposit": "hardhat ignition deploy ./ignition/modules/NativeBridgeGatewayClaimFailedDeposit.ts",
     "upgrade:native-bridge-gateway": "hardhat ignition deploy ./ignition/modules/NativeBridgeGatewayUpgrade.ts",
     "config:vault-token": "hardhat ignition deploy ./ignition/modules/VaultTokenConfig.ts",
-    "upgrade:vault": "hardhat ignition deploy ./ignition/modules/VaultUpgrade.ts",
     "upgrade:strategy": "hardhat ignition deploy ./ignition/modules/StrategyUpgrade.ts",
     "roles:bootstrap": "hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts",
     "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost",
     "deploy:yield-recipient-timelock": "hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts",
-    "yield-recipient:schedule-update": "hardhat ignition deploy ./ignition/modules/YieldRecipientScheduleUpdate.ts",
-    "yield-recipient:execute-update": "hardhat ignition deploy ./ignition/modules/YieldRecipientExecuteUpdate.ts",
-    "ops:harvest-yield": "hardhat ignition deploy ./ignition/modules/VaultHarvestYield.ts",
     "wallets:generate": "node ./scripts/generate-wallets.mjs"
   },
   "keywords": [],
@@ -50,6 +45,7 @@
   "dependencies": {
     "@openzeppelin/contracts": "^5.4.0",
     "@openzeppelin/contracts-upgradeable": "^5.4.0",
-    "dotenv": "^17.3.1"
+    "dotenv": "^17.3.1",
+    "json5": "^2.2.3"
   }
 }

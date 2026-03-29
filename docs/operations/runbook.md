@@ -9,7 +9,8 @@
 
 ## Deployment State and Audit Trail
 
-Core proxy deployment, post-deploy configuration, and upgrades are managed with Hardhat Ignition.
+Core proxy deployment and most post-deploy configuration are managed with Hardhat Ignition.
+Vault upgrades use a single Hardhat task. Production prepares multisig calldata after deploying a new implementation with a hot wallet; staging/testnet execute directly with the task signer.
 
 Source of truth for deployment records:
 
@@ -47,26 +48,32 @@ Common env vars:
 - `TESTNET_RPC_URL`
 - `TESTNET_PRIVATE_KEY`
 
+Shared parameter rule for vault core and native gateways:
+
+- Use `ignition/parameters/<env>/core.json5` as the canonical file for both modules.
+- Put repeated infra addresses in `$global`.
+- Keep module-only values under `VaultCoreModule` and `NativeGatewaysModule`.
+
 ## Deployment Workflow
 
 ### 1. Deploy Vault Core
 
-Prepare `ignition/parameters/<env>/vault-core.json5` with:
+Prepare `ignition/parameters/<env>/core.json5` with:
 
-- `deployAdmin`
-- `bridgeHub`
-- `grvtBridgeProxyFeeToken`
-- `l2ChainId`
-- `l2ExchangeRecipient`
-- `wrappedNativeToken`
-- `yieldRecipient`
+- `$global.bridgeHub`
+- `$global.grvtBridgeProxyFeeToken`
+- `$global.wrappedNativeToken`
+- `VaultCoreModule.deployAdmin`
+- `VaultCoreModule.l2ChainId`
+- `VaultCoreModule.l2ExchangeRecipient`
+- `VaultCoreModule.yieldRecipient`
 
 Command:
 
 ```bash
 npm run deploy:vault -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/vault-core.json5
+  --parameters ignition/parameters/<env>/core.json5
 ```
 
 Record:
@@ -177,20 +184,20 @@ Operator rules:
 
 ### 7. Deploy Native Gateways
 
-Prepare `ignition/parameters/<env>/native-gateways.json5` with:
+Use the same `ignition/parameters/<env>/core.json5` file and fill:
 
-- `vaultProxy`
-- `proxyAdminOwner`
-- `wrappedNativeToken`
-- `grvtBridgeProxyFeeToken`
-- `bridgeHub`
+- `$global.bridgeHub`
+- `$global.grvtBridgeProxyFeeToken`
+- `$global.wrappedNativeToken`
+- `NativeGatewaysModule.vaultProxy`
+- `NativeGatewaysModule.proxyAdminOwner`
 
 Command:
 
 ```bash
 npm run deploy:native-gateways -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/native-gateways.json5
+  --parameters ignition/parameters/<env>/core.json5
 ```
 
 Record:
@@ -204,10 +211,15 @@ Record:
 Vault upgrade:
 
 ```bash
-npm run upgrade:vault -- \
+npx hardhat upgrade:vault -- \
   --network <network> \
   --parameters ignition/parameters/<env>/vault-upgrade.json5
 ```
+
+The task deploys the new vault implementation with the active wallet, derives the proxy admin from the vault proxy, and either:
+
+- prints the calldata for `upgradeAndCall` when `requiresMultisig: true`
+- executes the upgrade directly when `requiresMultisig: false`
 
 Strategy upgrade:
 
@@ -247,7 +259,7 @@ Operator rules:
 Schedule update:
 
 ```bash
-npm run yield-recipient:schedule-update -- \
+npx hardhat yield-recipient:schedule-update \
   --network <network> \
   --parameters ignition/parameters/<env>/yield-recipient-schedule-update.json5
 ```
@@ -255,7 +267,7 @@ npm run yield-recipient:schedule-update -- \
 Execute update:
 
 ```bash
-npm run yield-recipient:execute-update -- \
+npx hardhat yield-recipient:execute-update \
   --network <network> \
   --parameters ignition/parameters/<env>/yield-recipient-execute-update.json5
 ```
@@ -271,7 +283,7 @@ Operator rules:
 Command:
 
 ```bash
-npm run ops:harvest-yield -- \
+npx hardhat ops:harvest-yield \
   --network <network> \
   --parameters ignition/parameters/<env>/harvest-yield.json5
 ```
@@ -345,7 +357,7 @@ Prepare `ignition/parameters/<env>/native-bridge-gateway-claim-failed-deposit.js
 Command:
 
 ```bash
-npm run claim:failed-native-deposit -- \
+npx hardhat claim:failed-native-deposit \
   --network <network> \
   --parameters ignition/parameters/<env>/native-bridge-gateway-claim-failed-deposit.json5
 ```

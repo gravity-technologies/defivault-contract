@@ -3,7 +3,7 @@
     // Existing production vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Canonical vault token to enable or disable.
-    vaultToken: "0x0000000000000000000000000000000000000000",
+    vaultToken: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     supported: true,
   },
 }

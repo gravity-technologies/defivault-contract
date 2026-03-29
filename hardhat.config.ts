@@ -2,6 +2,8 @@ import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
 import HardhatContractSizer from "@solidstate/hardhat-contract-sizer";
 import { configVariable, defineConfig } from "hardhat/config";
 
+import { oneOffOpsTasks } from "./tasks/one-off-ops.js";
+
 const SOLIDITY_OPTIMIZER_SETTINGS = {
   enabled: true,
   runs: 200,
@@ -9,6 +11,7 @@ const SOLIDITY_OPTIMIZER_SETTINGS = {
 
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin, HardhatContractSizer],
+  tasks: oneOffOpsTasks,
   contractSizer: {
     strict: true,
     only: [/GRVTL1TreasuryVault/],
