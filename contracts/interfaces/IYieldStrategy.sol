@@ -13,6 +13,8 @@ import {PositionComponent} from "./IVaultReportingTypes.sol";
  * - `positionBreakdown(vaultToken)` returns the full list of tokens and amounts for that vault token.
  * - Unsupported queries must return `0` or an empty array instead of reverting just because the token is unsupported.
  * - `strategyExposure(vaultToken)` returns the single number the vault uses for caps and harvests.
+ * - When the vault needs to drain a strategy completely, `deallocateAll(vaultToken)` is the
+ *   authoritative full-exit path. It must sweep any residual vault-token dust the strategy still holds.
  * - `tvlTokens(vaultToken)` returns the ERC20 tokens this strategy can report for TVL under that vault token.
  *
  * Example implementations:
@@ -69,6 +71,8 @@ interface IYieldStrategy {
     function deallocate(address vaultToken, uint256 amount) external returns (uint256 received);
 
     /// @notice Withdraws the maximum available vault token amount from the strategy back to the vault.
+    /// @dev Use this when the vault wants a full exit. Implementations should also sweep any
+    ///      residual vault-token dust they still hold so the strategy reaches zero exposure.
     /// @param vaultToken Vault token to withdraw.
     /// @return received Actual amount received by vault.
     function deallocateAll(address vaultToken) external returns (uint256 received);

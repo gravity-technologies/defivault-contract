@@ -99,6 +99,43 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     };
   }
 
+  async function deployAaveStrategy(
+    vaultAddress: `0x${string}`,
+    underlyingAddress: `0x${string}`,
+  ) {
+    const pool = await viem.deployContract("MockAaveV3Pool", [
+      underlyingAddress,
+    ]);
+    const aToken = await viem.deployContract("MockAaveV3AToken", [
+      underlyingAddress,
+      pool.address,
+      "Aave Mock Token",
+      "aMOCK",
+    ]);
+    await pool.write.setAToken([aToken.address]);
+
+    const implementation = await viem.deployContract("AaveV3Strategy");
+    const initializeData = encodeFunctionData({
+      abi: implementation.abi,
+      functionName: "initialize",
+      args: [
+        vaultAddress,
+        pool.address,
+        underlyingAddress,
+        aToken.address,
+        "AAVE_V3_MOCK",
+      ],
+    });
+    const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
+      implementation.address,
+      admin.account.address,
+      initializeData,
+    ]);
+    const strategy = await viem.getContractAt("AaveV3Strategy", proxy.address);
+
+    return { strategy, aToken };
+  }
+
   it("allows multiple rebalanceErc20ToL2 calls without time/size rate limiting", async function () {
     const { vault, token, grvtBridgeProxyFeeToken, bridgeHub } =
       await deploySystem();
@@ -152,6 +189,141 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       1n,
     );
     assert.equal(await vault.read.paused(), true);
+  });
+
+  it("fully exits Aave exposure during emergency unwind when residual underlying is included in exposure", async function () {
+    const { vault, token, bridgeHub } = await deploySystem();
+    const { strategy, aToken } = await deployAaveStrategy(
+      vault.address,
+      token.address,
+    );
+
+    const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    await vault.write.grantRole([allocatorRole, admin.account.address]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await token.write.mint([vault.address, 100n]);
+    await vault.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100n,
+    ]);
+    await token.write.mint([strategy.address, 1n]);
+
+    assert.equal(await strategy.read.strategyExposure([token.address]), 101n);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      unsupportedTokenConfig,
+    ]);
+    await vault.write.pause();
+    await vault.write.emergencyErc20ToL2([token.address, 101n]);
+
+    assert.equal(await bridgeHub.read.requestCount(), 1n);
+    assert.equal(await token.read.balanceOf([bridgeHub.address]), 101n);
+    assert.equal(await token.read.balanceOf([vault.address]), 0n);
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await token.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await strategy.read.strategyExposure([token.address]), 0n);
+  });
+
+  it("uses bounded Aave deallocation for partial emergency unwinds", async function () {
+    const { vault, token, bridgeHub } = await deploySystem();
+    const { strategy, aToken } = await deployAaveStrategy(
+      vault.address,
+      token.address,
+    );
+
+    const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    await vault.write.grantRole([allocatorRole, admin.account.address]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await token.write.mint([vault.address, 100n]);
+    await vault.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100n,
+    ]);
+    await token.write.mint([strategy.address, 1n]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      unsupportedTokenConfig,
+    ]);
+    await vault.write.pause();
+    await vault.write.emergencyErc20ToL2([token.address, 50n]);
+
+    assert.equal(await bridgeHub.read.requestCount(), 1n);
+    assert.equal(await bridgeHub.read.lastAmount(), 50n);
+    assert.equal(await token.read.balanceOf([bridgeHub.address]), 50n);
+    assert.equal(await token.read.balanceOf([vault.address]), 1n);
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 50n);
+    assert.equal(await token.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await strategy.read.strategyExposure([token.address]), 50n);
+  });
+
+  it("uses Aave full-exit deallocation when the emergency unwind drains the whole strategy", async function () {
+    const { vault, token, bridgeHub } = await deploySystem();
+    const { strategy, aToken } = await deployAaveStrategy(
+      vault.address,
+      token.address,
+    );
+
+    const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    await vault.write.grantRole([allocatorRole, admin.account.address]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await token.write.mint([vault.address, 100n]);
+    await vault.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100n,
+    ]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      unsupportedTokenConfig,
+    ]);
+    await vault.write.pause();
+    await vault.write.emergencyErc20ToL2([token.address, 100n]);
+
+    assert.equal(await bridgeHub.read.requestCount(), 1n);
+    assert.equal(await bridgeHub.read.lastAmount(), 100n);
+    assert.equal(await token.read.balanceOf([bridgeHub.address]), 100n);
+    assert.equal(await token.read.balanceOf([vault.address]), 0n);
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await token.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await strategy.read.strategyExposure([token.address]), 0n);
   });
 
   it("reverts rebalanceErc20ToL2 while paused", async function () {

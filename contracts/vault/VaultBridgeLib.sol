@@ -215,6 +215,7 @@ library VaultBridgeLib {
      * @param token Vault token being withdrawn.
      * @param strategy Strategy to call.
      * @param request Requested withdrawal amount.
+     * @param useAll True to call `deallocateAll`, false to call bounded `deallocate`.
      * @return reported Amount self-reported by the strategy.
      * @return got Amount actually measured back at the vault.
      * @return ok True when the step completed without revert and did not decrease vault balance.
@@ -222,14 +223,23 @@ library VaultBridgeLib {
     function tryEmergencyDeallocate(
         address token,
         address strategy,
-        uint256 request
-    ) public returns (uint256 reported, uint256 got, bool ok) {
+        uint256 request,
+        bool useAll
+    ) internal returns (uint256 reported, uint256 got, bool ok) {
         IERC20 asset = IERC20(token);
         uint256 beforeBal = asset.balanceOf(address(this));
-        try IYieldStrategy(strategy).deallocate(token, request) returns (uint256 received_) {
-            reported = received_;
-        } catch {
-            return (0, 0, false);
+        if (useAll) {
+            try IYieldStrategy(strategy).deallocateAll(token) returns (uint256 received_) {
+                reported = received_;
+            } catch {
+                return (0, 0, false);
+            }
+        } else {
+            try IYieldStrategy(strategy).deallocate(token, request) returns (uint256 received_) {
+                reported = received_;
+            } catch {
+                return (0, 0, false);
+            }
         }
         uint256 afterBal = asset.balanceOf(address(this));
         if (afterBal < beforeBal) return (reported, 0, false);
@@ -240,11 +250,13 @@ library VaultBridgeLib {
     /**
      * @notice Iterates strategies to source emergency liquidity until the request is covered or exhausted.
      * @dev Failures are captured in `steps[i].skipped` instead of reverting so the vault wrapper can continue.
+     *      When the vault needs a strategy's full reported exposure, the library uses the
+     *      strategy's explicit full-exit path so adapters can unwind residual balances safely.
      * @param strategies Active strategies for the vault token.
      * @param token Vault token being unwound.
      * @param needed Remaining amount needed from strategies.
      * @return steps Per-strategy unwind results.
-     * @return remainingNeeded Amount still uncovered after the bounded loop.
+     * @return remainingNeeded Amount still uncovered after the unwind loop.
      */
     function unwindStrategiesForEmergency(
         address[] memory strategies,
@@ -266,8 +278,14 @@ library VaultBridgeLib {
 
             uint256 request = remainingNeeded < exposure ? remainingNeeded : exposure;
             steps[i].request = request;
+            bool useAll = request == exposure;
 
-            (uint256 reported, uint256 got, bool deallocateOk) = tryEmergencyDeallocate(token, strategy, request);
+            (uint256 reported, uint256 got, bool deallocateOk) = tryEmergencyDeallocate(
+                token,
+                strategy,
+                request,
+                useAll
+            );
             steps[i].reported = reported;
             steps[i].got = got;
             steps[i].skipped = !deallocateOk;
