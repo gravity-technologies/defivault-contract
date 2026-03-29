@@ -344,10 +344,7 @@ Note:
 
 Prepare `ignition/parameters/<env>/native-bridge-gateway-claim-failed-deposit.json5` with:
 
-- `sharedBridge`
 - `nativeBridgeGatewayProxy`
-- `chainId`
-- `amount`
 - `bridgeTxHash`
 - `l2BatchNumber`
 - `l2MessageIndex`
@@ -365,6 +362,8 @@ npx hardhat claim:failed-native-deposit \
 Operator rules:
 
 - use the `bridgeTxHash` emitted during the original native bridge send
+- the gateway now derives `chainId`, native token sentinel, and amount from its stored bridge record and performs claim
+  plus recovery atomically
 - recovery should leave `NativeBridgeGateway` with no stranded native or wrapped-native balance
 
 ## Emergency Send Checklist

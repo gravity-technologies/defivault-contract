@@ -23,7 +23,7 @@ export const oneOffOpsTasks: TaskDefinition[] = [
     .build(),
   task(
     "claim:failed-native-deposit",
-    "Claim a failed native bridge deposit and recover it through NativeBridgeGateway",
+    "Atomically claim and recover a failed native bridge deposit through NativeBridgeGateway",
   )
     .addOption({
       name: "parameters",
