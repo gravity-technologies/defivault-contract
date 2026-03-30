@@ -112,6 +112,55 @@ export const oneOffOpsTasks: TaskDefinition[] = [
     })
     .setAction(() => import("./actions/ops-deallocate-all-from-strategy.js"))
     .build(),
+  task(
+    "ops:strategy-allocation-smoke",
+    "Run the strategy allocation smoke flow against an existing deployment",
+  )
+    .addOption({
+      name: "env",
+      description: "Target environment: staging or testnet",
+      type: ArgumentType.STRING,
+      defaultValue: "staging",
+    })
+    .addOption({
+      name: "strategyKey",
+      description: "Strategy key to select from the resolved deployment state",
+      type: ArgumentType.STRING,
+      defaultValue: "primary",
+    })
+    .addOption({
+      name: "record",
+      description:
+        "Optional operation record directory or record.json to use instead of latest env/network lookup",
+      type: ArgumentType.STRING_WITHOUT_DEFAULT,
+      defaultValue: undefined,
+    })
+    .addOption({
+      name: "amount",
+      description: "Allocation amount, expressed in token units",
+      type: ArgumentType.STRING,
+      defaultValue: "10",
+    })
+    .addOption({
+      name: "partialAmount",
+      description: "Partial deallocation amount, expressed in token units",
+      type: ArgumentType.STRING_WITHOUT_DEFAULT,
+      defaultValue: undefined,
+    })
+    .addOption({
+      name: "dryRun",
+      description: "Validate and print state without sending transactions",
+      type: ArgumentType.FLAG,
+      defaultValue: false,
+    })
+    .addOption({
+      name: "fullUnwind",
+      description: "Run the final deallocate-all step after the partial unwind",
+      type: ArgumentType.BOOLEAN,
+      defaultValue: true,
+    })
+    .setAction(() => import("./actions/ops-strategy-allocation-smoke.js"))
+    .build(),
   task("ops:harvest-yield", "Harvest yield from an existing strategy")
     .addOption({
       name: "parameters",
