@@ -123,7 +123,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
             vault_.code.length == 0
         ) revert InvalidParam();
 
-        address nativeTokenVault_ = _resolveNativeTokenVault(bridgeHub_);
+        address nativeTokenVault_ = _resolveNativeTokenVaultFromBridgeHub(bridgeHub_);
         if (nativeTokenVault_ == address(0)) revert InvalidParam();
 
         wrappedNativeToken = wrappedNativeToken_;
@@ -158,7 +158,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
         address sharedBridge = hub.sharedBridge();
         if (sharedBridge == address(0)) revert InvalidParam();
 
-        if (_resolveNativeTokenVaultFromSharedBridge(sharedBridge) == address(0)) revert InvalidParam();
+        if (_resolveNativeTokenVaultFromBridgeHub(bridgeHub) == address(0)) revert InvalidParam();
 
         IWrappedNative(wrappedNativeToken).withdraw(amount);
         IERC20(grvtBridgeProxyFeeToken).forceApprove(sharedBridge, baseCost);
@@ -285,7 +285,7 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
      */
     receive() external payable {
         if (msg.sender == wrappedNativeToken) return;
-        if (msg.sender == _resolveNativeTokenVault(bridgeHub)) return;
+        if (msg.sender == _resolveNativeTokenVaultFromBridgeHub(bridgeHub)) return;
         revert UnexpectedNativeSender(msg.sender);
     }
 
@@ -304,21 +304,12 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
      * @param bridgeHub_ BridgeHub whose shared bridge should be inspected.
      * @return resolvedNativeTokenVault Native token vault for the current zkSync bridge stack.
      */
-    function _resolveNativeTokenVault(address bridgeHub_) internal view returns (address resolvedNativeTokenVault) {
+    function _resolveNativeTokenVaultFromBridgeHub(
+        address bridgeHub_
+    ) internal view returns (address resolvedNativeTokenVault) {
         address sharedBridge = IL1ZkSyncBridgeHub(bridgeHub_).sharedBridge();
         if (sharedBridge == address(0)) return address(0);
 
-        return _resolveNativeTokenVaultFromSharedBridge(sharedBridge);
-    }
-
-    /**
-     * @notice Resolves the zkSync native token vault exposed by a specific shared bridge.
-     * @param sharedBridge Shared bridge / asset router exposing `nativeTokenVault()`.
-     * @return resolvedNativeTokenVault Native token vault for the provided shared bridge.
-     */
-    function _resolveNativeTokenVaultFromSharedBridge(
-        address sharedBridge
-    ) internal view returns (address resolvedNativeTokenVault) {
         try IL1AssetRouter(sharedBridge).nativeTokenVault() returns (address nativeTokenVault_) {
             if (nativeTokenVault_ != address(0) && nativeTokenVault_.code.length != 0) {
                 return nativeTokenVault_;
