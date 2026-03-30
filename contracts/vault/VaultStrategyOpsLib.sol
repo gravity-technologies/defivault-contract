@@ -55,9 +55,10 @@ library VaultStrategyOpsLib {
     ) public returns (uint256 reported, uint256 received) {
         IERC20 asset = IERC20(token);
         uint256 beforeBal = asset.balanceOf(address(this));
-        reported = useAll
-            ? IYieldStrategy(strategy).deallocateAll(token)
-            : IYieldStrategy(strategy).deallocate(token, requested);
+        reported =
+            useAll
+                ? IYieldStrategy(strategy).deallocateAll(token)
+                : IYieldStrategy(strategy).deallocate(token, requested);
         uint256 afterBal = asset.balanceOf(address(this));
         if (afterBal < beforeBal) revert IL1TreasuryVault.InvalidParam();
         received = afterBal - beforeBal;

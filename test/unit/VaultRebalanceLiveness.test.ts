@@ -15,7 +15,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
   async function deploySystem({
     setNativeBridgeGateway = true,
-  }: { setNativeBridgeGateway?: boolean } = {}) {
+  }: {
+    setNativeBridgeGateway?: boolean;
+  } = {}) {
     const grvtBridgeProxyFeeToken = await viem.deployContract("MockERC20", [
       "Base Token",
       "BASE",

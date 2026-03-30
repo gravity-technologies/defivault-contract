@@ -46,28 +46,28 @@ The stable mental model is:
 ## Local Development
 
 ```bash
-npm install
-npm run compile
-npm run test
+pnpm install
+pnpm compile
+pnpm test
 ```
 
 Full local validation:
 
 ```bash
-npm run check:all
-npm run slither
+pnpm check:all
+pnpm slither
 ```
 
 Deployment smoke test:
 
 ```bash
-npm run smoke:deployment
+pnpm smoke:deployment
 ```
 
 Interactive initial stack deployment:
 
 ```bash
-npm run deploy:initial-stack
+pnpm deploy:initial-stack
 ```
 
 The interactive initial-stack deploy is environment-aware:

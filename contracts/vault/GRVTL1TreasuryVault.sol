@@ -1228,9 +1228,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             VaultBridgeLib.ensureStandardBridgeOut(request, _vaultTokenConfigs[token].supported);
         }
 
-        bytes32 txHash = isNativeIntent
-            ? _bridgeNativeToL2ThroughGateway(amount)
-            : VaultBridgeLib.bridgeToL2TwoBridges(request);
+        bytes32 txHash =
+            isNativeIntent ? _bridgeNativeToL2ThroughGateway(amount) : VaultBridgeLib.bridgeToL2TwoBridges(request);
         VaultBridgeLib.emitBridgeEvent(
             token,
             amount,

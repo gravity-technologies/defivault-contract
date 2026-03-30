@@ -31,7 +31,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'hardhat.config.ts'
               - 'package.json'
-              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
+              - 'biome.json'
 
   checks:
     runs-on: ubuntu-latest
@@ -45,27 +46,33 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      - name: Check formatting (Prettier)
+      - name: Check formatting (Biome + Prettier)
         run: |
-          npm run format
+          pnpm format
           git diff --exit-code
 
       - name: Compile contracts (typed artifacts for viem)
-        run: npm run compile
+        run: pnpm compile
 
       - name: Enforce L1 runtime size limit (vault)
-        run: npm run size:check:vault
+        run: pnpm size:check:vault
 
       - name: Check TypeScript types
-        run: npm run typecheck
+        run: pnpm typecheck
 
       - name: Run tests
-        run: npm run test
+        run: pnpm test
 
   deployment-smoke:
     needs: changes
@@ -81,18 +88,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Compile contracts
-        run: npm run compile
+        run: pnpm compile
 
       - name: Start persistent localhost node
         run: |
           mkdir -p smoke-artifacts
-          npx hardhat node --hostname 127.0.0.1 --port 8545 > smoke-artifacts/hardhat-node.log 2>&1 &
+          pnpm exec hardhat node --hostname 127.0.0.1 --port 8545 > smoke-artifacts/hardhat-node.log 2>&1 &
           echo $! > smoke-artifacts/hardhat-node.pid
 
           for i in {1..60}; do
@@ -112,7 +125,7 @@ jobs:
           done
 
       - name: Run Ignition deployment smoke orchestrator
-        run: npm run smoke:deployment -- --no-compile
+        run: pnpm smoke:deployment -- --no-compile
 
       - name: Stop localhost node
         if: always()
