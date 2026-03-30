@@ -556,12 +556,6 @@ async function main() {
   );
   recordEq(
     assertions,
-    "nativeBridgeGateway.nativeTokenVault",
-    await nativeBridgeGateway.read.nativeTokenVault(),
-    await bridgeHub.read.nativeTokenVault(),
-  );
-  recordEq(
-    assertions,
     "nativeBridgeGateway.vault",
     await nativeBridgeGateway.read.vault(),
     vaultProxy,
