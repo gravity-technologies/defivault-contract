@@ -30,8 +30,9 @@ import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
  *
  *      Native bridge payloads use Matter Labs' current asset-router sentinel for ETH (`address(1)`),
  *      centralized via `ZkSyncAssetRouterEncoding` so production code and mocks/tests stay aligned.
- *      Failed native-deposit refunds on the current zkSync stack are paid out by the configured native token vault,
- *      so this gateway explicitly trusts that contract as its recovery sender.
+ *      Failed native-deposit refunds on the current zkSync stack are paid out by the shared bridge's
+ *      currently configured native token vault, so this gateway resolves that sender dynamically at
+ *      refund time instead of trusting stored sender configuration.
  *
  *      ### Upgrade safety
  *      Constructor logic is disabled on the implementation and all mutable configuration is assigned through
@@ -65,9 +66,6 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
 
     /// @notice zkSync BridgeHub used for native bridge submissions.
     address public bridgeHub;
-
-    /// @notice zkSync native token vault trusted to send failed native-deposit refunds.
-    address public nativeTokenVault;
 
     /// @notice Per-bridge record keyed by canonical L2 transaction hash.
     mapping(bytes32 bridgeTxHash => NativeBridgeRecord record) public nativeBridgeRecords;
@@ -125,13 +123,12 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
             vault_.code.length == 0
         ) revert InvalidParam();
 
-        address nativeTokenVault_ = _resolveNativeTokenVault(bridgeHub_);
+        address nativeTokenVault_ = _resolveNativeTokenVaultFromBridgeHub(bridgeHub_);
         if (nativeTokenVault_ == address(0)) revert InvalidParam();
 
         wrappedNativeToken = wrappedNativeToken_;
         grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
         bridgeHub = bridgeHub_;
-        nativeTokenVault = nativeTokenVault_;
         vault = vault_;
     }
 
@@ -160,6 +157,8 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
         IL1ZkSyncBridgeHub hub = IL1ZkSyncBridgeHub(bridgeHub);
         address sharedBridge = hub.sharedBridge();
         if (sharedBridge == address(0)) revert InvalidParam();
+
+        if (_resolveNativeTokenVaultFromBridgeHub(bridgeHub) == address(0)) revert InvalidParam();
 
         IWrappedNative(wrappedNativeToken).withdraw(amount);
         IERC20(grvtBridgeProxyFeeToken).forceApprove(sharedBridge, baseCost);
@@ -282,11 +281,11 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     }
 
     /**
-     * @notice Accepts ETH only from wrapped-native unwraps or the configured zkSync native token vault.
+     * @notice Accepts ETH only from wrapped-native unwraps or the live zkSync native token vault.
      */
     receive() external payable {
         if (msg.sender == wrappedNativeToken) return;
-        if (msg.sender == nativeTokenVault) return;
+        if (msg.sender == _resolveNativeTokenVaultFromBridgeHub(bridgeHub)) return;
         revert UnexpectedNativeSender(msg.sender);
     }
 
@@ -305,7 +304,9 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
      * @param bridgeHub_ BridgeHub whose shared bridge should be inspected.
      * @return resolvedNativeTokenVault Native token vault for the current zkSync bridge stack.
      */
-    function _resolveNativeTokenVault(address bridgeHub_) internal view returns (address resolvedNativeTokenVault) {
+    function _resolveNativeTokenVaultFromBridgeHub(
+        address bridgeHub_
+    ) internal view returns (address resolvedNativeTokenVault) {
         address sharedBridge = IL1ZkSyncBridgeHub(bridgeHub_).sharedBridge();
         if (sharedBridge == address(0)) return address(0);
 

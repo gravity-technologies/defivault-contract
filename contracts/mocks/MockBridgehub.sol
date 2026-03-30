@@ -49,7 +49,7 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
     mapping(bytes32 txHash => PendingDeposit deposit) public pendingDeposits;
 
     address private immutable _sharedBridge;
-    address private immutable _nativeTokenVault;
+    address private _nativeTokenVault;
 
     constructor(address grvtBridgeProxyFeeToken_) {
         grvtBridgeProxyFeeToken = grvtBridgeProxyFeeToken_;
@@ -67,6 +67,11 @@ contract MockBridgehub is IL1ZkSyncBridgeHub {
 
     function nativeTokenVault() external view returns (address) {
         return _nativeTokenVault;
+    }
+
+    function rotateNativeTokenVault() external returns (address newNativeTokenVault) {
+        newNativeTokenVault = address(new MockNativeTokenVault(address(this)));
+        _nativeTokenVault = newNativeTokenVault;
     }
 
     function l2TransactionBaseCost(uint256, uint256, uint256, uint256) external pure override returns (uint256) {

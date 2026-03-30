@@ -917,6 +917,47 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
+  it("accepts failed native deposit refunds after the native token vault rotates", async function () {
+    const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
+      await deploySystem();
+
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
+    await vault.write.setVaultTokenConfig([
+      wrappedNative.address,
+      supportedTokenConfig,
+    ]);
+    await wrappedNative.write.deposit({ value: 12n });
+    await wrappedNative.write.transfer([vault.address, 12n]);
+
+    await vault.write.rebalanceNativeToL2([12n]);
+
+    const bridgeTxHash = await bridgeHub.read.lastTxHash();
+    const initialNativeTokenVault = await bridgeHub.read.nativeTokenVault();
+
+    await bridgeHub.write.rotateNativeTokenVault();
+
+    const rotatedNativeTokenVault = await bridgeHub.read.nativeTokenVault();
+    assert.notEqual(
+      rotatedNativeTokenVault.toLowerCase(),
+      initialNativeTokenVault.toLowerCase(),
+    );
+
+    await nativeBridgeGateway.write.claimAndRecoverFailedNativeDeposit([
+      bridgeTxHash,
+      0n,
+      0n,
+      0,
+      [],
+    ]);
+
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 12n);
+    assert.equal(
+      await publicClient.getBalance({ address: nativeBridgeGateway.address }),
+      0n,
+    );
+  });
+
   it("rejects re-initializing the native bridge gateway proxy", async function () {
     const {
       vault,
