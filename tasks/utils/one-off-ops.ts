@@ -27,10 +27,8 @@ export const timelockAbi = parseAbi([
   "function schedule(address target,uint256 value,bytes data,bytes32 predecessor,bytes32 salt,uint256 delay)",
   "function execute(address target,uint256 value,bytes data,bytes32 predecessor,bytes32 salt)",
 ]);
-export const sharedBridgeAbi = parseAbi([
-  "function claimFailedDeposit(uint256 chainId,address depositSender,address l1Token,uint256 amount,bytes32 l2TxHash,uint256 l2BatchNumber,uint256 l2MessageIndex,uint16 l2TxNumberInBatch,bytes32[] merkleProof)",
-]);
 export const nativeBridgeGatewayAbi = parseAbi([
+  "function claimAndRecoverFailedNativeDeposit(bytes32 bridgeTxHash,uint256 l2BatchNumber,uint256 l2MessageIndex,uint16 l2TxNumberInBatch,bytes32[] merkleProof)",
   "function recoverClaimedNativeDeposit(bytes32 bridgeTxHash)",
 ]);
 

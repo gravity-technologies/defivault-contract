@@ -8,7 +8,9 @@ import {IL1AssetRouter} from "../external/IL1AssetRouter.sol";
 import {IL1ZkSyncBridgeHub, L2TransactionRequestTwoBridgesOuter} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {ZkSyncAssetRouterEncoding} from "../external/ZkSyncAssetRouterEncoding.sol";
+import {IL1SharedBridge} from "../interfaces/IL1SharedBridge.sol";
 import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
+import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 
 /**
  * @title NativeBridgeGateway
@@ -22,8 +24,9 @@ import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
  *
  *      Flow:
  *      - The vault transfers wrapped-native and the fee token into this gateway before `bridgeNativeToL2`.
- *      - If a native deposit later fails on zkSync, BridgeHub recovery is claimed externally back to this gateway.
- *      - `recoverClaimedNativeDeposit` then wraps the already-claimed ETH and returns the normalized funds to the vault.
+ *      - If a native deposit later fails on zkSync, vault-admin recovery claims the ETH back to this gateway.
+ *      - The gateway immediately wraps the claimed ETH and returns the normalized funds to the vault in the same
+ *        transaction.
  *
  *      Native bridge payloads use Matter Labs' current asset-router sentinel for ETH (`address(1)`),
  *      centralized via `ZkSyncAssetRouterEncoding` so production code and mocks/tests stay aligned.
@@ -42,6 +45,8 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     error UnexpectedNativeSender(address sender);
     error NativeBridgeRecordNotFound(bytes32 bridgeTxHash);
     error NativeBridgeAlreadyRecovered(bytes32 bridgeTxHash);
+    error InvalidGatewayNativeBalance(uint256 actual, uint256 expected);
+    error InvalidNativeClaimDelta(bytes32 bridgeTxHash, uint256 claimed, uint256 expected);
 
     struct NativeBridgeRecord {
         uint256 chainId;
@@ -82,6 +87,12 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
 
     /// @notice Emitted when a failed native deposit is reclaimed and re-wrapped back to the vault.
     event FailedNativeDepositRecovered(bytes32 indexed bridgeTxHash, uint256 amount);
+
+    /// @notice Emitted when unexpected native ETH is normalized back into wrapped-native and returned to the vault.
+    event UnexpectedNativeRecoveredToVault(uint256 amount);
+
+    /// @notice Emitted when vault-admin rescue sweeps an ERC20 balance out of the gateway.
+    event TokenSwept(address indexed token, address indexed recipient, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -178,24 +189,96 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
     }
 
     /**
+     * @notice Claims a failed native deposit through the shared bridge and immediately returns the recovered value to
+     *         the vault as wrapped-native.
+     * @dev This function closes the claim/recovery race by ensuring the shared-bridge claim and the record-marking
+     *      recovery happen in the same transaction against the exact stored record metadata.
+     * @param bridgeTxHash Canonical L2 tx hash returned at bridge submission time.
+     * @param l2BatchNumber Batch number containing the failed deposit.
+     * @param l2MessageIndex Message index within the batch.
+     * @param l2TxNumberInBatch Transaction number within the batch.
+     * @param merkleProof Merkle proof authorizing the failed-deposit claim.
+     */
+    function claimAndRecoverFailedNativeDeposit(
+        bytes32 bridgeTxHash,
+        uint256 l2BatchNumber,
+        uint256 l2MessageIndex,
+        uint16 l2TxNumberInBatch,
+        bytes32[] calldata merkleProof
+    ) external {
+        _requireVaultAdmin();
+
+        NativeBridgeRecord storage record = nativeBridgeRecords[bridgeTxHash];
+        _revertIfRecordNotRecoverable(record, bridgeTxHash);
+
+        uint256 nativeBalanceBeforeClaim = address(this).balance;
+        if (nativeBalanceBeforeClaim != 0) {
+            revert InvalidGatewayNativeBalance(nativeBalanceBeforeClaim, 0);
+        }
+
+        address sharedBridge = IL1ZkSyncBridgeHub(bridgeHub).sharedBridge();
+        if (sharedBridge == address(0)) revert InvalidParam();
+
+        IL1SharedBridge(sharedBridge).claimFailedDeposit(
+            record.chainId,
+            address(this),
+            ZkSyncAssetRouterEncoding.nativeTokenAddress(),
+            record.amount,
+            bridgeTxHash,
+            l2BatchNumber,
+            l2MessageIndex,
+            l2TxNumberInBatch,
+            merkleProof
+        );
+
+        uint256 claimed = address(this).balance - nativeBalanceBeforeClaim;
+        if (claimed != record.amount) {
+            revert InvalidNativeClaimDelta(bridgeTxHash, claimed, record.amount);
+        }
+
+        _recoverClaimedNativeDeposit(bridgeTxHash, record);
+    }
+
+    /**
      * @notice Wraps ETH already reclaimed to this gateway and returns it to the vault as wrapped-native.
      * @dev Assumes an external caller has already executed the BridgeHub failed-deposit claim with this gateway as
-     *      the `depositSender`, causing the native ETH to be delivered to `address(this)`.
+     *      the `depositSender`, causing the native ETH to be delivered to `address(this)`. Restricted to vault-admin
+     *      callers and requires the gateway to hold exactly the recorded amount so mismatched native balances cannot
+     *      be consumed against the wrong bridge record.
      * @param bridgeTxHash Canonical L2 tx hash returned at bridge submission time.
      */
     function recoverClaimedNativeDeposit(bytes32 bridgeTxHash) external {
+        _requireVaultAdmin();
+
         NativeBridgeRecord storage record = nativeBridgeRecords[bridgeTxHash];
-        if (record.amount == 0) revert NativeBridgeRecordNotFound(bridgeTxHash);
-        if (record.recovered) revert NativeBridgeAlreadyRecovered(bridgeTxHash);
+        _revertIfRecordNotRecoverable(record, bridgeTxHash);
+        _recoverClaimedNativeDeposit(bridgeTxHash, record);
+    }
 
-        uint256 recovered = record.amount;
-        if (address(this).balance < recovered) revert InvalidParam();
-        record.recovered = true;
+    /**
+     * @notice Normalizes unexpected native ETH already sitting on the gateway back into wrapped-native for the vault.
+     * @param amount Native ETH amount to wrap and send back to the vault.
+     */
+    function recoverUnexpectedNativeToVault(uint256 amount) external {
+        _requireVaultAdmin();
+        if (amount == 0 || address(this).balance < amount) revert InvalidParam();
 
-        IWrappedNative(wrappedNativeToken).deposit{value: recovered}();
-        IERC20(wrappedNativeToken).safeTransfer(vault, recovered);
+        _wrapAndTransferToVault(amount);
+        emit UnexpectedNativeRecoveredToVault(amount);
+    }
 
-        emit FailedNativeDepositRecovered(bridgeTxHash, recovered);
+    /**
+     * @notice Sweeps unexpected ERC20 balances held by the gateway.
+     * @param token ERC20 token to sweep.
+     * @param recipient Recipient of the swept tokens.
+     * @param amount Token amount to sweep.
+     */
+    function sweepToken(address token, address recipient, uint256 amount) external {
+        _requireVaultAdmin();
+        if (token == address(0) || recipient == address(0) || amount == 0) revert InvalidParam();
+
+        IERC20(token).safeTransfer(recipient, amount);
+        emit TokenSwept(token, recipient, amount);
     }
 
     /**
@@ -233,5 +316,49 @@ contract NativeBridgeGateway is Initializable, INativeBridgeGateway {
         } catch {}
 
         return address(0);
+    }
+
+    /**
+     * @notice Reverts unless the bridge record exists and has not already been recovered.
+     * @param record Native bridge record storage pointer.
+     * @param bridgeTxHash Canonical L2 tx hash keyed into `nativeBridgeRecords`.
+     */
+    function _revertIfRecordNotRecoverable(NativeBridgeRecord storage record, bytes32 bridgeTxHash) internal view {
+        if (record.amount == 0) revert NativeBridgeRecordNotFound(bridgeTxHash);
+        if (record.recovered) revert NativeBridgeAlreadyRecovered(bridgeTxHash);
+    }
+
+    /**
+     * @notice Reverts unless the caller currently holds `VAULT_ADMIN_ROLE` on the configured vault.
+     */
+    function _requireVaultAdmin() internal view {
+        IL1TreasuryVault treasuryVault = IL1TreasuryVault(vault);
+        if (!treasuryVault.hasRole(treasuryVault.VAULT_ADMIN_ROLE(), msg.sender)) revert Unauthorized();
+    }
+
+    /**
+     * @notice Wraps exactly `amount` native ETH from the gateway and returns the wrapped-native to the vault.
+     * @param amount Native ETH amount to normalize back into wrapped-native.
+     */
+    function _wrapAndTransferToVault(uint256 amount) internal {
+        IWrappedNative(wrappedNativeToken).deposit{value: amount}();
+        IERC20(wrappedNativeToken).safeTransfer(vault, amount);
+    }
+
+    /**
+     * @notice Marks a failed native deposit as recovered and returns its value to the vault as wrapped-native.
+     * @param bridgeTxHash Canonical L2 tx hash returned at bridge submission time.
+     * @param record Native bridge record keyed by `bridgeTxHash`.
+     */
+    function _recoverClaimedNativeDeposit(bytes32 bridgeTxHash, NativeBridgeRecord storage record) internal {
+        uint256 recovered = record.amount;
+        if (address(this).balance != recovered) {
+            revert InvalidGatewayNativeBalance(address(this).balance, recovered);
+        }
+
+        record.recovered = true;
+        _wrapAndTransferToVault(recovered);
+
+        emit FailedNativeDepositRecovered(bridgeTxHash, recovered);
     }
 }

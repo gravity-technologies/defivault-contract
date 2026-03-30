@@ -598,7 +598,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
-  it("wraps an externally claimed failed native deposit back to the vault", async function () {
+  it("atomically claims and recovers a failed native deposit back to the vault", async function () {
     const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
       await deploySystem();
 
@@ -614,24 +614,18 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     await vault.write.rebalanceNativeToL2([12n]);
 
     const bridgeTxHash = await bridgeHub.read.lastTxHash();
-    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
     const nativeTokenVault = await bridgeHub.read.nativeTokenVault();
     assert.notEqual(
       nativeTokenVault.toLowerCase(),
       bridgeHub.address.toLowerCase(),
     );
-    await bridgeHub.write.claimFailedDeposit([
-      270n,
-      nativeBridgeGateway.address,
-      nativeTokenAddress,
-      12n,
+    await nativeBridgeGateway.write.claimAndRecoverFailedNativeDeposit([
       bridgeTxHash,
       0n,
       0n,
       0,
       [],
     ]);
-    await nativeBridgeGateway.write.recoverClaimedNativeDeposit([bridgeTxHash]);
 
     const bridgeRecord = await nativeBridgeGateway.read.nativeBridgeRecords([
       bridgeTxHash,
@@ -651,6 +645,104 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       0n,
     );
     assert.equal(bridgeRecord[2], true);
+  });
+
+  it("rejects recovering a different record against claimed native ETH", async function () {
+    const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
+      await deploySystem();
+
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
+    await vault.write.setVaultTokenConfig([
+      wrappedNative.address,
+      supportedTokenConfig,
+    ]);
+    await wrappedNative.write.deposit({ value: 22n });
+    await wrappedNative.write.transfer([vault.address, 22n]);
+
+    await vault.write.rebalanceNativeToL2([12n]);
+    const largerBridgeTxHash = await bridgeHub.read.lastTxHash();
+    await vault.write.rebalanceNativeToL2([10n]);
+    const smallerBridgeTxHash = await bridgeHub.read.lastTxHash();
+    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
+
+    await bridgeHub.write.claimFailedDeposit([
+      270n,
+      nativeBridgeGateway.address,
+      nativeTokenAddress,
+      12n,
+      largerBridgeTxHash,
+      0n,
+      0n,
+      0,
+      [],
+    ]);
+
+    await viem.assertions.revertWithCustomError(
+      nativeBridgeGateway.write.recoverClaimedNativeDeposit([
+        smallerBridgeTxHash,
+      ]),
+      nativeBridgeGateway,
+      "InvalidGatewayNativeBalance",
+    );
+
+    await nativeBridgeGateway.write.recoverClaimedNativeDeposit([
+      largerBridgeTxHash,
+    ]);
+
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 12n);
+    assert.equal(
+      await publicClient.getBalance({ address: nativeBridgeGateway.address }),
+      0n,
+    );
+  });
+
+  it("restricts native bridge recovery operations to vault admins", async function () {
+    const { bridgeHub, nativeBridgeGateway } = await deploySystem();
+    const gatewayAsOther = await viem.getContractAt(
+      "NativeBridgeGateway",
+      nativeBridgeGateway.address,
+      {
+        client: { public: publicClient, wallet: other },
+      },
+    );
+    const strayToken = await viem.deployContract("MockERC20", [
+      "Stray Token",
+      "STRAY",
+      18,
+    ]);
+    const bridgeTxHash = await bridgeHub.read.lastTxHash();
+
+    await viem.assertions.revertWithCustomError(
+      gatewayAsOther.write.claimAndRecoverFailedNativeDeposit([
+        bridgeTxHash,
+        0n,
+        0n,
+        0,
+        [],
+      ]),
+      gatewayAsOther,
+      "Unauthorized",
+    );
+    await viem.assertions.revertWithCustomError(
+      gatewayAsOther.write.recoverClaimedNativeDeposit([bridgeTxHash]),
+      gatewayAsOther,
+      "Unauthorized",
+    );
+    await viem.assertions.revertWithCustomError(
+      gatewayAsOther.write.recoverUnexpectedNativeToVault([1n]),
+      gatewayAsOther,
+      "Unauthorized",
+    );
+    await viem.assertions.revertWithCustomError(
+      gatewayAsOther.write.sweepToken([
+        strayToken.address,
+        other.account.address,
+        1n,
+      ]),
+      gatewayAsOther,
+      "Unauthorized",
+    );
   });
 
   it("rejects re-initializing the native bridge gateway proxy", async function () {
