@@ -1,0 +1,12 @@
+{
+  VaultDeallocateFromStrategyModule: {
+    // Existing testnet vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Canonical vault token key (ERC20), for example USDT.
+    token: "0x0000000000000000000000000000000000000000",
+    // Existing strategy proxy to unwind from.
+    strategy: "0x0000000000000000000000000000000000000000",
+    // Requested deallocation amount in token native units.
+    amount: "0n",
+  },
+}

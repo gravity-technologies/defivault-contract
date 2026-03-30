@@ -63,6 +63,8 @@ This file defines non-negotiable standards for any agent contributing Solidity c
 
 - Keep functions small and single-purpose.
 - Prefer explicit naming (`depositAssets`, `withdrawShares`) over ambiguous names.
+- Use TypeScript for repository scripts and tooling.
+- Do not add new `.js`, `.mjs`, or `.cjs` source files in this project unless the user explicitly approves an exception.
 - Document all external/public functions with NatSpec including assumptions and failure modes.
 - Comment style:
   - Use `/** ... */` for multiline documentation comments.

@@ -14,62 +14,56 @@ import {
   vaultAbi,
 } from "../utils/one-off-ops.js";
 
-type HarvestYieldTaskArgs = {
+type EmergencyNativeToL2TaskArgs = {
   parameters?: string;
 };
 
-const action: NewTaskActionFunction<HarvestYieldTaskArgs> = async (
+const action: NewTaskActionFunction<EmergencyNativeToL2TaskArgs> = async (
   { parameters },
   hre,
 ) => {
   const filePath = resolveParametersPath(parameters);
-  const params = readModuleParams(filePath, "VaultHarvestYieldModule");
+  const params = readModuleParams(filePath, "VaultEmergencyNativeToL2Module");
   const vaultProxy = requireAddress(params, "vaultProxy", filePath);
-  const token = requireAddress(params, "token", filePath);
-  const strategy = requireAddress(params, "strategy", filePath);
   const amount = requireUint(params, "amount", filePath);
-  const minReceived = requireUint(params, "minReceived", filePath);
+  if (amount === 0n) {
+    throw new Error(
+      `invalid amount in ${filePath}; expected a positive bigint`,
+    );
+  }
   const { publicClient, walletClient } = await getClients(hre);
   const signer = getAddress(walletClient.account.address);
   const context = await resolveOneOffRecordContext({ filePath, hre });
   const prepared = createDirectOperationRecord({
     context,
     filePath,
-    kind: "vault-harvest-yield",
+    kind: "vault-emergency-native-to-l2",
     longLivedAuthority: resolveRecordAuthority({
       currentDeployment: context.currentDeployment,
       vaultProxy,
     }),
     outputs: {
-      strategy,
-      token,
       vaultProxy,
     },
     resolvedInputs: {
       amount: amount.toString(),
-      minReceived: minReceived.toString(),
-      strategy,
-      token,
       vaultProxy,
     },
     signer,
-    stepLabel: "Harvest yield from strategy",
+    stepLabel: "Emergency native bridge to L2",
     summary: [
-      "# Harvest yield from strategy",
+      "# Emergency native bridge to L2",
       "",
       `- Vault proxy: \`${vaultProxy}\``,
-      `- Token: \`${token}\``,
-      `- Strategy: \`${strategy}\``,
       `- Amount: \`${amount}\``,
-      `- Min received: \`${minReceived}\``,
     ],
   });
 
   const hash = await walletClient.writeContract({
     address: vaultProxy,
     abi: vaultAbi,
-    functionName: "harvestYieldFromStrategy",
-    args: [token, strategy, amount, minReceived],
+    functionName: "emergencyNativeToL2",
+    args: [amount],
     account: walletClient.account,
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });

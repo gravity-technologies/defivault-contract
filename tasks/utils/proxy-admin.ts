@@ -5,6 +5,7 @@ export const EIP1967_ADMIN_SLOT =
 
 export const proxyAdminAbi = parseAbi([
   "function owner() view returns (address)",
+  "function transferOwnership(address newOwner)",
   "function upgradeAndCall(address proxy,address implementation,bytes data) payable",
 ]);
 

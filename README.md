@@ -67,7 +67,7 @@ npm run smoke:deployment
 Interactive initial stack deployment:
 
 ```bash
-npm run deploy:initial-stack:interactive
+npm run deploy:initial-stack
 ```
 
 The interactive initial-stack deploy is environment-aware:

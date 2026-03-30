@@ -9,13 +9,20 @@
 
 ## Deployment State and Audit Trail
 
-Core proxy deployment and most post-deploy configuration are managed with Hardhat Ignition.
+Core proxy deployment and bootstrap configuration are managed with Hardhat Ignition.
+Operational strategy moves, yield harvests, and emergency bridge paths are exposed as Hardhat tasks.
 Vault upgrades use a single Hardhat task. Production prepares multisig calldata after deploying a new implementation with a hot wallet; staging/testnet execute directly with the task signer.
 
-Source of truth for deployment records:
+Source of truth for current live state:
+
+- local operation records under `deployment-records/<environment>/<network>/`
+
+Supporting deployment evidence:
 
 - `ignition/deployments/`
-- versioned parameter files under `ignition/parameters/<environment>/`
+- deployment parameter files under `ignition/parameters/<environment>/`
+- operation parameter files under `tasks/parameters/<environment>/`
+- `deployment-records/<environment>/<network>/`
 
 Record these for every deployment:
 
@@ -41,12 +48,12 @@ npm run smoke:deployment
 
 ## Environment
 
-Use `.env` only for network credentials. Keep deployment inputs in versioned Ignition parameter files.
+Use `.env` only for network credentials. Keep deployment inputs in versioned parameter files.
 
 Common env vars:
 
-- `TESTNET_RPC_URL`
-- `TESTNET_PRIVATE_KEY`
+- `RPC_URL`
+- `PRIVATE_KEY`
 
 Shared parameter rule for vault core and native gateways:
 
@@ -154,7 +161,7 @@ Prepare `ignition/parameters/<env>/roles-bootstrap.json5` with:
 Command:
 
 ```bash
-npm run roles:bootstrap -- \
+npm run deploy:roles-bootstrap -- \
   --network <network> \
   --parameters ignition/parameters/<env>/roles-bootstrap.json5
 ```
@@ -213,7 +220,7 @@ Vault upgrade:
 ```bash
 npx hardhat upgrade:vault -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/vault-upgrade.json5
+  --parameters tasks/parameters/<env>/vault-upgrade.json5
 ```
 
 The task deploys the new vault implementation with the active wallet, derives the proxy admin from the vault proxy, and either:
@@ -226,7 +233,7 @@ Strategy upgrade:
 ```bash
 npm run upgrade:strategy -- \
   --network <network> \
-  --parameters ignition/parameters/<env>/strategy-upgrade.json5
+  --parameters tasks/parameters/<env>/strategy-upgrade.json5
 ```
 
 ## Post-Deploy Verification Checklist
@@ -234,19 +241,39 @@ npm run upgrade:strategy -- \
 1. Confirm `paused() == false`.
 2. Confirm expected role holders for all roles.
 3. Confirm `bridgeHub`, `grvtBridgeProxyFeeToken`, `l2ChainId`, `l2ExchangeRecipient`, and `wrappedNativeToken`.
-4. Confirm supported vault tokens and strategy registry state.
-5. Confirm the configured `nativeBridgeGateway`.
-6. Confirm all deployment outputs and tx hashes are attached to the deployment record.
+4. Confirm the treasury vault proxy has minter permission on `grvtBridgeProxyFeeToken` before any L1 -> L2 rebalance is attempted.
+5. Confirm supported vault tokens and strategy registry state.
+6. Confirm the configured `nativeBridgeGateway`.
+7. Confirm all deployment outputs and tx hashes are attached to the deployment record.
 
 ## Normal Operations
 
 ### Strategy Capital Management
 
-Calls:
+Commands:
 
-- `allocateVaultTokenToStrategy(token, strategy, amount)`
-- `deallocateVaultTokenFromStrategy(token, strategy, amount)`
-- `deallocateAllVaultTokenFromStrategy(token, strategy)`
+```bash
+npm run ops:allocate-to-strategy -- \
+  --network <network> \
+  --parameters tasks/parameters/<env>/allocate-to-strategy.json5
+
+npm run ops:deallocate-from-strategy -- \
+  --network <network> \
+  --parameters tasks/parameters/<env>/deallocate-from-strategy.json5
+
+npm run ops:deallocate-all-from-strategy -- \
+  --network <network> \
+  --parameters tasks/parameters/<env>/deallocate-all-from-strategy.json5
+```
+
+Parameter shape:
+
+- `vaultProxy`
+- `token`
+- `strategy`
+- `amount` for allocate and partial deallocate
+
+These commands are task-backed operations, not Ignition deployments.
 
 Operator rules:
 
@@ -261,7 +288,7 @@ Schedule update:
 ```bash
 npx hardhat yield-recipient:schedule-update \
   --network <network> \
-  --parameters ignition/parameters/<env>/yield-recipient-schedule-update.json5
+  --parameters tasks/parameters/<env>/yield-recipient-schedule-update.json5
 ```
 
 Execute update:
@@ -269,7 +296,7 @@ Execute update:
 ```bash
 npx hardhat yield-recipient:execute-update \
   --network <network> \
-  --parameters ignition/parameters/<env>/yield-recipient-execute-update.json5
+  --parameters tasks/parameters/<env>/yield-recipient-execute-update.json5
 ```
 
 Operator rules:
@@ -285,7 +312,7 @@ Command:
 ```bash
 npx hardhat ops:harvest-yield \
   --network <network> \
-  --parameters ignition/parameters/<env>/harvest-yield.json5
+  --parameters tasks/parameters/<env>/harvest-yield.json5
 ```
 
 Operator rules:
@@ -342,7 +369,7 @@ Note:
 
 ### Failed Native Deposit Recovery
 
-Prepare `ignition/parameters/<env>/native-bridge-gateway-claim-failed-deposit.json5` with:
+Prepare `tasks/parameters/<env>/native-bridge-gateway-claim-failed-deposit.json5` with:
 
 - `nativeBridgeGatewayProxy`
 - `bridgeTxHash`
@@ -356,7 +383,7 @@ Command:
 ```bash
 npx hardhat claim:failed-native-deposit \
   --network <network> \
-  --parameters ignition/parameters/<env>/native-bridge-gateway-claim-failed-deposit.json5
+  --parameters tasks/parameters/<env>/native-bridge-gateway-claim-failed-deposit.json5
 ```
 
 Operator rules:
@@ -367,6 +394,26 @@ Operator rules:
 - recovery should leave `NativeBridgeGateway` with no stranded native or wrapped-native balance
 
 ## Emergency Send Checklist
+
+Commands:
+
+```bash
+npm run ops:emergency-native-to-l2 -- \
+  --network <network> \
+  --parameters tasks/parameters/<env>/emergency-native-to-l2.json5
+
+npm run ops:emergency-erc20-to-l2 -- \
+  --network <network> \
+  --parameters tasks/parameters/<env>/emergency-erc20-to-l2.json5
+```
+
+Parameter shape:
+
+- `vaultProxy`
+- `amount`
+- `token` for ERC20 emergency send only
+
+These commands are task-backed operations, not Ignition deployments.
 
 Before each `emergencyNativeToL2` or `emergencyErc20ToL2`:
 

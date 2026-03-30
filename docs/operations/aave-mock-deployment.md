@@ -50,8 +50,8 @@ This repository currently defines one remote Hardhat network alias: `sepolia`.
 1. Export network access for Sepolia:
 
    ```bash
-   export TESTNET_RPC_URL="<sepolia_rpc_url>"
-   export TESTNET_PRIVATE_KEY="<deployer_private_key>"
+   export RPC_URL="<sepolia_rpc_url>"
+   export PRIVATE_KEY="<deployer_private_key>"
    ```
 
 2. Install dependencies and compile:
@@ -114,11 +114,11 @@ Record:
 - `grvtBridgeProxyFeeToken`
 - `wrappedNativeToken`
 
-## 2. Fill `vault-core.json5`
+## 2. Fill `core.json5`
 
 Update:
 
-- `ignition/parameters/<env>/vault-core.json5`
+- `ignition/parameters/<env>/core.json5`
 
 Set:
 
@@ -141,7 +141,7 @@ Deploy:
 ```bash
 npm run deploy:vault -- \
   --network sepolia \
-  --parameters ignition/parameters/<env>/vault-core.json5
+  --parameters ignition/parameters/<env>/core.json5
 ```
 
 Record:
@@ -256,7 +256,7 @@ Set:
 Deploy:
 
 ```bash
-npm run roles:bootstrap -- \
+npm run deploy:roles-bootstrap -- \
   --network sepolia \
   --parameters ignition/parameters/<env>/roles-bootstrap.json5
 ```
@@ -287,22 +287,22 @@ npm run deploy:yield-recipient-timelock -- \
 
 Update:
 
-- `ignition/parameters/<env>/native-gateways.json5`
+- `ignition/parameters/<env>/core.json5`
 
 Set:
 
-- `vaultProxy`
-- `proxyAdminOwner`
-- `wrappedNativeToken`
-- `grvtBridgeProxyFeeToken`
-- `bridgeHub`
+- `$global.bridgeHub`
+- `$global.grvtBridgeProxyFeeToken`
+- `$global.wrappedNativeToken`
+- `NativeGatewaysModule.vaultProxy`
+- `NativeGatewaysModule.proxyAdminOwner`
 
 Deploy:
 
 ```bash
 npm run deploy:native-gateways -- \
   --network sepolia \
-  --parameters ignition/parameters/<env>/native-gateways.json5
+  --parameters ignition/parameters/<env>/core.json5
 ```
 
 Record:
@@ -349,7 +349,7 @@ Use the same command shape for both environments and only change `<env>`.
 ```bash
 npm run deploy:vault -- \
   --network sepolia \
-  --parameters ignition/parameters/staging/vault-core.json5
+  --parameters ignition/parameters/staging/core.json5
 ```
 
 ### Testnet
@@ -357,7 +357,7 @@ npm run deploy:vault -- \
 ```bash
 npm run deploy:vault -- \
   --network sepolia \
-  --parameters ignition/parameters/testnet/vault-core.json5
+  --parameters ignition/parameters/testnet/core.json5
 ```
 
 Apply that same `<env>` substitution to:
@@ -367,7 +367,7 @@ Apply that same `<env>` substitution to:
 - `vault-token-strategy.json5`
 - `roles-bootstrap.json5`
 - `yield-recipient-bootstrap.json5`
-- `native-gateways.json5`
+- `core.json5`
 
 ## Recommended Separation Policy
 
