@@ -3,8 +3,8 @@
     // Existing production vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Prefer distinct operator or multisig addresses.
-    allocator: "0x0000000000000000000000000000000000000000",
-    rebalancer: "0x0000000000000000000000000000000000000000",
-    pauser: "0x0000000000000000000000000000000000000000",
+    allocator: "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+    rebalancer: "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+    pauser: "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
   },
 }

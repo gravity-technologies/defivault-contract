@@ -6,7 +6,7 @@ import { encodeFunctionData, parseAbi } from "viem";
 
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
-const RPC_URL = process.env.RPC_URL;
+const MAINNET_RPC_URL = process.env.MAINNET_RPC_URL;
 const FORK_BLOCK = 22_000_000;
 
 const USDT = "0xdAC17F958D2ee523a2206206994597C13D831ec7" as const;
@@ -20,7 +20,7 @@ const erc20Abi = parseAbi([
   "function transfer(address to, uint256 amount) returns (bool)",
 ]);
 
-const describeFork = RPC_URL ? describe : describe.skip;
+const describeFork = MAINNET_RPC_URL ? describe : describe.skip;
 
 describeFork("Aave v3 mainnet fork integration", async function () {
   const { viem } = await network.connect({
@@ -29,7 +29,7 @@ describeFork("Aave v3 mainnet fork integration", async function () {
     override: {
       forking: {
         enabled: true,
-        url: RPC_URL!,
+        url: MAINNET_RPC_URL!,
         blockNumber: FORK_BLOCK,
       },
     },

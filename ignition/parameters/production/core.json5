@@ -1,21 +1,22 @@
 {
   $global: {
-    // L1 BridgeHub for production.
+    // zkSync Era L1 BridgeHub on Ethereum mainnet.
     bridgeHub: "0x303a465B659cBB0ab36eE643eA362c509EEb5213",
-    // GRVT bridge-proxy fee token on production.
+    // GRVT bridge-proxy fee token on Ethereum mainnet.
     grvtBridgeProxyFeeToken: "0xAB3B124052F0389D1cbED221d912026Ac995bb95",
-    // Canonical wrapped-native token on production.
+    // Canonical WETH on Ethereum mainnet. zkSync native ETH bridge payloads still use
+    // the asset-router sentinel `0x0000000000000000000000000000000000000001`, not this field.
     wrappedNativeToken: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
   },
   VaultCoreModule: {
-    // VAULT_ADMIN_ROLE holder and vault proxy admin owner; use the engineering multisig.
-    deployAdmin: "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
-    // Fill with the real production L2 chain id; zero is an intentional placeholder.
+    // Bootstrap vault admin / proxy admin owner; use the throwaway deployer.
+    deployAdmin: "0x340d75F15bF97aF6AE518d746063c591bB5368f0",
+    // Production target L2 chain id.
     l2ChainId: "325n",
     // Fixed L2 recipient for production rebalance flows. Set separately from governance and treasury.
     l2ExchangeRecipient: "0x85dee82d32d78eaa59588b6574df420ef2a74098",
     // Must be non-zero and must not equal deployAdmin.
-    yieldRecipient: "0x0000000000000000000000000000000000000000",
+    yieldRecipient: "0x6e1B2a22f8f3768040CFb0b0997851ffB5971439",
   },
   NativeGatewaysModule: {
     // Existing production vault proxy.

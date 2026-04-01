@@ -1,0 +1,52 @@
+{
+  "actor": {
+    "longLivedAuthority": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+    "signer": "0x340d75F15bF97aF6AE518d746063c591bB5368f0"
+  },
+  "chainId": 1,
+  "createdAt": "2026-04-01T04:59:12.396Z",
+  "environment": "production",
+  "inputs": {
+    "allowBootstrapRoleRetention": false,
+    "bootstrapVaultAdmin": "0x340d75F15bF97aF6AE518d746063c591bB5368f0",
+    "finalVaultAdmin": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+    "initialRecordId": "2026-021141Z-initial-stack-minh",
+    "timelock": "0x4e29715b7Ca2569678027c01627D936235eA36De",
+    "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45",
+    "vaultProxyAdmin": "0xF57Be7cB5B1c5e37fDb19DdF8E5A359A5e381575"
+  },
+  "kind": "production-admin-handoff",
+  "links": [
+    {
+      "kind": "initial-stack-record",
+      "path": "deployment-records/production/2026-021141Z-initial-stack-minh/record.json",
+      "recordId": "2026-021141Z-initial-stack-minh"
+    }
+  ],
+  "mode": "direct",
+  "network": "mainnet",
+  "outputs": {},
+  "recordId": "2026-04-01T04-59-12-394Z",
+  "schemaVersion": 1,
+  "status": "failed",
+  "steps": [
+    {
+      "label": "Validate production final holders",
+      "startedAt": "2026-04-01T04:59:12.396Z",
+      "status": "complete",
+      "completedAt": "2026-04-01T04:59:12.397Z",
+      "notes": [
+        "Production operator and timelock holders are distinct from the bootstrap signer."
+      ]
+    },
+    {
+      "label": "Grant DEFAULT_ADMIN_ROLE to final vault admin",
+      "startedAt": "2026-04-01T04:59:12.397Z",
+      "status": "failed",
+      "txHashes": [
+        "0x7f8a127fed5782036b0b0a6d5de932cba05625faf8fbc7270a6c08e209bd221a"
+      ],
+      "completedAt": "2026-04-01T04:59:15.568Z"
+    }
+  ]
+}

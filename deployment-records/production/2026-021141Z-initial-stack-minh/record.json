@@ -1,0 +1,280 @@
+{
+  "actor": {
+    "longLivedAuthority": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+    "signer": "0x340d75F15bF97aF6AE518d746063c591bB5368f0"
+  },
+  "chainId": 1,
+  "checklist": [
+    "Run ops:production-admin-handoff before treating this deployment as live."
+  ],
+  "createdAt": "2026-04-01T03:14:06.016Z",
+  "environment": "production",
+  "inputs": {
+    "aaveMode": "live-aave",
+    "localMode": false,
+    "networkAlias": "mainnet",
+    "parameterDir": "ignition/parameters/production",
+    "repeatStepConfirmations": false,
+    "resolvedParams": {
+      "aTokenName": "",
+      "aTokenSymbol": "",
+      "productionAuthorityPlan": {
+        "bootstrapVaultAdmin": "0x340d75F15bF97aF6AE518d746063c591bB5368f0",
+        "finalVaultAdmin": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5"
+      },
+      "nativeGateways": {
+        "bridgeHub": "0x303a465B659cBB0ab36eE643eA362c509EEb5213",
+        "grvtBridgeProxyFeeToken": "0xAB3B124052F0389D1cbED221d912026Ac995bb95",
+        "proxyAdminOwner": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+        "wrappedNativeToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45"
+      },
+      "rolesBootstrap": {
+        "allocator": "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+        "pauser": "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+        "rebalancer": "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45"
+      },
+      "strategyCore": {
+        "aToken": "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
+        "aavePool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "proxyAdminOwner": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+        "strategyName": "AAVE_V3_ETHEREUM_USDT",
+        "underlyingToken": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45"
+      },
+      "vaultCore": {
+        "deployAdmin": "0x340d75F15bF97aF6AE518d746063c591bB5368f0",
+        "finalVaultAdmin": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+        "bridgeHub": "0x303a465B659cBB0ab36eE643eA362c509EEb5213",
+        "grvtBridgeProxyFeeToken": "0xAB3B124052F0389D1cbED221d912026Ac995bb95",
+        "l2ChainId": "325n",
+        "l2ExchangeRecipient": "0x85deE82d32d78eaa59588B6574Df420ef2A74098",
+        "wrappedNativeToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "yieldRecipient": "0x6e1B2a22f8f3768040CFb0b0997851ffB5971439"
+      },
+      "vaultTokenConfig": {
+        "supported": true,
+        "vaultToken": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45"
+      },
+      "vaultTokenStrategy": {
+        "strategyCap": "0n",
+        "vaultTokenStrategyWhitelisted": true,
+        "vaultTokenSupported": true,
+        "vaultToken": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45",
+        "strategyProxy": "0x1ff873538e62BA19cd36CE97e48F6fC84D07a5E4"
+      },
+      "yieldRecipientBootstrap": {
+        "admin": "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
+        "executors": [
+          "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+          "0x4738eDE7Fb2d3E5596867cf60c668779de7CE8C4"
+        ],
+        "minDelay": "172800n",
+        "proposers": ["0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5"],
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45"
+      }
+    },
+    "runPostDeployVerification": true,
+    "sourceParameterFiles": {
+      "nativeGateways": "ignition/parameters/production/core.json5",
+      "rolesBootstrap": "ignition/parameters/production/roles-bootstrap.json5",
+      "strategyCore": "ignition/parameters/production/strategy-core.json5",
+      "vaultCore": "ignition/parameters/production/core.json5",
+      "vaultTokenConfig": "ignition/parameters/production/vault-token-config.json5",
+      "vaultTokenStrategy": "ignition/parameters/production/vault-token-strategy.json5",
+      "yieldRecipientBootstrap": "ignition/parameters/production/yield-recipient-bootstrap.json5"
+    }
+  },
+  "kind": "initial-stack",
+  "mode": "direct",
+  "network": "mainnet",
+  "outputs": {
+    "networkAlias": "mainnet",
+    "nativeBridgeGatewayImplementation": "0xA20697E4219884128E0c880825280A4d29AEbF65",
+    "nativeBridgeGatewayProxy": "0x17CBac7631063d8A79ddb5c3fc7C2336F0161915",
+    "nativeBridgeGatewayProxyAdmin": "0x421a3f9b8665174B4FcF5fD4A9012B79be457f51",
+    "nativeVaultGateway": "0x81Ef29d82C5232627976D182C0a2be177412C7B9",
+    "strategyImplementation": "0x9ED9Bc30C8E033C943EC1fF9979408a200C17735",
+    "strategyProxy": "0x1ff873538e62BA19cd36CE97e48F6fC84D07a5E4",
+    "strategyProxyAdmin": "0x2B19C664F7b1D389A6a9d483acd283098613D84A",
+    "vaultImplementation": "0x11F6Ee88e10F3AC0C1560B5Fd43300F6dda4EF2e",
+    "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45",
+    "vaultProxyAdmin": "0xF57Be7cB5B1c5e37fDb19DdF8E5A359A5e381575",
+    "yieldRecipientTimelockController": "0x4e29715b7Ca2569678027c01627D936235eA36De"
+  },
+  "recordId": "2026-021141Z-initial-stack-minh",
+  "schemaVersion": 1,
+  "status": "awaiting_handoff",
+  "steps": [
+    {
+      "addresses": {
+        "aToken": "0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
+        "aavePool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "underlyingToken": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+      },
+      "completedAt": "2026-04-01T03:14:08.172Z",
+      "duration": "2s",
+      "label": "Live Aave prerequisite validation",
+      "nextAction": "Use the validated pool and aToken for strategy-core and downstream steps.",
+      "notes": [
+        "underlyingToken=0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "aavePool=0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "aToken=0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
+        "Use the validated pool and aToken for strategy-core and downstream steps."
+      ],
+      "startedAt": "2026-04-01T03:14:06.021Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {
+        "vaultImplementation": "0x11F6Ee88e10F3AC0C1560B5Fd43300F6dda4EF2e",
+        "vaultProxy": "0xC95Fedb8Bdc763e4ef093D14e8196afafBB48f45",
+        "vaultProxyAdmin": "0xF57Be7cB5B1c5e37fDb19DdF8E5A359A5e381575"
+      },
+      "command": "npx hardhat ignition deploy ./ignition/modules/VaultCore.ts --network mainnet --parameters <temporary:vault-core.generated.json5> --deployment-id initial-production-vault-core-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:15:45.237Z",
+      "deploymentId": "initial-production-vault-core-2026-021141Z-initial-stack-minh",
+      "duration": "1m 37s",
+      "label": "Vault core deployment",
+      "nextAction": "Use the vault proxy address to wire strategy-core, token config, roles, timelock, and native gateways.",
+      "notes": [
+        "yieldRecipient=0x6e1B2a22f8f3768040CFb0b0997851ffB5971439",
+        "wrappedNativeToken=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "Use the vault proxy address to wire strategy-core, token config, roles, timelock, and native gateways.",
+        "npx hardhat ignition deploy ./ignition/modules/VaultCore.ts --network mainnet --parameters <temporary:vault-core.generated.json5> --deployment-id initial-production-vault-core-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:14:08.173Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {
+        "strategyImplementation": "0x9ED9Bc30C8E033C943EC1fF9979408a200C17735",
+        "strategyProxy": "0x1ff873538e62BA19cd36CE97e48F6fC84D07a5E4",
+        "strategyProxyAdmin": "0x2B19C664F7b1D389A6a9d483acd283098613D84A"
+      },
+      "command": "npx hardhat ignition deploy ./ignition/modules/StrategyCore.ts --network mainnet --parameters <temporary:strategy-core.generated.json5> --deployment-id initial-production-strategy-core-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:16:16.658Z",
+      "deploymentId": "initial-production-strategy-core-2026-021141Z-initial-stack-minh",
+      "duration": "31s",
+      "label": "Strategy core deployment",
+      "nextAction": "Use the strategy proxy to configure vault-token strategy support and whitelist state.",
+      "notes": [
+        "aavePool=0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        "aToken=0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a",
+        "Use the strategy proxy to configure vault-token strategy support and whitelist state.",
+        "npx hardhat ignition deploy ./ignition/modules/StrategyCore.ts --network mainnet --parameters <temporary:strategy-core.generated.json5> --deployment-id initial-production-strategy-core-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:15:45.237Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {},
+      "command": "npx hardhat ignition deploy ./ignition/modules/VaultTokenConfig.ts --network mainnet --parameters <temporary:vault-token-config.generated.json5> --deployment-id initial-production-vault-token-config-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:16:40.456Z",
+      "deploymentId": "initial-production-vault-token-config-2026-021141Z-initial-stack-minh",
+      "duration": "24s",
+      "label": "Vault token configuration",
+      "nextAction": "Whitelist the strategy against this token and set the initial cap.",
+      "notes": [
+        "vaultToken=0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "supported=true",
+        "Whitelist the strategy against this token and set the initial cap.",
+        "npx hardhat ignition deploy ./ignition/modules/VaultTokenConfig.ts --network mainnet --parameters <temporary:vault-token-config.generated.json5> --deployment-id initial-production-vault-token-config-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:16:16.658Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {},
+      "command": "npx hardhat ignition deploy ./ignition/modules/VaultTokenStrategy.ts --network mainnet --parameters <temporary:vault-token-strategy.generated.json5> --deployment-id initial-production-vault-token-strategy-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:17:40.087Z",
+      "deploymentId": "initial-production-vault-token-strategy-2026-021141Z-initial-stack-minh",
+      "duration": "1m",
+      "label": "Vault token strategy configuration",
+      "nextAction": "Grant operator roles so the environment can be exercised.",
+      "notes": [
+        "strategyCap=Unlimited",
+        "strategyProxy=0x1ff873538e62BA19cd36CE97e48F6fC84D07a5E4",
+        "Grant operator roles so the environment can be exercised.",
+        "npx hardhat ignition deploy ./ignition/modules/VaultTokenStrategy.ts --network mainnet --parameters <temporary:vault-token-strategy.generated.json5> --deployment-id initial-production-vault-token-strategy-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:16:40.457Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {},
+      "command": "npx hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts --network mainnet --parameters <temporary:roles-bootstrap.generated.json5> --deployment-id initial-production-roles-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:18:51.295Z",
+      "deploymentId": "initial-production-roles-2026-021141Z-initial-stack-minh",
+      "duration": "1m 11s",
+      "label": "Roles bootstrap",
+      "nextAction": "Bootstrap the yield-recipient timelock controller for governance exercises.",
+      "notes": [
+        "allocator=0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+        "rebalancer=0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+        "pauser=0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+        "Bootstrap the yield-recipient timelock controller for governance exercises.",
+        "npx hardhat ignition deploy ./ignition/modules/VaultRolesBootstrap.ts --network mainnet --parameters <temporary:roles-bootstrap.generated.json5> --deployment-id initial-production-roles-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:17:40.087Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {
+        "yieldRecipientTimelockController": "0x4e29715b7Ca2569678027c01627D936235eA36De"
+      },
+      "command": "npx hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts --network mainnet --parameters <temporary:yield-recipient-bootstrap.generated.json5> --deployment-id initial-production-yield-recipient-timelock-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:19:39.938Z",
+      "deploymentId": "initial-production-yield-recipient-timelock-2026-021141Z-initial-stack-minh",
+      "duration": "49s",
+      "label": "Yield recipient timelock bootstrap",
+      "nextAction": "Deploy the native gateways and wire the NativeBridgeGateway into the vault.",
+      "notes": [
+        "minDelay=172800n",
+        "Deploy the native gateways and wire the NativeBridgeGateway into the vault.",
+        "npx hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts --network mainnet --parameters <temporary:yield-recipient-bootstrap.generated.json5> --deployment-id initial-production-yield-recipient-timelock-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:18:51.295Z",
+      "status": "complete"
+    },
+    {
+      "addresses": {
+        "nativeBridgeGatewayImplementation": "0xA20697E4219884128E0c880825280A4d29AEbF65",
+        "nativeBridgeGatewayProxy": "0x17CBac7631063d8A79ddb5c3fc7C2336F0161915",
+        "nativeBridgeGatewayProxyAdmin": "0x421a3f9b8665174B4FcF5fD4A9012B79be457f51",
+        "nativeVaultGateway": "0x81Ef29d82C5232627976D182C0a2be177412C7B9"
+      },
+      "command": "npx hardhat ignition deploy ./ignition/modules/NativeGateways.ts --network mainnet --parameters <temporary:native-gateways.generated.json5> --deployment-id initial-production-native-gateways-2026-021141Z-initial-stack-minh --reset",
+      "completedAt": "2026-04-01T03:21:17.032Z",
+      "deploymentId": "initial-production-native-gateways-2026-021141Z-initial-stack-minh",
+      "duration": "1m 37s",
+      "label": "Native gateways deployment",
+      "nextAction": "Review the saved record, inspect the saved artifacts, and run your preferred post-deploy smoke checks.",
+      "notes": [
+        "wrappedNativeToken=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "bridgeHub=0x303a465B659cBB0ab36eE643eA362c509EEb5213",
+        "Review the saved record, inspect the saved artifacts, and run your preferred post-deploy smoke checks.",
+        "npx hardhat ignition deploy ./ignition/modules/NativeGateways.ts --network mainnet --parameters <temporary:native-gateways.generated.json5> --deployment-id initial-production-native-gateways-2026-021141Z-initial-stack-minh --reset"
+      ],
+      "startedAt": "2026-04-01T03:19:39.938Z",
+      "status": "complete"
+    },
+    {
+      "command": "npx tsx ./scripts/verify/verify-initial-stack.ts --run-dir deployment-records/production/2026-021141Z-initial-stack-minh",
+      "completedAt": "2026-04-01T03:23:51.254Z",
+      "duration": "2m 34s",
+      "label": "Explorer verification",
+      "nextAction": "Verify the freshly deployed contracts against the configured explorers and persist the verification logs.",
+      "notes": [
+        "Uses the saved run record to verify each Ignition deployment ID plus the transparent-proxy ProxyAdmin contracts.",
+        "Verify the freshly deployed contracts against the configured explorers and persist the verification logs.",
+        "npx tsx ./scripts/verify/verify-initial-stack.ts --run-dir deployment-records/production/2026-021141Z-initial-stack-minh"
+      ],
+      "startedAt": "2026-04-01T03:21:17.035Z",
+      "status": "complete"
+    }
+  ]
+}
