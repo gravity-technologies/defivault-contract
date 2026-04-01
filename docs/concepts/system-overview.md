@@ -73,6 +73,8 @@ This is the canonical native bridge execution and failed native deposit recovery
 
 It unwraps wrapped-native into ETH for bridge submission and re-wraps recovered ETH before sending value back into vault accounting.
 
+For failed native deposits, it records the bridge-era recovery metadata at submission time and later performs claim plus recovery atomically against that recorded bridge stack.
+
 ## Terminology
 
 - `vault token`: ERC20 token key used for allocation, cap, harvest, and strategy configuration.
