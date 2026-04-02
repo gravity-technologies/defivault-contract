@@ -276,10 +276,57 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(await bridgeHub.read.requestCount(), 1n);
     assert.equal(await bridgeHub.read.lastAmount(), 50n);
     assert.equal(await token.read.balanceOf([bridgeHub.address]), 50n);
-    assert.equal(await token.read.balanceOf([vault.address]), 1n);
-    assert.equal(await aToken.read.balanceOf([strategy.address]), 50n);
+    assert.equal(await token.read.balanceOf([vault.address]), 0n);
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 51n);
     assert.equal(await token.read.balanceOf([strategy.address]), 0n);
-    assert.equal(await strategy.read.strategyExposure([token.address]), 50n);
+    assert.equal(await strategy.read.strategyExposure([token.address]), 51n);
+  });
+
+  it("uses residual underlying before Aave withdraw during partial emergency unwinds", async function () {
+    const { vault, token, bridgeHub } = await deploySystem();
+    const { strategy, aToken } = await deployAaveStrategy(
+      vault.address,
+      token.address,
+    );
+
+    const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    await vault.write.grantRole([allocatorRole, admin.account.address]);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.setBridgeableVaultToken([token.address, true]);
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await token.write.mint([vault.address, 100n]);
+    await vault.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100n,
+    ]);
+    await token.write.mint([strategy.address, 3n]);
+
+    assert.equal(await strategy.read.strategyExposure([token.address]), 103n);
+
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      unsupportedTokenConfig,
+    ]);
+    await vault.write.pause();
+    await vault.write.emergencyErc20ToL2([token.address, 102n]);
+
+    assert.equal(await bridgeHub.read.requestCount(), 1n);
+    assert.equal(await bridgeHub.read.lastAmount(), 102n);
+    assert.equal(await token.read.balanceOf([bridgeHub.address]), 102n);
+    assert.equal(await token.read.balanceOf([vault.address]), 0n);
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 1n);
+    assert.equal(await token.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await strategy.read.strategyExposure([token.address]), 1n);
   });
 
   it("uses Aave full-exit deallocation when the emergency unwind drains the whole strategy", async function () {

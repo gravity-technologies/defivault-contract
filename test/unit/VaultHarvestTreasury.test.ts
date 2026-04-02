@@ -249,6 +249,43 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     };
   }
 
+  async function deployAaveStrategy(
+    vaultAddress: `0x${string}`,
+    vaultTokenAddress: `0x${string}`,
+  ) {
+    const pool = await viem.deployContract("MockAaveV3Pool", [
+      vaultTokenAddress,
+    ]);
+    const aToken = await viem.deployContract("MockAaveV3AToken", [
+      vaultTokenAddress,
+      pool.address,
+      "Aave Mock USDT",
+      "aMUSDT",
+    ]);
+    await pool.write.setAToken([aToken.address]);
+
+    const implementation = await viem.deployContract("AaveV3Strategy");
+    const initializeData = encodeFunctionData({
+      abi: implementation.abi,
+      functionName: "initialize",
+      args: [
+        vaultAddress,
+        pool.address,
+        vaultTokenAddress,
+        aToken.address,
+        "AAVE_V3_MUSDT",
+      ],
+    });
+    const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
+      implementation.address,
+      addr(admin),
+      initializeData,
+    ]);
+    const strategy = await viem.getContractAt("AaveV3Strategy", proxy.address);
+
+    return { strategy, pool, aToken };
+  }
+
   it("tracks cost basis and harvests strategy yield to treasury", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
@@ -288,6 +325,105 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(
       await vault.read.harvestableYield([token.address, stratA.address]),
       20_000n,
+    );
+  });
+
+  it("harvests exact reported yield from Aave when residual dust is present", async function () {
+    const { vault, vaultAsAllocator, vaultAsAdmin, token } = await deployBase();
+    const { strategy, pool } = await deployAaveStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100_000n,
+    ]);
+    await pool.write.accrueYield([strategy.address, 10_000n]);
+    await token.write.mint([strategy.address, 1n], {
+      account: other.account,
+    });
+
+    assert.equal(
+      await vault.read.harvestableYield([token.address, strategy.address]),
+      10_001n,
+    );
+
+    const treasury = (await vault.read.yieldRecipient()) as `0x${string}`;
+    const treasuryBefore = (await token.read.balanceOf([treasury])) as bigint;
+
+    await vaultAsAdmin.write.harvestYieldFromStrategy([
+      token.address,
+      strategy.address,
+      10_001n,
+      10_001n,
+    ]);
+
+    const treasuryAfter = (await token.read.balanceOf([treasury])) as bigint;
+    assert.equal(treasuryAfter - treasuryBefore, 10_001n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      100_000n,
+    );
+    assert.equal(
+      await strategy.read.strategyExposure([token.address]),
+      100_000n,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([token.address, strategy.address]),
+      0n,
+    );
+  });
+
+  it("reduces cost basis on bounded deallocation satisfied entirely from residual dust", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { strategy, aToken } = await deployAaveStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: false, cap: 0n },
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100_000n,
+    ]);
+    await token.write.mint([strategy.address, 5n], {
+      account: other.account,
+    });
+
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+      3n,
+    ]);
+
+    assert.equal(await token.read.balanceOf([vault.address]), 1_900_003n);
+    assert.equal(await aToken.read.balanceOf([strategy.address]), 100_000n);
+    assert.equal(await token.read.balanceOf([strategy.address]), 2n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      99_997n,
+    );
+    assert.equal(
+      await strategy.read.strategyExposure([token.address]),
+      100_002n,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([token.address, strategy.address]),
+      5n,
     );
   });
 
