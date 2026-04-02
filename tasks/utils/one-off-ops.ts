@@ -68,7 +68,6 @@ export const timelockAbi = parseAbi([
 ]);
 export const nativeBridgeGatewayAbi = parseAbi([
   "function claimAndRecoverFailedNativeDeposit(bytes32 bridgeTxHash,uint256 l2BatchNumber,uint256 l2MessageIndex,uint16 l2TxNumberInBatch,bytes32[] merkleProof)",
-  "function recoverClaimedNativeDeposit(bytes32 bridgeTxHash)",
 ]);
 
 export function readModuleParams(

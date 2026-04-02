@@ -91,9 +91,11 @@ The architecture intentionally keeps raw ETH out of normal vault accounting.
 ### Failed native deposit recovery
 
 - failed native deposits return to `NativeBridgeGateway`, not to the vault
-- on the current zkSync asset-router stack, the final ETH refund is sent by the native token vault, not by `sharedBridge()`
-- `NativeBridgeGateway` explicitly trusts the configured native token vault as its recovery sender
-- the gateway re-wraps recovered ETH and returns wrapped-native to the vault
+- when a native deposit is submitted, `NativeBridgeGateway` snapshots the exact `sharedBridge` and refund sender for that bridge era
+- recovery uses that recorded metadata, not whatever `bridgeHub` points to later
+- recovery is atomic: the gateway claims the failed deposit, re-wraps the returned ETH, and sends wrapped-native back to the vault in one transaction
+- the gateway accepts recovery ETH only from the refund sender expected for the active claim
+- future native deposits can move to a new `bridgeHub`, but historical failed deposits still recover through their recorded bridge stack
 
 ### Harvest payout
 

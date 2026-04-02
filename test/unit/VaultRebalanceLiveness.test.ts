@@ -786,6 +786,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     await vault.write.rebalanceNativeToL2([12n]);
 
     const bridgeTxHash = await bridgeHub.read.lastTxHash();
+    const sharedBridge = await bridgeHub.read.sharedBridge();
     const nativeTokenVault = await bridgeHub.read.nativeTokenVault();
     assert.notEqual(
       nativeTokenVault.toLowerCase(),
@@ -803,6 +804,22 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       bridgeTxHash,
     ]);
 
+    assert.equal(
+      (
+        await nativeBridgeGateway.read.nativeBridgeRecordSharedBridges([
+          bridgeTxHash,
+        ])
+      ).toLowerCase(),
+      sharedBridge.toLowerCase(),
+    );
+    assert.equal(
+      (
+        await nativeBridgeGateway.read.nativeBridgeRecordRefundSenders([
+          bridgeTxHash,
+        ])
+      ).toLowerCase(),
+      nativeTokenVault.toLowerCase(),
+    );
     assert.equal(await wrappedNative.read.balanceOf([vault.address]), 12n);
     assert.equal(
       await wrappedNative.read.balanceOf([nativeBridgeGateway.address]),
@@ -817,56 +834,6 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       0n,
     );
     assert.equal(bridgeRecord[2], true);
-  });
-
-  it("rejects recovering a different record against claimed native ETH", async function () {
-    const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
-      await deploySystem();
-
-    const rebalancerRole = await vault.read.REBALANCER_ROLE();
-    await vault.write.grantRole([rebalancerRole, admin.account.address]);
-    await vault.write.setVaultTokenConfig([
-      wrappedNative.address,
-      supportedTokenConfig,
-    ]);
-    await wrappedNative.write.deposit({ value: 22n });
-    await wrappedNative.write.transfer([vault.address, 22n]);
-
-    await vault.write.rebalanceNativeToL2([12n]);
-    const largerBridgeTxHash = await bridgeHub.read.lastTxHash();
-    await vault.write.rebalanceNativeToL2([10n]);
-    const smallerBridgeTxHash = await bridgeHub.read.lastTxHash();
-    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
-
-    await bridgeHub.write.claimFailedDeposit([
-      270n,
-      nativeBridgeGateway.address,
-      nativeTokenAddress,
-      12n,
-      largerBridgeTxHash,
-      0n,
-      0n,
-      0,
-      [],
-    ]);
-
-    await viem.assertions.revertWithCustomError(
-      nativeBridgeGateway.write.recoverClaimedNativeDeposit([
-        smallerBridgeTxHash,
-      ]),
-      nativeBridgeGateway,
-      "InvalidGatewayNativeBalance",
-    );
-
-    await nativeBridgeGateway.write.recoverClaimedNativeDeposit([
-      largerBridgeTxHash,
-    ]);
-
-    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 12n);
-    assert.equal(
-      await publicClient.getBalance({ address: nativeBridgeGateway.address }),
-      0n,
-    );
   });
 
   it("restricts native bridge recovery operations to vault admins", async function () {
@@ -897,7 +864,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       "Unauthorized",
     );
     await viem.assertions.revertWithCustomError(
-      gatewayAsOther.write.recoverClaimedNativeDeposit([bridgeTxHash]),
+      gatewayAsOther.write.setBridgeHub([bridgeHub.address]),
       gatewayAsOther,
       "Unauthorized",
     );
@@ -955,6 +922,176 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(
       await publicClient.getBalance({ address: nativeBridgeGateway.address }),
       0n,
+    );
+  });
+
+  it("recovers failed native deposits after the shared bridge rotates", async function () {
+    const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
+      await deploySystem();
+
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
+    await vault.write.setVaultTokenConfig([
+      wrappedNative.address,
+      supportedTokenConfig,
+    ]);
+    await wrappedNative.write.deposit({ value: 12n });
+    await wrappedNative.write.transfer([vault.address, 12n]);
+
+    await vault.write.rebalanceNativeToL2([12n]);
+
+    const bridgeTxHash = await bridgeHub.read.lastTxHash();
+    const originalSharedBridge = await bridgeHub.read.sharedBridge();
+
+    await bridgeHub.write.rotateSharedBridge();
+
+    const rotatedSharedBridge = await bridgeHub.read.sharedBridge();
+    assert.notEqual(
+      rotatedSharedBridge.toLowerCase(),
+      originalSharedBridge.toLowerCase(),
+    );
+
+    await nativeBridgeGateway.write.claimAndRecoverFailedNativeDeposit([
+      bridgeTxHash,
+      0n,
+      0n,
+      0,
+      [],
+    ]);
+
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 12n);
+    assert.equal(
+      await publicClient.getBalance({ address: nativeBridgeGateway.address }),
+      0n,
+    );
+  });
+
+  it("supports rotating the bridge hub without redeploying the gateway", async function () {
+    const {
+      vault,
+      bridgeHub,
+      grvtBridgeProxyFeeToken,
+      wrappedNative,
+      nativeBridgeGateway,
+    } = await deploySystem();
+
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
+    await vault.write.setVaultTokenConfig([
+      wrappedNative.address,
+      supportedTokenConfig,
+    ]);
+    await wrappedNative.write.deposit({ value: 20n });
+    await wrappedNative.write.transfer([vault.address, 20n]);
+
+    await vault.write.rebalanceNativeToL2([12n]);
+    const originalBridgeTxHash = await bridgeHub.read.lastTxHash();
+    const originalSharedBridge = await bridgeHub.read.sharedBridge();
+
+    const replacementBridgeHub = await viem.deployContract("MockBridgehub", [
+      grvtBridgeProxyFeeToken.address,
+    ]);
+    await nativeBridgeGateway.write.setBridgeHub([
+      replacementBridgeHub.address,
+    ]);
+
+    assert.equal(
+      (await nativeBridgeGateway.read.bridgeHub()).toLowerCase(),
+      replacementBridgeHub.address.toLowerCase(),
+    );
+
+    await vault.write.rebalanceNativeToL2([8n]);
+    const replacementBridgeTxHash =
+      await replacementBridgeHub.read.lastTxHash();
+    const replacementSharedBridge =
+      await replacementBridgeHub.read.sharedBridge();
+
+    assert.equal(
+      (
+        await nativeBridgeGateway.read.nativeBridgeRecordSharedBridges([
+          originalBridgeTxHash,
+        ])
+      ).toLowerCase(),
+      originalSharedBridge.toLowerCase(),
+    );
+    assert.equal(
+      (
+        await nativeBridgeGateway.read.nativeBridgeRecordSharedBridges([
+          replacementBridgeTxHash,
+        ])
+      ).toLowerCase(),
+      replacementSharedBridge.toLowerCase(),
+    );
+
+    await nativeBridgeGateway.write.claimAndRecoverFailedNativeDeposit([
+      originalBridgeTxHash,
+      0n,
+      0n,
+      0,
+      [],
+    ]);
+    await nativeBridgeGateway.write.claimAndRecoverFailedNativeDeposit([
+      replacementBridgeTxHash,
+      0n,
+      0n,
+      0,
+      [],
+    ]);
+
+    assert.equal(await wrappedNative.read.balanceOf([vault.address]), 20n);
+    assert.equal(
+      await publicClient.getBalance({ address: nativeBridgeGateway.address }),
+      0n,
+    );
+    assert.equal(
+      (
+        await nativeBridgeGateway.read.nativeBridgeRecords([
+          originalBridgeTxHash,
+        ])
+      )[2],
+      true,
+    );
+    assert.equal(
+      (
+        await nativeBridgeGateway.read.nativeBridgeRecords([
+          replacementBridgeTxHash,
+        ])
+      )[2],
+      true,
+    );
+  });
+
+  it("rejects direct bridge claims unless the gateway arms the recorded refund sender", async function () {
+    const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
+      await deploySystem();
+
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
+    await vault.write.setVaultTokenConfig([
+      wrappedNative.address,
+      supportedTokenConfig,
+    ]);
+    await wrappedNative.write.deposit({ value: 12n });
+    await wrappedNative.write.transfer([vault.address, 12n]);
+
+    await vault.write.rebalanceNativeToL2([12n]);
+
+    const bridgeTxHash = await bridgeHub.read.lastTxHash();
+    const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
+
+    await assert.rejects(
+      bridgeHub.write.claimFailedDeposit([
+        270n,
+        nativeBridgeGateway.address,
+        nativeTokenAddress,
+        12n,
+        bridgeTxHash,
+        0n,
+        0n,
+        0,
+        [],
+      ]),
+      /revert|reverted|execution reverted/i,
     );
   });
 
