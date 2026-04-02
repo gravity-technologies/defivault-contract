@@ -63,14 +63,16 @@ import {PositionComponent, PositionComponentKind} from "../interfaces/IVaultRepo
  *      ### allocate / deallocate flow
  *      - `allocate`:  pull `amount` from vault → approve pool → `pool.supply` → reset approval.
  *        aTokens land in this strategy contract (not the vault).
- *      - `deallocate`: call `pool.withdraw(token, amount, vault)`. Aave transfers underlying
- *        directly to the vault, bypassing this contract. The strategy does not hold underlying
- *        during this path.
+ *      - `deallocate`: use any residual underlying already held by the strategy first, then
+ *        call `pool.withdraw(token, shortfall, vault)` for the remainder. Bounded deallocation
+ *        never returns more than the requested total amount.
  *      - `deallocateAll`: identical to `deallocate` but passes `type(uint256).max` to Aave,
- *        which Aave interprets as "withdraw full aToken balance".
+ *        which Aave interprets as "withdraw full aToken balance", then sweeps any remaining
+ *        residual underlying to the vault.
  *
  *      ### Return value trust
- *      `deallocate` and `deallocateAll` return total value delivered to vault:
+ *      `deallocate` returns at most the requested total value delivered to vault.
+ *      `deallocateAll` returns the full value delivered to vault:
  *        Aave-withdrawn amount + residual-underlying sweep amount.
  *      GRVTL1TreasuryVault independently measures the balance delta on its end and emits
  *      `StrategyReportedReceivedMismatch` on discrepancy.
@@ -310,13 +312,10 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      * @inheritdoc IYieldStrategy
      * @dev Reverts if `token != underlying` or `amount == 0`.
      *
-     *      If the strategy still holds aTokens, calls `aavePool.withdraw(token, amount, vault)`.
-     *      Aave redeems aTokens held by this strategy and transfers the underlying directly to
-     *      `vault`, bypassing this contract on the return path.
-     *
-     *      After Aave withdraw, any residual underlying held by this strategy (e.g. dust or
-     *      direct donations) is swept to `vault`. This prevents permanent non-zero exposure
-     *      due solely to strategy-held underlying balance.
+     *      Uses residual underlying already held by this strategy (e.g. dust or direct donations)
+     *      first, then withdraws only the remaining shortfall from Aave. This keeps bounded
+     *      deallocation aligned with `strategyExposure` while ensuring the vault never receives
+     *      more than `amount` in total.
      *
      */
     function deallocate(
@@ -325,7 +324,14 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
     ) external override onlyVault nonReentrant returns (uint256 received) {
         _requireUnderlyingToken(token);
         _requireNonZeroAmount(amount);
-        return _deallocateAndSweep(amount);
+
+        received = _sweepUninvestedTokenToVaultUpTo(amount);
+        uint256 shortfall = amount - received;
+        if (shortfall != 0 && IERC20(aToken).balanceOf(address(this)) != 0) {
+            received += aavePool.withdraw(underlying, shortfall, vault);
+        }
+
+        emit Deallocated(underlying, amount, received);
     }
 
     /**
@@ -337,7 +343,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      *      The actual amount received may be slightly less than `aToken.balanceOf(this)` at the
      *      time of the call due to rounding in Aave's internal index math.
      *
-     *      After Aave withdraw, any residual underlying held by this strategy is swept to
+     *      After the full Aave withdraw, any residual underlying held by this strategy is swept to
      *      `vault` and included in `received`.
      *
      */
@@ -357,12 +363,18 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
         emit Deallocated(underlying, requested, received);
     }
 
-    /// @dev Transfers any strategy-held underlying dust to vault and emits sweep telemetry.
-    function _sweepUninvestedTokenToVault() internal returns (uint256 swept) {
+    /// @dev Transfers strategy-held underlying to vault up to `maxAmount` and emits sweep telemetry.
+    function _sweepUninvestedTokenToVaultUpTo(uint256 maxAmount) internal returns (uint256 swept) {
         swept = IERC20(underlying).balanceOf(address(this));
+        if (swept > maxAmount) swept = maxAmount;
         if (swept == 0) return 0;
         IERC20(underlying).safeTransfer(vault, swept);
         emit UninvestedTokenSwept(underlying, swept);
+    }
+
+    /// @dev Transfers any strategy-held underlying dust to vault and emits sweep telemetry.
+    function _sweepUninvestedTokenToVault() internal returns (uint256 swept) {
+        return _sweepUninvestedTokenToVaultUpTo(type(uint256).max);
     }
 
     function _requireUnderlyingToken(address token) internal view {
