@@ -2,7 +2,8 @@
   VaultEmergencyNativeToL2Module: {
     // Existing production vault proxy.
     vaultProxy: "0x0000000000000000000000000000000000000000",
-    // Emergency native amount to bridge in wei.
+    // Emergency native amount to bridge in wei. This native path internally uses
+    // zkSync's ETH sentinel `0x0000000000000000000000000000000000000001`.
     amount: "0n",
   },
 }

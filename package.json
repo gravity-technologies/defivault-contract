@@ -25,11 +25,12 @@
     "upgrade:vault:confirm": "hardhat upgrade:vault:confirm",
     "smoke:deployment": "hardhat run ./scripts/ci/deployment-smoke.ts --network localhost",
     "deploy:yield-recipient-timelock": "hardhat ignition deploy ./ignition/modules/VaultYieldRecipientTimelock.ts",
-    "deploy:initial-stack": "hardhat run ./scripts/deploy/deploy-initial-stack.ts --network sepolia",
+    "deploy:initial-stack": "hardhat run ./scripts/deploy/deploy-initial-stack.ts",
     "deploy:initial-stack:local": "hardhat run ./scripts/deploy/deploy-initial-stack.ts --network localhost",
     "ops:production-admin-handoff": "hardhat ops:production-admin-handoff",
     "report:treasury-vault-state": "tsx ./scripts/report/treasury-vault-state.ts",
-    "verify:initial-stack": "tsx ./scripts/verify/verify-initial-stack.ts"
+    "verify:initial-stack": "tsx ./scripts/verify/verify-initial-stack.ts",
+    "verify:production-final-state": "tsx ./scripts/verify/verify-production-final-state.ts"
   },
   "keywords": [],
   "author": "",

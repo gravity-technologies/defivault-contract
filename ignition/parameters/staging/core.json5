@@ -4,7 +4,8 @@
     bridgeHub: "0x35A54c8C757806eB6820629bc82d90E056394C92",
     // GRVT bridge-proxy fee token on the staging network.
     grvtBridgeProxyFeeToken: "0xbBc446B2C84ed42e47cCE723b9Be976226a3A08c",
-    // WETH on Ethereum Sepolia that is accepted by AaveV3
+    // WETH on Ethereum Sepolia that is accepted by AaveV3. zkSync native ETH bridge
+    // payloads still use the asset-router sentinel `0x0000000000000000000000000000000000000001`.
     wrappedNativeToken: "0xC558DBdd856501FCd9aaF1E62eae57A9F0629a3c",
   },
   VaultCoreModule: {

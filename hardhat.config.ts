@@ -129,18 +129,26 @@ const EDR_L1_NETWORK = {
   chainType: "l1",
 } as const;
 
+/** Only require mainnet credentials when the CLI explicitly targets that network. */
+const MAINNET_NETWORK_SELECTED = getRequestedNetworkName() === "mainnet";
+const MAINNET_RPC_URL = MAINNET_NETWORK_SELECTED
+  ? requireEnv("MAINNET_RPC_URL")
+  : (process.env.MAINNET_RPC_URL ?? "http://127.0.0.1:8545");
+const MAINNET_PRIVATE_KEY = MAINNET_NETWORK_SELECTED
+  ? requireEnv("MAINNET_PRIVATE_KEY")
+  : (process.env.MAINNET_PRIVATE_KEY ?? LOCALHOST_DEV_ACCOUNT);
+
 /** Only require Sepolia credentials when the CLI explicitly targets that network. */
 const SEPOLIA_NETWORK_SELECTED = getRequestedNetworkName() === "sepolia";
 const SEPOLIA_RPC_URL = SEPOLIA_NETWORK_SELECTED
-  ? requireEnv("RPC_URL")
-  : (process.env.RPC_URL ?? "http://127.0.0.1:8545");
+  ? requireEnv("SEPOLIA_RPC_URL")
+  : (process.env.SEPOLIA_RPC_URL ?? "http://127.0.0.1:8545");
 const SEPOLIA_PRIVATE_KEY = SEPOLIA_NETWORK_SELECTED
-  ? requireEnv("PRIVATE_KEY")
-  : (process.env.PRIVATE_KEY ?? LOCALHOST_DEV_ACCOUNT);
+  ? requireEnv("SEPOLIA_PRIVATE_KEY")
+  : (process.env.SEPOLIA_PRIVATE_KEY ?? LOCALHOST_DEV_ACCOUNT);
 
-/** Production deployments wait longer for confirmations before Ignition proceeds. */
-const IGNITION_REQUIRED_CONFIRMATIONS =
-  process.env.GRVT_ENV === "production" ? 5 : 1;
+/** One confirmation is enough for dependent deployment steps; reserve `safe`/`finalized` checks for higher-assurance checkpoints outside Ignition. */
+const IGNITION_REQUIRED_CONFIRMATIONS = 1;
 
 export default defineConfig({
   plugins: [hardhatToolboxViemPlugin, HardhatContractSizer],
@@ -182,6 +190,12 @@ export default defineConfig({
       ...EDR_L1_NETWORK,
       // Test-only convenience: vault mock suites deploy oversized contracts.
       allowUnlimitedContractSize: true,
+    },
+    mainnet: {
+      type: "http",
+      chainType: "l1",
+      url: MAINNET_RPC_URL,
+      accounts: [MAINNET_PRIVATE_KEY],
     },
     sepolia: {
       type: "http",

@@ -52,8 +52,10 @@ Use `.env` only for network credentials. Keep deployment inputs in versioned par
 
 Common env vars:
 
-- `RPC_URL`
-- `PRIVATE_KEY`
+- `SEPOLIA_RPC_URL`
+- `SEPOLIA_PRIVATE_KEY`
+- `MAINNET_RPC_URL`
+- `MAINNET_PRIVATE_KEY`
 
 Shared parameter rule for vault core and native gateways:
 

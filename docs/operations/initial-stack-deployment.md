@@ -33,12 +33,31 @@ Production is different:
 - Step 1 validates those live Aave addresses instead of deploying mocks
 - production should be run against Ethereum mainnet, not Sepolia
 
+Verified production initial-stack addresses:
+
+- `deployAdmin`: `0x340d75F15bF97aF6AE518d746063c591bB5368f0`
+- `finalVaultAdmin`: `0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5`
+- `bridgeHub`: `0x303a465B659cBB0ab36eE643eA362c509EEb5213`
+- `grvtBridgeProxyFeeToken`: `0xAB3B124052F0389D1cbED221d912026Ac995bb95`
+- `wrappedNativeToken`: `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`
+- `zkSync native ETH sentinel`: `0x0000000000000000000000000000000000000001`
+- `aavePool`: `0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2`
+- `underlyingToken`: `0xdAC17F958D2ee523a2206206994597C13D831ec7`
+- `aToken`: `0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a`
+- `yieldRecipient`: `0x6e1B2a22f8f3768040CFb0b0997851ffB5971439`
+
+Note:
+
+- `aavePool` is the shared Aave V3 Ethereum Pool contract. USDT is one reserve inside that pool, not a separate pool contract.
+- `wrappedNativeToken` is the ERC20 wrapper used by vault accounting. Native ETH bridge payloads use the separate zkSync sentinel `0x0000000000000000000000000000000000000001`.
+- The initial bootstrap admin is the throwaway deployer. Yield-recipient timelock control ends with `finalVaultAdmin`.
+
 ## Script
 
 Use:
 
 ```bash
-npm run deploy:initial-stack
+npm run deploy:initial-stack -- --network sepolia
 ```
 
 For localhost:
@@ -52,10 +71,13 @@ npm run deploy:initial-stack:local
 Remote runs prompt for the GRVT environment unless `GRVT_ENV` is already set:
 
 ```bash
-GRVT_ENV=staging npm run deploy:initial-stack
-GRVT_ENV=testnet npm run deploy:initial-stack
-GRVT_ENV=production npm run deploy:initial-stack
+GRVT_ENV=staging npm run deploy:initial-stack -- --network sepolia
+GRVT_ENV=testnet npm run deploy:initial-stack -- --network sepolia
+GRVT_ENV=production npm run deploy:initial-stack -- --network mainnet
 ```
+
+`GRVT_ENV` selects the parameter environment. `--network` selects the actual
+Hardhat target network. Keep them aligned explicitly.
 
 Local mode defaults to `staging` and reuses `smoke-artifacts/outputs/prerequisites.json`. Local mode is only intended for the mock-Aave environments.
 

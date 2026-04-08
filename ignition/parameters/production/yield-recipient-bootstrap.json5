@@ -4,8 +4,14 @@
     vaultProxy: "0x0000000000000000000000000000000000000000",
     // Two-day default placeholder for production; adjust to governance policy.
     minDelay: "172800n",
-    proposers: ["0x0000000000000000000000000000000000000000"],
-    executors: ["0x0000000000000000000000000000000000000000"],
-    admin: "0x0000000000000000000000000000000000000000",
+    // Match the production vault admin / deployer.
+    proposers: ["0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5"],
+    // Production executor/operator.
+    executors: [
+      "0x29496817aB0820A5aDa4d5C656Ea8DF79Ba05F3A",
+      "0x4738eDE7Fb2d3E5596867cf60c668779de7CE8C4",
+    ],
+    // Match the production vault admin / deployer.
+    admin: "0x3a23919d4aA39e096E9d6420fd6a2861A20B19e5",
   },
 }
