@@ -94,7 +94,7 @@ Operator note:
 - normal V2 `deallocate*` calls recover tracked principal,
 - residual value stays on `harvestYieldFromStrategy`,
 - `deallocateAll` is the impairment recognition path for V2; there is no separate write-down ceremony,
-- V2 entry accounting trusts strategy-reported `invested`, while the vault still measures balance deltas only as sanity checks.
+- V2 entry accounting trusts strategy-reported `invested`, while the vault still measures balance changes to reject impossible results.
 - if a trusted V2 lane takes a real impairment, governance should:
   - de-whitelist the lane so it is withdraw-only,
   - use `deallocateAll` to realize the loss and zero tracked cost basis,

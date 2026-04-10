@@ -168,7 +168,7 @@ contract AaveV3StrategyV2 is Initializable, ReentrancyGuardUpgradeable, IYieldSt
 
     /**
      * @inheritdoc IYieldStrategyV2
-     * @dev Withdraws `amount` of gross exposure from Aave and sends to vault.
+     * @dev Withdraws `amount` of reported strategy value from Aave and sends to vault.
      *      For this zero-fee lane, `received ≈ amount` (Aave may return slightly less
      *      if the available liquidity is constrained).
      */

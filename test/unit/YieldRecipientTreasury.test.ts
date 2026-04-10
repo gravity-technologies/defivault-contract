@@ -34,9 +34,12 @@ describe("YieldRecipientTreasury", async function () {
     assert.equal(await treasury.read.isWithdrawalFeeTreasury(), "0x3529510a");
   });
 
-  it("lets the owner configure reimbursement policy per strategy and token", async function () {
+  it("lets the owner configure a token budget and read it from any strategy context", async function () {
     const { treasury, treasuryAsOther } = await deployTreasury();
-    const strategyCaller = await viem.deployContract(
+    const strategyCallerOne = await viem.deployContract(
+      "TestWithdrawalFeeTreasuryCaller",
+    );
+    const strategyCallerTwo = await viem.deployContract(
       "TestWithdrawalFeeTreasuryCaller",
     );
     const token = await viem.deployContract("MockERC20", [
@@ -47,7 +50,7 @@ describe("YieldRecipientTreasury", async function () {
 
     await viem.assertions.revertWithCustomError(
       treasuryAsOther.write.setReimbursementConfig([
-        strategyCaller.address,
+        strategyCallerOne.address,
         token.address,
         1_000n,
       ]),
@@ -56,7 +59,7 @@ describe("YieldRecipientTreasury", async function () {
     );
 
     const hash = await treasury.write.setReimbursementConfig([
-      strategyCaller.address,
+      strategyCallerOne.address,
       token.address,
       1_000n,
     ]);
@@ -64,7 +67,14 @@ describe("YieldRecipientTreasury", async function () {
 
     assert.deepEqual(
       await treasury.read.reimbursementConfig([
-        strategyCaller.address,
+        strategyCallerOne.address,
+        token.address,
+      ]),
+      1_000n,
+    );
+    assert.deepEqual(
+      await treasury.read.reimbursementConfig([
+        strategyCallerTwo.address,
         token.address,
       ]),
       1_000n,
@@ -77,7 +87,7 @@ describe("YieldRecipientTreasury", async function () {
     );
     assert.equal(
       (updated.strategy as string).toLowerCase(),
-      strategyCaller.address.toLowerCase(),
+      strategyCallerOne.address.toLowerCase(),
     );
     assert.equal(
       (updated.token as string).toLowerCase(),
@@ -88,7 +98,10 @@ describe("YieldRecipientTreasury", async function () {
 
   it("reimburses exact amounts only for enabled strategy callers within budget", async function () {
     const { treasury } = await deployTreasury();
-    const strategyCaller = await viem.deployContract(
+    const strategyCallerOne = await viem.deployContract(
+      "TestWithdrawalFeeTreasuryCaller",
+    );
+    const strategyCallerTwo = await viem.deployContract(
       "TestWithdrawalFeeTreasuryCaller",
     );
     const token = await viem.deployContract("MockERC20", [
@@ -98,9 +111,9 @@ describe("YieldRecipientTreasury", async function () {
     ]);
 
     await token.write.mint([treasury.address, 2_000n]);
-    await treasury.write.setAuthorizedVault([strategyCaller.address, true]);
+    await treasury.write.setAuthorizedVault([strategyCallerOne.address, true]);
     await treasury.write.setReimbursementConfig([
-      strategyCaller.address,
+      strategyCallerOne.address,
       token.address,
       900n,
     ]);
@@ -108,10 +121,10 @@ describe("YieldRecipientTreasury", async function () {
     const recipientBefore = (await token.read.balanceOf([
       addr(recipient),
     ])) as bigint;
-    const hash = await strategyCaller.write.callReimburse([
+    const hash = await strategyCallerOne.write.callReimburse([
       treasury.address,
       token.address,
-      strategyCaller.address,
+      strategyCallerTwo.address,
       addr(recipient),
       250n,
     ]);
@@ -123,7 +136,14 @@ describe("YieldRecipientTreasury", async function () {
     assert.equal(recipientAfter - recipientBefore, 250n);
     assert.deepEqual(
       await treasury.read.reimbursementConfig([
-        strategyCaller.address,
+        strategyCallerOne.address,
+        token.address,
+      ]),
+      650n,
+    );
+    assert.deepEqual(
+      await treasury.read.reimbursementConfig([
+        strategyCallerTwo.address,
         token.address,
       ]),
       650n,
@@ -132,7 +152,7 @@ describe("YieldRecipientTreasury", async function () {
     const reimbursed = expectEventOnce(receipt, treasury, "FeeReimbursed");
     assert.equal(
       (reimbursed.strategy as string).toLowerCase(),
-      strategyCaller.address.toLowerCase(),
+      strategyCallerTwo.address.toLowerCase(),
     );
     assert.equal(
       (reimbursed.token as string).toLowerCase(),

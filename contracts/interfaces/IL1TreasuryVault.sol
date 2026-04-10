@@ -70,6 +70,9 @@ interface IL1TreasuryVault {
     /// @notice Role allowed to allocate/deallocate strategy positions.
     function ALLOCATOR_ROLE() external view returns (bytes32);
 
+    /// @notice Role allowed to harvest strategy yield.
+    function YIELD_HARVESTER_ROLE() external view returns (bytes32);
+
     /// @notice Role allowed to pause allocations, harvests, and normal L1 -> L2 rebalances.
     function PAUSER_ROLE() external view returns (bytes32);
 
@@ -333,11 +336,11 @@ interface IL1TreasuryVault {
     function allocateVaultTokenToStrategy(address vaultToken, address strategy, uint256 amount) external;
 
     /// @notice Deallocates vault-token balance from strategy back into vault idle balance.
-    /// @dev For V2, this consumes `amount` of gross exposure. The vault infers fee = amount - received
+    /// @dev For V2, this consumes `amount` of reported strategy value. The vault infers fee = amount - received
     ///      and unconditionally reimburses from treasury. Residual value stays for harvest.
     /// @param vaultToken Vault token used for the strategy position.
     /// @param strategy Strategy source.
-    /// @param amount Requested amount to withdraw (gross exposure to consume).
+    /// @param amount Requested amount of reported strategy value to withdraw.
     /// @return received Actual measured amount received by vault.
     function deallocateVaultTokenFromStrategy(
         address vaultToken,

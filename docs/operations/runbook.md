@@ -194,11 +194,8 @@ Prepare `ignition/parameters/<env>/gho-strategy-lane.json5` with:
 
 - `strategyBeacon`
 - `vaultProxy`
-- `vaultToken`
-- `ghoToken`
 - `stkGhoToken`
 - `gsmAdapter`
-- `stkGhoStakingAdapter`
 - `stkGhoRewardsDistributor`
 - `strategyName`
 

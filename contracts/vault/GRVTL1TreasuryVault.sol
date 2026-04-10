@@ -31,14 +31,16 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *        └── VAULT_ADMIN_ROLE  – governs config, token support, strategy whitelist
  *              ├── REBALANCER_ROLE  – executes L1 → L2 bridge top-ups
  *              ├── ALLOCATOR_ROLE   – allocates/deallocates to yield strategies
+ *              ├── YIELD_HARVESTER_ROLE – harvests strategy yield
  *              └── PAUSER_ROLE      – triggers pause only
  *
  *      ### Three operational flows
  *      1. **Idle custody** – ERC20 tokens sit in the vault (via `token.balanceOf(address(this))`).
  *
- *      2. **Yield strategies** – ALLOCATOR pushes idle funds into whitelisted `IYieldStrategy`
- *         contracts (e.g. Aave V3). Cost basis on allocate uses vault-side net balance decrease;
- *         unwind accounting uses vault-side balance deltas rather than trusting strategy-reported values.
+ *      2. **Yield strategies** – ALLOCATOR pushes idle funds into whitelisted strategy contracts.
+ *         Legacy cost basis uses vault-side net balance decrease. V2 cost basis uses strategy-reported
+ *         `invested`, with vault-side balance changes used to reject impossible results. Unwind accounting measures
+ *         vault-side receipt rather than trusting strategy-reported values.
  *
  *      3. **L1 → L2 bridge** – REBALANCER calls split native/ERC20 rebalance paths.
  *         ERC20 bridge requests are submitted directly through BridgeHub's two-bridges path.
@@ -98,6 +100,7 @@ contract GRVTL1TreasuryVault is
     bytes32 public constant override VAULT_ADMIN_ROLE = keccak256("VAULT_ADMIN_ROLE");
     bytes32 public constant override REBALANCER_ROLE = keccak256("REBALANCER_ROLE");
     bytes32 public constant override ALLOCATOR_ROLE = keccak256("ALLOCATOR_ROLE");
+    bytes32 public constant override YIELD_HARVESTER_ROLE = keccak256("YIELD_HARVESTER_ROLE");
     bytes32 public constant override PAUSER_ROLE = keccak256("PAUSER_ROLE");
     /// @notice Maximum number of strategies that can be simultaneously registered for a single token.
     /// @dev Bounds registry scans and prevents unbounded loops.
@@ -171,8 +174,8 @@ contract GRVTL1TreasuryVault is
      * @dev Can only be called once (enforced by `initializer`). Sets up the role hierarchy:
      *      DEFAULT_ADMIN_ROLE administers VAULT_ADMIN_ROLE; VAULT_ADMIN_ROLE administers the
      *      remaining operational roles. The `admin` address receives DEFAULT_ADMIN_ROLE,
-     *      VAULT_ADMIN_ROLE, and PAUSER_ROLE — operational roles (REBALANCER, ALLOCATOR) must
-     *      be granted separately. Yield sweep recipient is configured independently and must not
+     *      VAULT_ADMIN_ROLE, and PAUSER_ROLE — operational roles (REBALANCER, ALLOCATOR,
+     *      YIELD_HARVESTER) must be granted separately. Yield sweep recipient is configured independently and must not
      *      be the same as `admin`. Native bridge gateway is configured separately after deployment
      *      because it depends on the deployed vault proxy address.
      * @param admin                Initial governance admin account.
@@ -211,6 +214,7 @@ contract GRVTL1TreasuryVault is
         _setRoleAdmin(VAULT_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(REBALANCER_ROLE, VAULT_ADMIN_ROLE);
         _setRoleAdmin(ALLOCATOR_ROLE, VAULT_ADMIN_ROLE);
+        _setRoleAdmin(YIELD_HARVESTER_ROLE, VAULT_ADMIN_ROLE);
         _setRoleAdmin(PAUSER_ROLE, VAULT_ADMIN_ROLE);
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -254,6 +258,14 @@ contract GRVTL1TreasuryVault is
     /// @dev Reverts if caller lacks both ALLOCATOR_ROLE and VAULT_ADMIN_ROLE.
     modifier onlyAllocatorOrAdmin() {
         if (!(hasRole(ALLOCATOR_ROLE, msg.sender) || hasRole(VAULT_ADMIN_ROLE, msg.sender))) revert Unauthorized();
+        _;
+    }
+
+    /// @dev Reverts if caller lacks both YIELD_HARVESTER_ROLE and VAULT_ADMIN_ROLE.
+    modifier onlyYieldHarvesterOrAdmin() {
+        if (!(hasRole(YIELD_HARVESTER_ROLE, msg.sender) || hasRole(VAULT_ADMIN_ROLE, msg.sender))) {
+            revert Unauthorized();
+        }
         _;
     }
 
@@ -677,9 +689,9 @@ contract GRVTL1TreasuryVault is
      *      calls `strategy.allocate`, then resets the allowance to 0. This minimises residual
      *      approval exposure in case the strategy does not consume the full allowance.
      *
-     *      Cost-basis policy: tracked cost basis increases by measured vault-side net token balance
-     *      decrease during `allocate`, not by strategy receipt. Same-call token returns back to the
-     *      vault reduce the tracked spend by design. See README terminology for the rationale.
+     *      Cost-basis policy: V2 tracked cost basis increases by strategy-reported `invested`, while
+     *      measured vault-side token balance decrease is used to reject impossible results.
+     *      Legacy lanes continue to use measured vault-side spend as cost basis.
      *
      *      This function is blocked when the vault is paused.
      */
@@ -739,7 +751,7 @@ contract GRVTL1TreasuryVault is
 
     /**
      * @notice Harvests strategy yield and pays proceeds to configured yield recipient.
-     * @dev Callable by `VAULT_ADMIN_ROLE` and blocked while paused.
+     * @dev Callable by `YIELD_HARVESTER_ROLE` or `VAULT_ADMIN_ROLE`, and blocked while paused.
      *      Execution is delegated into the ops module, which realizes residual-only yield,
      *      enforces the active policy, and pays the configured recipient before returning
      *      the measured recipient-side amount.
@@ -749,7 +761,7 @@ contract GRVTL1TreasuryVault is
         address,
         uint256,
         uint256
-    ) external override nonReentrant whenNotPaused onlyVaultAdmin returns (uint256 received) {
+    ) external override nonReentrant whenNotPaused onlyYieldHarvesterOrAdmin returns (uint256 received) {
         received = abi.decode(_delegateToModule(_opsModule), (uint256));
         _syncVaultTokenDirectTvlTracking(token);
     }

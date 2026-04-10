@@ -596,6 +596,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     const treasuryOne = await viem.deployContract("YieldRecipientTreasury", [
       addr(admin),
     ]);
+    await treasuryOne.write.setAuthorizedVault([vault.address, true]);
     const treasuryOneBefore = (await token.read.balanceOf([
       treasuryOne.address,
     ])) as bigint;
@@ -686,6 +687,7 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
     const treasuryTwo = await viem.deployContract("YieldRecipientTreasury", [
       addr(admin),
     ]);
+    await treasuryTwo.write.setAuthorizedVault([vault.address, true]);
     const treasuryTwoBefore = (await token.read.balanceOf([
       treasuryTwo.address,
     ])) as bigint;

@@ -23,13 +23,13 @@ contract YieldRecipientTreasury is Ownable2Step, ReentrancyGuard, IWithdrawalFee
 
     /// @dev Vaults allowed to pull reimbursement from this treasury.
     mapping(address vault => bool allowed) private _authorizedVaults;
-    /// @dev Reimbursement budget keyed by `(strategy, token)`.
-    mapping(address strategy => mapping(address token => uint256 remainingBudget)) private _reimbursementBudgets;
+    /// @dev Reimbursement budget keyed by token only.
+    mapping(address token => uint256 remainingBudget) private _reimbursementBudgets;
 
     /// @notice Emitted when vault authorization changes.
     event AuthorizedVaultUpdated(address indexed vault, bool allowed);
 
-    /// @notice Emitted when reimbursement budget changes for one `(strategy, token)` tuple.
+    /// @notice Emitted when one token reimbursement budget changes.
     event ReimbursementConfigUpdated(address indexed strategy, address indexed token, uint256 remainingBudget);
 
     /// @notice Emitted when a strategy reimbursement is paid.
@@ -66,7 +66,7 @@ contract YieldRecipientTreasury is Ownable2Step, ReentrancyGuard, IWithdrawalFee
         address token
     ) external view override returns (uint256 remainingBudget) {
         if (strategy == address(0) || token == address(0)) revert InvalidParam();
-        return _reimbursementBudgets[strategy][token];
+        return _reimbursementBudgets[token];
     }
 
     /// @inheritdoc IWithdrawalFeeTreasury
@@ -87,16 +87,17 @@ contract YieldRecipientTreasury is Ownable2Step, ReentrancyGuard, IWithdrawalFee
     }
 
     /**
-     * @notice Sets reimbursement budget for one `(strategy, token)` tuple.
-     * @param strategy Strategy allowed to request reimbursement.
+     * @notice Sets reimbursement budget for one token.
+     * @dev `strategy` is retained only for interface and event compatibility.
+     * @param strategy Strategy context emitted with the update event.
      * @param token Principal token to reimburse.
-     * @param remainingBudget Remaining exact-token budget reserved for this tuple.
+     * @param remainingBudget Remaining exact-token budget reserved for `token`.
      */
     function setReimbursementConfig(address strategy, address token, uint256 remainingBudget) external onlyOwner {
         if (strategy == address(0) || strategy.code.length == 0 || token == address(0)) {
             revert InvalidParam();
         }
-        _reimbursementBudgets[strategy][token] = remainingBudget;
+        _reimbursementBudgets[token] = remainingBudget;
         emit ReimbursementConfigUpdated(strategy, token, remainingBudget);
     }
 
@@ -112,11 +113,11 @@ contract YieldRecipientTreasury is Ownable2Step, ReentrancyGuard, IWithdrawalFee
         }
         if (!_authorizedVaults[msg.sender]) return 0;
 
-        uint256 remainingBudget = _reimbursementBudgets[strategy][token];
+        uint256 remainingBudget = _reimbursementBudgets[token];
         if (remainingBudget < amount) return 0;
         if (IERC20(token).balanceOf(address(this)) < amount) return 0;
 
-        _reimbursementBudgets[strategy][token] = remainingBudget - amount;
+        _reimbursementBudgets[token] = remainingBudget - amount;
         IERC20(token).safeTransfer(recipient, amount);
         emit FeeReimbursed(strategy, token, recipient, amount, remainingBudget - amount);
         return amount;

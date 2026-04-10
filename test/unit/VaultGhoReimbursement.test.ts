@@ -27,9 +27,11 @@ describe("GRVTL1TreasuryVault GHO reimbursement flows", async function () {
   }
 
   async function deploySystem({
+    assetToGhoScale = 1n,
     burnFeeBps = 7n,
     yieldRecipient,
   }: {
+    assetToGhoScale?: bigint;
     burnFeeBps?: bigint;
     yieldRecipient?: `0x${string}`;
   } = {}) {
@@ -74,24 +76,18 @@ describe("GRVTL1TreasuryVault GHO reimbursement flows", async function () {
       6,
     ]);
     const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
-    const stkGho = await viem.deployContract("MockERC20", [
-      "Staked GHO",
-      "stkGHO",
-      18,
-    ]);
+    const stkGho = await viem.deployContract("MockStkGho", [gho.address]);
     const gsm = await viem.deployContract("MockAaveGsm", [
       gho.address,
       vaultToken.address,
     ] as any);
-    const staking = await viem.deployContract("MockStkGhoStaking", [
-      gho.address,
-      stkGho.address,
-    ]);
+    const staking = stkGho;
     const rewardsDistributor = await viem.deployContract(
       "MockAngleRewardsDistributor",
       [stkGho.address],
     );
     await gsm.write.setBurnFeeBps([vaultToken.address, burnFeeBps]);
+    await gsm.write.setAssetToGhoScale([vaultToken.address, assetToGhoScale]);
 
     const strategyImpl = await viem.deployContract("GsmStkGhoStrategy");
     const strategyInitData = encodeFunctionData({
@@ -99,11 +95,8 @@ describe("GRVTL1TreasuryVault GHO reimbursement flows", async function () {
       functionName: "initialize",
       args: [
         vault.address,
-        vaultToken.address,
-        gho.address,
         stkGho.address,
         gsm.address,
-        staking.address,
         rewardsDistributor.address,
         "GSM_STKGHO_USDC",
       ],
@@ -354,6 +347,115 @@ describe("GRVTL1TreasuryVault GHO reimbursement flows", async function () {
       99_990n,
     );
     assert.equal(await strategy.read.totalExposure(), 99_990n);
+  });
+
+  it("keeps scaled GHO entry and exit fees separate across one tracked cycle", async function () {
+    const {
+      treasury,
+      vault,
+      vaultToken,
+      stkGho,
+      gsm,
+      strategy,
+      vaultAsAllocator,
+    } = await deploySystem({ assetToGhoScale: 1_000_000_000_000n });
+
+    await gsm.write.setAssetToGhoExecutionBps([vaultToken.address, 9_900n]);
+    await vault.write.setStrategyPolicyConfig([
+      vaultToken.address,
+      strategy.address,
+      {
+        entryCapBps: 100,
+        exitCapBps: 7,
+        policyActive: true,
+      },
+    ]);
+
+    const treasuryBefore = (await vaultToken.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+    const allocateHash =
+      await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+        vaultToken.address,
+        strategy.address,
+        100_000n,
+      ]);
+    const allocateReceipt = await publicClient.waitForTransactionReceipt({
+      hash: allocateHash,
+    });
+
+    const allocated = expectEventOnce(
+      allocateReceipt,
+      vault,
+      "VaultTokenAllocatedToStrategy",
+    );
+    const entrySettled = expectEventOnce(
+      allocateReceipt,
+      treasury,
+      "FeeReimbursed",
+    );
+
+    assert.equal(allocated.amount, 100_000n);
+    assert.equal(allocated.invested, 99_000n);
+    assert.equal(allocated.fee, 1_000n);
+    assert.equal(entrySettled.amount, 1_000n);
+    assert.equal(await strategy.read.totalExposure(), 99_000n);
+    assert.equal(
+      await stkGho.read.balanceOf([strategy.address]),
+      99_000_000_000_000_000n,
+    );
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      99_000n,
+    );
+
+    const idleBeforeExit = (await vault.read.idleTokenBalance([
+      vaultToken.address,
+    ])) as bigint;
+    const deallocateHash =
+      await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
+        vaultToken.address,
+        strategy.address,
+      ]);
+    const deallocateReceipt = await publicClient.waitForTransactionReceipt({
+      hash: deallocateHash,
+    });
+
+    const deallocated = expectEventOnce(
+      deallocateReceipt,
+      vault,
+      "VaultTokenDeallocatedFromStrategy",
+    );
+    const exitSettled = expectEventOnce(
+      deallocateReceipt,
+      treasury,
+      "FeeReimbursed",
+    );
+    const idleAfterExit = (await vault.read.idleTokenBalance([
+      vaultToken.address,
+    ])) as bigint;
+    const treasuryAfter = (await vaultToken.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(deallocated.requested, 2n ** 256n - 1n);
+    assert.equal(deallocated.received, 98_931n);
+    assert.equal(deallocated.fee, 69n);
+    assert.equal(deallocated.loss, 0n);
+    assert.equal(exitSettled.amount, 69n);
+    assert.equal(idleAfterExit - idleBeforeExit, 99_000n);
+    assert.equal(treasuryBefore - treasuryAfter, 1_069n);
+    assert.equal(await strategy.read.totalExposure(), 0n);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        vaultToken.address,
+        strategy.address,
+      ]),
+      0n,
+    );
   });
 
   it("does not reimburse zero-fee tracked flows on the Aave V2 lane", async function () {

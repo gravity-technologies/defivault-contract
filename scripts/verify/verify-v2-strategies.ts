@@ -45,7 +45,7 @@ const AAVE_V2_INITIALIZE_ABI = parseAbi([
 ]);
 
 const GHO_STRATEGY_INITIALIZE_ABI = parseAbi([
-  "function initialize(address vault,address vaultToken,address gho,address stkGho,address gsm,address stkGhoStakingAdapter,address stkGhoRewardsDistributor,string strategyName)",
+  "function initialize(address vault,address stkGho,address gsm,address stkGhoRewardsDistributor,string strategyName)",
 ]);
 
 export function fail(message: string): never {
@@ -287,25 +287,19 @@ export function targetForLane(
     }
     const params = resolved.GhoStrategyLaneModule as
       | {
-          ghoToken?: Address;
           gsmAdapter?: Address;
           stkGhoRewardsDistributor?: Address;
-          stkGhoStakingAdapter?: Address;
           stkGhoToken?: Address;
           strategyBeacon?: Address;
           strategyName?: string;
           vaultProxy?: Address;
-          vaultToken?: Address;
         }
       | undefined;
     if (
       typeof params?.strategyBeacon !== "string" ||
       typeof params?.vaultProxy !== "string" ||
-      typeof params?.vaultToken !== "string" ||
-      typeof params?.ghoToken !== "string" ||
       typeof params?.stkGhoToken !== "string" ||
       typeof params?.gsmAdapter !== "string" ||
-      typeof params?.stkGhoStakingAdapter !== "string" ||
       typeof params?.stkGhoRewardsDistributor !== "string" ||
       typeof params?.strategyName !== "string"
     ) {
@@ -316,11 +310,8 @@ export function targetForLane(
       functionName: "initialize",
       args: [
         params.vaultProxy,
-        params.vaultToken,
-        params.ghoToken,
         params.stkGhoToken,
         params.gsmAdapter,
-        params.stkGhoStakingAdapter,
         params.stkGhoRewardsDistributor,
         params.strategyName,
       ],

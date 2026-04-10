@@ -16,7 +16,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
   const { viem } = await network.connect();
   const publicClient = await viem.getPublicClient();
   const wallets = await viem.getWalletClients();
-  const [admin, allocator, rebalancer, pauser, l2Recipient, other] = wallets;
+  const [admin, allocator, rebalancer, pauser, l2Recipient, other, harvester] =
+    wallets;
 
   function addr(wallet: (typeof wallets)[number]) {
     if (wallet.account === undefined) throw new Error("wallet has no account");
@@ -195,6 +196,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
         client: { public: publicClient, wallet: other },
       },
     );
+    const vaultAsHarvester = await viem.getContractAt(
+      "GRVTL1TreasuryVault",
+      vault.address,
+      {
+        client: { public: publicClient, wallet: harvester },
+      },
+    );
 
     return {
       bridge,
@@ -208,6 +216,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vaultAsPauser,
       vaultAsAdmin,
       vaultAsOther,
+      vaultAsHarvester,
     };
   }
 
@@ -287,6 +296,57 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(
       await vault.read.harvestableYield([token.address, stratA.address]),
       20_000n,
+    );
+  });
+
+  it("allows yield harvesters and admins to harvest strategy yield", async function () {
+    const {
+      vault,
+      vaultAsAllocator,
+      vaultAsHarvester,
+      vaultAsOther,
+      token,
+      stratA,
+    } = await deployBase();
+
+    await vault.write.grantRole([
+      await vault.read.YIELD_HARVESTER_ROLE(),
+      addr(harvester),
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      stratA.address,
+      400_000n,
+    ]);
+    await stratA.write.setAssets([token.address, 450_000n]);
+
+    const treasury = (await vault.read.yieldRecipient()) as `0x${string}`;
+    const treasuryBefore = (await token.read.balanceOf([treasury])) as bigint;
+
+    await vaultAsHarvester.write.harvestYieldFromStrategy([
+      token.address,
+      stratA.address,
+      30_000n,
+      30_000n,
+    ]);
+
+    const treasuryAfter = (await token.read.balanceOf([treasury])) as bigint;
+    assert.equal(treasuryAfter - treasuryBefore, 30_000n);
+    assert.equal(
+      await vault.read.harvestableYield([token.address, stratA.address]),
+      20_000n,
+    );
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsOther.write.harvestYieldFromStrategy([
+        token.address,
+        stratA.address,
+        1n,
+        0n,
+      ]),
+      vaultAsOther,
+      "Unauthorized",
     );
   });
 

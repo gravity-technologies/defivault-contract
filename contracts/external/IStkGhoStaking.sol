@@ -3,53 +3,66 @@ pragma solidity 0.8.34;
 
 /**
  * @title IStkGhoStaking
- * @notice Minimal upstream-derived stkGHO interface used by the strategy.
- * @dev This mirrors the ERC4626-style deposit/redeem surface exposed by Aave's `IStakeToken`.
- *      Sources:
- *      https://github.com/aave-dao/aave-umbrella/blob/8266de0b11ab0f78d1f31d7e0c1d716b4c9dad5d/src/contracts/stakeToken/interfaces/IStakeToken.sol
- *      https://github.com/aave-dao/aave-umbrella/blob/8266de0b11ab0f78d1f31d7e0c1d716b4c9dad5d/src/contracts/stakeToken/interfaces/IERC4626StakeToken.sol
+ * @notice Minimal live stkGHO token interface used by the strategy.
+ * @dev This mirrors the stkGHO staking token surface from Aave's `StakedTokenV3`.
+ *      Source:
+ *      https://github.com/bgd-labs/aave-stk-v1-5/blob/main/src/interfaces/AggregatedStakedTokenV3.sol
  */
 interface IStkGhoStaking {
     /**
-     * @notice Returns the GHO asset accepted by this staking adapter.
-     * @return token GHO token address used on deposit and redeem.
+     * @notice Returns the underlying token staked into stkGHO.
+     * @return token GHO token address accepted by `stake`.
      */
-    function gho() external view returns (address token);
+    function STAKED_TOKEN() external view returns (address token);
 
     /**
-     * @notice Returns the stkGHO share token minted and burned by this adapter.
-     * @return token stkGHO token address represented by adapter shares.
+     * @notice Returns the exchange-rate unit used by `getExchangeRate`.
+     * @return unit Fixed-point scale for the exchange rate.
      */
-    function stkGho() external view returns (address token);
+    function EXCHANGE_RATE_UNIT() external view returns (uint256 unit);
 
     /**
-     * @notice Converts `shares` into currently redeemable GHO assets.
-     * @param shares Amount of stkGHO shares.
-     * @return assets Amount of GHO assets currently represented by `shares`.
+     * @notice Returns the current stkGHO share exchange rate.
+     * @return exchangeRate Current exchange rate as a fixed-point value.
      */
-    function convertToAssets(uint256 shares) external view returns (uint256 assets);
+    function getExchangeRate() external view returns (uint216 exchangeRate);
 
     /**
-     * @notice Returns the number of shares that must be burned to withdraw `assets`.
-     * @param assets Amount of GHO assets to withdraw.
-     * @return shares Amount of stkGHO shares that must be burned.
+     * @notice Returns the configured redeem cooldown.
+     * @return cooldownSeconds Cooldown in seconds before `redeem` is allowed.
      */
-    function previewWithdraw(uint256 assets) external view returns (uint256 shares);
+    function getCooldownSeconds() external view returns (uint256 cooldownSeconds);
 
     /**
-     * @notice Deposits GHO and mints stkGHO shares.
+     * @notice Returns the number of shares minted for staking `assets`.
      * @param assets Amount of GHO to stake.
-     * @param receiver Recipient of stkGHO shares.
-     * @return shares Amount of stkGHO minted.
+     * @return shares Amount of stkGHO shares to mint.
      */
-    function deposit(uint256 assets, address receiver) external returns (uint256 shares);
+    function previewStake(uint256 assets) external view returns (uint256 shares);
 
     /**
-     * @notice Burns stkGHO shares and returns GHO.
+     * @notice Returns the amount of GHO redeemed for `shares`.
      * @param shares Amount of stkGHO to burn.
-     * @param receiver Recipient of unstaked GHO.
-     * @param owner Owner of the stkGHO shares being redeemed.
      * @return assets Amount of GHO returned.
      */
-    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets);
+    function previewRedeem(uint256 shares) external view returns (uint256 assets);
+
+    /**
+     * @notice Stakes GHO and mints stkGHO shares to `to`.
+     * @param to Recipient of stkGHO shares.
+     * @param amount Amount of GHO to stake.
+     */
+    function stake(address to, uint256 amount) external;
+
+    /**
+     * @notice Starts the cooldown required before redeeming.
+     */
+    function cooldown() external;
+
+    /**
+     * @notice Redeems stkGHO shares into GHO.
+     * @param to Recipient of redeemed GHO.
+     * @param amount Amount of stkGHO shares to redeem.
+     */
+    function redeem(address to, uint256 amount) external;
 }

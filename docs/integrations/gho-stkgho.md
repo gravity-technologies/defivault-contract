@@ -1,6 +1,6 @@
 ---
 title: "GHO / stkGHO Integration"
-updated: "2026-04-02"
+updated: "2026-04-10"
 audience: "integrators, reviewers, operators"
 purpose: "document the implemented GSM -> GHO -> stkGHO strategy and current V2 policy behavior"
 implemented_surfaces:
@@ -28,6 +28,8 @@ Deployment is single-lane:
 - one strategy instance binds one input `vaultToken`
 - the lane is `vaultToken -> GSM -> GHO -> stkGHO`
 - mutating calls revert on token mismatch
+- the strategy integrates the live stkGHO token surface directly
+- the current implementation supports only synchronous exits, so stkGHO cooldown must remain `0`
 
 Reporting model:
 
@@ -38,14 +40,16 @@ Reporting model:
 
 Exposure model:
 
-- `totalExposure()` reports gross vault-token-equivalent exposure
+- `totalExposure()` reports strategy value in vault-token units
 - exposure is a vault-token accounting view, not a guaranteed net exit quote
+- the value is before exit fees, but entry fees are not added back into it
 - treasury reimbursement is intentionally excluded from exposure and bridge-liquidity planning
 
 Supported lane assumption:
 
 - this strategy is intended for stablecoin lanes such as USDC and USDT
 - the lane is treated as `FixedRoute`
+- after decimal conversion, `vaultToken`, GHO, and stkGHO are treated as the same stablecoin unit
 - the strategy owns the full fixed path and does not accept arbitrary route input
 - explicit fee is inferred by the vault from realized execution
 - any explicit exit cost is represented by the GSM exit fee on `GHO -> vault-token`

@@ -18,26 +18,24 @@ describe("GsmStkGhoStrategy", async function () {
   const [vault, outsider] = await viem.getWalletClients();
   const publicClient = await viem.getPublicClient();
 
-  async function deploySystem() {
+  async function deploySystem({
+    assetToGhoScale = 1n,
+    cooldownSeconds = 0n,
+  }: { assetToGhoScale?: bigint; cooldownSeconds?: bigint } = {}) {
     const vaultToken = await viem.deployContract("MockERC20", [
       "USD Coin",
       "USDC",
       6,
     ]);
     const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
-    const stkGho = await viem.deployContract("MockERC20", [
-      "Staked GHO",
-      "stkGHO",
-      18,
-    ]);
+    const stkGho = await viem.deployContract("MockStkGho", [gho.address]);
     const gsm = await viem.deployContract("MockAaveGsm", [
       gho.address,
       vaultToken.address,
     ] as any);
-    const staking = await viem.deployContract("MockStkGhoStaking", [
-      gho.address,
-      stkGho.address,
-    ]);
+    await gsm.write.setAssetToGhoScale([vaultToken.address, assetToGhoScale]);
+    const staking = stkGho;
+    await staking.write.setCooldownSeconds([cooldownSeconds]);
     const rewardsDistributor = await viem.deployContract(
       "MockAngleRewardsDistributor",
       [stkGho.address],
@@ -53,11 +51,8 @@ describe("GsmStkGhoStrategy", async function () {
       functionName: "initialize",
       args: [
         vault.account.address,
-        vaultToken.address,
-        gho.address,
         stkGho.address,
         gsm.address,
-        staking.address,
         rewardsDistributor.address,
         "GSM_STKGHO_USDC",
       ],
@@ -104,13 +99,21 @@ describe("GsmStkGhoStrategy", async function () {
       .filter(Boolean);
   }
 
-  it("reports the marker, allocates into stkGHO, and exposes gross exposure", async function () {
+  it("reports the marker, allocates into stkGHO, and reports value before exit fees", async function () {
     const { strategy, beacon, vaultToken, stkGho, gho } = await deploySystem();
 
     assert.equal(await strategy.read.isYieldStrategyV2(), "0xa42fe856");
     assert.equal(
       (await beacon.read.owner()).toLowerCase(),
       vault.account.address.toLowerCase(),
+    );
+    assert.equal(
+      (await strategy.read.vaultToken()).toLowerCase(),
+      vaultToken.address.toLowerCase(),
+    );
+    assert.equal(
+      (await strategy.read.ghoToken()).toLowerCase(),
+      gho.address.toLowerCase(),
     );
 
     await vaultToken.write.mint([vault.account.address, 100_000n]);
@@ -145,7 +148,123 @@ describe("GsmStkGhoStrategy", async function () {
     assert.equal(allocated.args.stkGhoStaked, 100_000n);
   });
 
-  it("includes direct token balances in gross exposure and position breakdown", async function () {
+  it("rejects stkGHO tokens with a non-zero cooldown", async function () {
+    await assert.rejects(
+      deploySystem({ cooldownSeconds: 1n }),
+      /UnsupportedStkGhoCooldown/,
+    );
+  });
+
+  it("rejects GSM lanes whose GHO token does not match stkGHO staking", async function () {
+    const vaultToken = await viem.deployContract("MockERC20", [
+      "USD Coin",
+      "USDC",
+      6,
+    ]);
+    const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
+    const otherGho = await viem.deployContract("MockERC20", [
+      "Other GHO",
+      "oGHO",
+      18,
+    ]);
+    const stkGho = await viem.deployContract("MockStkGho", [gho.address]);
+    const gsm = await viem.deployContract("MockAaveGsm", [
+      otherGho.address,
+      vaultToken.address,
+    ] as any);
+    const rewardsDistributor = await viem.deployContract(
+      "MockAngleRewardsDistributor",
+      [stkGho.address],
+    );
+
+    const implementation = await viem.deployContract("GsmStkGhoStrategy");
+    const beacon = await viem.deployContract("TestUpgradeableBeacon", [
+      implementation.address,
+      vault.account.address,
+    ]);
+    const initializeData = encodeFunctionData({
+      abi: implementation.abi,
+      functionName: "initialize",
+      args: [
+        vault.account.address,
+        stkGho.address,
+        gsm.address,
+        rewardsDistributor.address,
+        "GSM_STKGHO_USDC",
+      ],
+    });
+
+    await assert.rejects(
+      viem.deployContract("TestBeaconProxy", [beacon.address, initializeData]),
+      /InvalidParam/,
+    );
+  });
+
+  it("keeps sell-side entry fees out of invested principal and gross withdrawal amount", async function () {
+    const { strategy, vaultToken, stkGho, gho, gsm } = await deploySystem();
+
+    await gsm.write.setAssetToGhoExecutionBps([vaultToken.address, 9_900n]);
+    await vaultToken.write.mint([vault.account.address, 100_000n]);
+    await vaultToken.write.approve([strategy.address, 100_000n]);
+
+    const txHash = await strategy.write.allocate([100_000n]);
+    const logs = await decodeStrategyLogs(strategy, txHash);
+
+    const allocated = logs.find((log: any) => log.eventName === "Allocated") as
+      | any
+      | undefined;
+    assert.ok(allocated);
+    assert.equal(allocated.args.amountIn, 100_000n);
+    assert.equal(allocated.args.invested, 99_000n);
+    assert.equal(allocated.args.ghoOut, 99_000n);
+    assert.equal(allocated.args.stkGhoStaked, 99_000n);
+    assert.equal(await strategy.read.totalExposure(), 99_000n);
+
+    await strategy.write.withdraw([99_000n]);
+
+    assert.equal(
+      await vaultToken.read.balanceOf([vault.account.address]),
+      99_000n,
+    );
+    assert.equal(await stkGho.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await gho.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await strategy.read.totalExposure(), 0n);
+  });
+
+  it("keeps invested principal in vault-token units for scaled USDC to GHO lanes", async function () {
+    const { strategy, vaultToken, stkGho, gho, gsm } = await deploySystem({
+      assetToGhoScale: 1_000_000_000_000n,
+    });
+
+    await gsm.write.setAssetToGhoExecutionBps([vaultToken.address, 9_900n]);
+    await vaultToken.write.mint([vault.account.address, 100_000n]);
+    await vaultToken.write.approve([strategy.address, 100_000n]);
+
+    const txHash = await strategy.write.allocate([100_000n]);
+    const logs = await decodeStrategyLogs(strategy, txHash);
+
+    const allocated = logs.find((log: any) => log.eventName === "Allocated") as
+      | any
+      | undefined;
+    assert.ok(allocated);
+    assert.equal(allocated.args.amountIn, 100_000n);
+    assert.equal(allocated.args.invested, 99_000n);
+    assert.equal(allocated.args.ghoOut, 99_000_000_000_000_000n);
+    assert.equal(allocated.args.stkGhoStaked, 99_000_000_000_000_000n);
+    assert.equal(await strategy.read.totalExposure(), 99_000n);
+
+    await strategy.write.withdraw([99_000n]);
+
+    assert.equal(
+      await vaultToken.read.balanceOf([vault.account.address]),
+      99_000n,
+    );
+    assert.equal(await stkGho.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await gho.read.balanceOf([strategy.address]), 0n);
+    assert.equal(await strategy.read.totalExposure(), 0n);
+  });
+
+  it("includes direct token balances in reported value and position breakdown", async function () {
     const { strategy, vaultToken, gho, stkGho, gsm } = await deploySystem();
 
     await gsm.write.setBurnFeeBps([vaultToken.address, 7n]);
@@ -214,7 +333,7 @@ describe("GsmStkGhoStrategy", async function () {
     assert.equal((await strategy.read.positionBreakdown()).length, 0);
   });
 
-  it("claims stkGHO rewards and withdraws gross exposure with the expected exit fee", async function () {
+  it("claims stkGHO rewards and withdraws reported value with the expected exit fee", async function () {
     const { strategy, vaultToken, stkGho, gho, gsm, rewardsDistributor } =
       await deploySystem();
 

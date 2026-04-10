@@ -129,7 +129,7 @@ describe("AaveV3StrategyV2", async function () {
     );
   });
 
-  it("reports the V2 marker, lane token, balances, and gross exposure", async function () {
+  it("reports the V2 marker, lane token, balances, and strategy value", async function () {
     const { strategy, beacon, vaultToken, aToken, otherToken } =
       await deploySystem();
 

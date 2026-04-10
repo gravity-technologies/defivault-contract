@@ -155,10 +155,12 @@ contract MockAaveGsm is IAaveGsm {
     ) external view returns (uint256 assetSold, uint256 ghoBought, uint256 grossGho, uint256 fee) {
         if (minGhoAmount == 0) return (0, 0, 0, 0);
         uint256 scale = _assetScaleOrDefault(assetToGhoScale);
-        assetSold = (minGhoAmount + (scale - 1)) / scale;
+        uint256 quoteBps = _quoteBpsOrDefault(assetToGhoQuoteBps, assetToGhoExecutionBps);
+        uint256 denominator = quoteBps * scale;
+        assetSold = (minGhoAmount * BPS_SCALE + (denominator - 1)) / denominator;
         grossGho = assetSold * scale;
-        ghoBought = grossGho;
-        fee = 0;
+        ghoBought = (grossGho * quoteBps) / BPS_SCALE;
+        fee = grossGho - ghoBought;
     }
 
     function _executionBpsOrDefault(uint256 configuredBps) internal pure returns (uint256 executionBps) {

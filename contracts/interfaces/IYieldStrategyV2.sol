@@ -12,13 +12,13 @@ import {PositionComponent} from "./IVaultReportingTypes.sol";
  * The vault owns all accounting (cost basis, residual computation, fee inference, reimbursement).
  *
  * Amounts in this interface are in **vault-token units**:
- * - `totalExposure()` returns **gross** vault-token-equivalent (before hypothetical exit fees).
+ * - `totalExposure()` returns strategy value in vault-token units before exit fees.
  * - `allocate(amount)` pulls `amount` vault-token and returns `invested` (the strategy-reported
  *   net amount treated as deployed principal for V2 lanes).
- * - `withdraw(amount)` consumes `amount` of gross exposure and returns `received` (net of exit fee).
+ * - `withdraw(amount)` consumes `amount` of reported strategy value and returns `received` (net of exit fee).
  *
  * V2 deliberately uses a narrower trust model than legacy:
- * - the vault still measures balance deltas and rejects impossible shapes,
+ * - the vault still measures balance changes and rejects impossible results,
  * - but V2 entry cost basis is derived from the strategy-reported `invested`,
  * - so governance-controlled V2 implementations are trusted to not underreport deployed principal.
  */
@@ -36,12 +36,11 @@ interface IYieldStrategyV2 {
     // --------- Reporting ---------
 
     /**
-     * @notice Returns total strategy exposure for the configured lane in **gross** vault-token units.
-     * @dev "Gross" means before any hypothetical exit fee. For example, a GSM-based strategy reports the
-     *      vault-token equivalent of its GHO holdings using the sell-side preview, not the buy-side net.
-     *      This keeps exposure in the same unit space as the vault's `costBasis` so that
-     *      `residual = totalExposure - costBasis` captures yield appreciation, not exit fees.
-     * @return exposure Gross strategy exposure in vault-token units.
+     * @notice Returns total strategy value for the configured lane in vault-token units.
+     * @dev The value is before exit fees, but entry fees are not added back. The vault compares this
+     *      number with `costBasis` so that `residual = totalExposure - costBasis` captures yield
+     *      appreciation, not entry or exit fees.
+     * @return exposure Strategy value in vault-token units.
      */
     function totalExposure() external view returns (uint256 exposure);
 
@@ -64,21 +63,21 @@ interface IYieldStrategyV2 {
     /**
      * @notice Deposits vault-token value from the vault into the strategy's configured lane.
      * @dev The strategy pulls `amount` vault-token from the vault, converts, and invests.
-     *      Returns `invested`: the vault-token-equivalent the strategy reports as deployed principal
-     *      for this allocation. The vault sanity-checks `invested <= spent`, but does not derive an
+     *      Returns `invested`: the vault-token value the strategy reports as deployed principal
+     *      for this allocation. The vault checks `invested <= spent`, but does not derive an
      *      independent lower bound on `invested` for V2 lanes. The vault uses `invested` for V2 cost
      *      basis, not `amount`.
      * @param amount Requested vault-token amount to allocate.
-     * @return invested Strategy-reported vault-token-equivalent treated as deployed principal.
+     * @return invested Strategy-reported vault-token value treated as deployed principal.
      */
     function allocate(uint256 amount) external returns (uint256 invested);
 
     /**
      * @notice Withdraws vault-token value from the strategy back to the vault.
-     * @dev `amount` is vault-token units of **gross exposure** to consume. The strategy converts that
-     *      amount of underlying back to vault-token and sends it to the vault. Returns `received`:
-     *      the actual vault-token sent (net of exit fee). The vault infers fee = amount - received.
-     * @param amount Gross vault-token-equivalent exposure to consume.
+     * @dev `amount` is strategy value, in vault-token units, to consume. The strategy converts that
+     *      amount back to vault-token and sends it to the vault. Returns `received`: the actual
+     *      vault-token sent (net of exit fee). The vault infers fee = amount - received.
+     * @param amount Strategy value to consume, in vault-token units.
      * @return received Actual vault-token amount sent to the vault (net of exit fee).
      */
     function withdraw(uint256 amount) external returns (uint256 received);

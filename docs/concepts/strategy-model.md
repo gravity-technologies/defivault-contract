@@ -41,7 +41,7 @@ V2 `IYieldStrategyV2` is stricter:
 - harvest is just a vault-side residual withdrawal, not a separate strategy surface,
 - V2 strategies are trusted implementations, so the vault does not try to prove their internal route bookkeeping on-chain,
 - the vault owns the authoritative principal ledger for the lane,
-- but V2 entry accounting trusts strategy-reported `invested` and only uses measured vault deltas as sanity checks,
+- but V2 entry accounting trusts strategy-reported `invested` and only uses measured vault deltas to reject impossible results,
 - when a V2 lane is economically empty, final removal is an admin cleanup step, not a strict exact-token archival proof.
 
 ## Required Adapter Rules
@@ -97,7 +97,7 @@ This is the current GHO / stkGHO V2 model in this repo:
 
 - `exactTokenBalance(stkGho)` reports directly held invested stkGHO units
 - `positionBreakdown()` can show `stkGHO` plus residual `GHO` or vault-token dust
-- `totalExposure()` reports one gross vault-token-equivalent number for the lane
+- `totalExposure()` reports strategy value in vault-token units for the lane
 - `withdraw(amount)` is the only exit surface
 - the vault uses the same `withdraw(amount)` surface for tracked deallocation and residual harvest
 - fee caps are enforced on realized exits, not preview calls
@@ -105,7 +105,7 @@ This is the current GHO / stkGHO V2 model in this repo:
 Rules for this model:
 
 - keep route shape fixed inside the strategy implementation,
-- keep gross exposure and stored principal in the same unit space,
+- report strategy value in the same token units used by the vault's principal ledger,
 - keep harvest on the vault-owned residual path,
 - let the vault enforce fee caps on realized execution,
 - keep reimbursement decisions in vault policy and treasury config, not in the strategy.

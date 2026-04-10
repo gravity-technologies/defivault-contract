@@ -613,6 +613,9 @@ async function collectHistoricalEvents(args: {
         toBlock: chunkEnd,
       });
       for (const log of logs) {
+        if (log.eventName !== eventName) {
+          continue;
+        }
         if (
           log.blockNumber === null ||
           log.logIndex === null ||

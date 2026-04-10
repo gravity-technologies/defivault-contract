@@ -16,7 +16,7 @@ const AAVE_V2_INITIALIZE_ABI = parseAbi([
 ]);
 
 const GHO_STRATEGY_INITIALIZE_ABI = parseAbi([
-  "function initialize(address vault,address vaultToken,address gho,address stkGho,address gsm,address stkGhoStakingAdapter,address stkGhoRewardsDistributor,string strategyName)",
+  "function initialize(address vault,address stkGho,address gsm,address stkGhoRewardsDistributor,string strategyName)",
 ]);
 
 function withDeploymentDir(args: {
@@ -223,12 +223,9 @@ describe("verify-v2-strategies helpers", function () {
       functionName: "initialize",
       args: [
         "0x4000000000000000000000000000000000000001",
-        "0x4000000000000000000000000000000000000002",
-        "0x4000000000000000000000000000000000000003",
         "0x4000000000000000000000000000000000000004",
         "0x4000000000000000000000000000000000000005",
         "0x4000000000000000000000000000000000000006",
-        "0x4000000000000000000000000000000000000007",
         "GSM_STKGHO_USDC",
       ],
     });
@@ -250,13 +247,10 @@ describe("verify-v2-strategies helpers", function () {
           GhoStrategyLaneModule: {
             strategyBeacon: "0x4000000000000000000000000000000000000009",
             vaultProxy: "0x4000000000000000000000000000000000000001",
-            vaultToken: "0x4000000000000000000000000000000000000002",
-            ghoToken: "0x4000000000000000000000000000000000000003",
             stkGhoToken: "0x4000000000000000000000000000000000000004",
             gsmAdapter: "0x4000000000000000000000000000000000000005",
-            stkGhoStakingAdapter: "0x4000000000000000000000000000000000000006",
             stkGhoRewardsDistributor:
-              "0x4000000000000000000000000000000000000007",
+              "0x4000000000000000000000000000000000000006",
             strategyName: "GSM_STKGHO_USDC",
           },
         },

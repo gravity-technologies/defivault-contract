@@ -132,19 +132,12 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
       6,
     ]);
     const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
-    const stkGho = await viem.deployContract("MockERC20", [
-      "Staked GHO",
-      "stkGHO",
-      18,
-    ]);
+    const stkGho = await viem.deployContract("MockStkGho", [gho.address]);
     const gsm = await viem.deployContract("MockAaveGsm", [
       gho.address,
       vaultToken.address,
     ] as any);
-    const staking = await viem.deployContract("MockStkGhoStaking", [
-      gho.address,
-      stkGho.address,
-    ]);
+    const staking = stkGho;
     const rewardsDistributor = await viem.deployContract(
       "MockAngleRewardsDistributor",
       [stkGho.address],
@@ -157,11 +150,8 @@ describe("GRVTL1TreasuryVault accounting invariant", async function () {
       functionName: "initialize",
       args: [
         vault.address,
-        vaultToken.address,
-        gho.address,
         stkGho.address,
         gsm.address,
-        staking.address,
         rewardsDistributor.address,
         "GSM_STKGHO_USDC",
       ],

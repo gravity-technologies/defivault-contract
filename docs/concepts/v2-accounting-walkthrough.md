@@ -12,6 +12,11 @@ In that setup:
 - the strategy executes the route
 - the vault owns the accounting ledger
 
+Stable lane assumption:
+
+- after decimal conversion, `USDT`, `GHO`, and `stkGHO` are treated as the same dollar unit
+- GSM entry and exit fees are handled separately by vault policy
+
 ## Mental Model
 
 ```text
@@ -71,7 +76,7 @@ Strategy.allocate(amount)
   | 3. pull USDT from vault
   | 4. swap USDT -> GHO
   | 5. stake GHO -> stkGHO
-  | 6. return invested, denominated in USDT-equivalent units
+  | 6. return invested, in USDT units
   v
 Vault accounting
   |
@@ -83,14 +88,14 @@ Vault accounting
   | 12. costBasis += invested
 ```
 
-Important point: for V2, `costBasis` increases by `invested`, not by the gross amount requested and not by the measured `spent`.
+Important point: for V2, `costBasis` increases by `invested`, not by the requested amount and not by the measured `spent`.
 
 Why:
 
 - `costBasis` is meant to represent deployed principal, not every token that left the vault.
-- entry friction is treated as a fee, not as productive principal.
-- the strategy knows the fixed route and can report the net vault-token-equivalent value actually deployed.
-- the vault still measures `spent` as a sanity check and rejects impossible accounting, such as `invested > spent`.
+- entry cost is treated as a fee, not as deployed principal.
+- the strategy knows the fixed route and can report the vault-token value actually deployed.
+- the vault still measures `spent` and rejects impossible accounting, such as `invested > spent`.
 - if the entry fee is allowed by policy, reimbursement restores vault-side cash without inflating principal.
 
 Example:
@@ -103,7 +108,7 @@ Before:
 Allocate:
   requested amount:         100 USDT
   vault-side spent:         100 USDT
-  strategy invested:         99 USDT-equivalent
+  strategy invested:         99 USDT
   entry fee:                  1 USDT
 
 After:
@@ -141,9 +146,10 @@ So if the GHO entry path charges any entry fee when `entryCapBps = 0`, allocatio
 
 ## Exposure And Yield
 
-The strategy reports `totalExposure()` in gross vault-token units.
+The strategy reports `totalExposure()` in vault-token units before exit fees. Entry fees are not
+added back into this number.
 
-For a USDT lane, that means gross `USDT`-equivalent exposure.
+For a USDT lane, that means reported strategy value in `USDT`.
 
 ```text
 strategy exact balances:
@@ -153,7 +159,7 @@ strategy exact balances:
 
 strategy totalExposure():
   idle USDT
-  + gross USDT-equivalent value of GHO and stkGHO assets
+  + USDT value of GHO and stkGHO assets, without adding back entry fees
 ```
 
 The vault computes raw residual yield as:
@@ -167,13 +173,13 @@ Example:
 ```text
 Current state:
   costBasis:       99 USDT
-  totalExposure:  105 USDT-equivalent
+  totalExposure:  105 USDT
 
 Raw harvestable yield:
-  105 - 99 = 6 USDT-equivalent
+  105 - 99 = 6 USDT
 ```
 
-The strategy does not label the `6` as yield. The vault derives that because gross exposure is above tracked principal.
+The strategy does not label the `6` as yield. The vault derives that because reported strategy value is above tracked principal.
 
 Residual yield can come from:
 
@@ -196,7 +202,7 @@ Vault.deallocateVaultTokenFromStrategy(USDT, strategy, amount)
 Strategy.withdraw(amount)
   |
   | 2. sweep idle USDT first
-  | 3. compute GHO needed for remaining gross USDT amount
+  | 3. compute GHO needed for the remaining USDT value
   | 4. use idle GHO if available
   | 5. unstake stkGHO -> GHO if needed
   | 6. swap GHO -> USDT
@@ -211,12 +217,12 @@ Vault accounting
   | 12. costBasis -= amount
 ```
 
-Important point: for V2 tracked principal exits, `costBasis` decreases by the requested gross amount, not by the net amount received.
+Important point: for V2 principal exits, `costBasis` decreases by the requested amount, not by the net amount received.
 
 Why:
 
-- the caller is asking to consume a gross slice of tracked principal exposure.
-- the route may return less than that gross amount because of exit fees.
+- the caller is asking to consume that much tracked principal.
+- the route may return less than that amount because of exit fees.
 - that shortfall is handled as a fee and, for tracked flows, reimbursed if it passes the configured cap.
 - reducing `costBasis` by only `received` would leave paid exit fees behind as fake remaining principal.
 - keeping the route proceeds and treasury reimbursement separate makes the ledger easier to audit.
@@ -228,7 +234,7 @@ Before:
   strategy costBasis:     99 USDT
 
 Deallocate:
-  requested amount:       40 USDT gross exposure
+  requested amount:       40 USDT of tracked value
   route proceeds:      39.97 USDT
   exit fee:             0.03 USDT
   reimbursement:        0.03 USDT, if fee is within cap
@@ -244,7 +250,7 @@ The route and treasury are intentionally separate cashflows:
 ```text
 strategy route proceeds:  actual USDT returned by the route
 treasury reimbursement:  policy top-up for tracked principal fees
-costBasis change:        gross principal amount consumed
+costBasis change:        principal amount consumed
 ```
 
 ## Full Principal Exit And Loss
@@ -263,7 +269,7 @@ Then it withdraws `withdrawable`, applies the same exit fee cap and reimbursemen
 Why:
 
 - `deallocateAll` is the explicit lane cleanup and loss-recognition path.
-- if exposure is below cost basis, the difference is a real impairment, not residual principal to keep carrying.
+- if exposure is below cost basis, the difference is a real loss, not residual principal to keep carrying.
 - zeroing `costBasis` prevents the vault from reporting stale principal after the lane has been fully unwound as far as the strategy can support.
 - any value above principal remains residual and must be handled through harvest, not mixed into the principal exit.
 
@@ -302,11 +308,11 @@ This is deliberate: V2 recognizes loss during a real unwind, not through a separ
 
 ## Harvest Flow
 
-Harvest is not principal recovery. Harvest realizes residual value only.
+Harvest is not principal recovery. Harvest realizes value above principal only.
 
 Why:
 
-- residual is defined as value above tracked principal: `max(0, totalExposure - costBasis)`.
+- residual is value above tracked principal: `max(0, totalExposure - costBasis)`.
 - harvesting residual should not change the amount of tracked principal still assigned to the strategy.
 - harvest belongs to the protocol, so its route fees are not reimbursed.
 - keeping harvest separate from principal exit prevents yield realization from hiding losses or changing the principal ledger.
@@ -329,11 +335,11 @@ Example:
 ```text
 Before:
   costBasis:       99 USDT
-  totalExposure:  105 USDT-equivalent
-  residual:         6 USDT-equivalent
+  totalExposure:  105 USDT
+  residual:         6 USDT
 
 Harvest:
-  requested:        6 USDT gross exposure
+  requested:        6 USDT of residual value
   route proceeds: 5.995 USDT
   exit fee:      0.005 USDT
   reimbursement:    0
@@ -381,7 +387,7 @@ Initial:
 2. Position appreciates
   totalExposure:           105
   costBasis:                99
-  raw harvestable yield:     6
+  harvestable yield:         6
 
 3. Deallocate 40 USDT tracked principal
   route proceeds:        39.97
@@ -410,7 +416,7 @@ USDT is principal.
 GHO is route inventory.
 stkGHO is the invested position.
 costBasis is the vault's principal ledger.
-totalExposure is gross USDT-equivalent strategy value.
+totalExposure is strategy value reported in USDT, before exit fees and without adding back entry fees.
 residual yield is max(0, totalExposure - costBasis).
 tracked-flow fees are reimbursed only after passing caps.
 harvest fees are never reimbursed.

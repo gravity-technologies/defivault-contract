@@ -66,7 +66,7 @@ For V2 lanes:
 - the strategy is single-lane and exposes immutable transform metadata,
 - V2 strategies are trusted implementations,
 - the vault owns the authoritative tracked principal ledger for the lane,
-- V2 entry cost basis uses strategy-reported `invested`, while measured vault deltas remain sanity checks only,
+- V2 entry cost basis uses strategy-reported `invested`, while measured vault balance changes only reject impossible results,
 - the vault activates per-lane policy with `setStrategyPolicyConfig`,
 - normal allocate, deallocate, and harvest paths enforce realized fee caps,
 - harvest is a vault-side residual withdrawal through the same strategy exit surface,

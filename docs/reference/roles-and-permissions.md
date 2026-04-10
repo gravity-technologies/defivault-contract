@@ -9,9 +9,10 @@
 ## Role Hierarchy
 
 - `DEFAULT_ADMIN_ROLE`: administers `VAULT_ADMIN_ROLE`
-- `VAULT_ADMIN_ROLE`: administers `REBALANCER_ROLE`, `ALLOCATOR_ROLE`, and `PAUSER_ROLE`
+- `VAULT_ADMIN_ROLE`: administers `REBALANCER_ROLE`, `ALLOCATOR_ROLE`, `YIELD_HARVESTER_ROLE`, and `PAUSER_ROLE`
 - `REBALANCER_ROLE`: executes normal L1 -> L2 top-ups
 - `ALLOCATOR_ROLE`: allocates and deallocates strategy positions
+- `YIELD_HARVESTER_ROLE`: harvests strategy yield
 - `PAUSER_ROLE`: pauses allocations, harvests, and normal L1 -> L2 rebalances
 
 Initialization grants the admin address:
@@ -24,16 +25,16 @@ Operational roles must be granted separately.
 
 ## Policy Matrix
 
-| Function                                     | Allowed caller(s)                      | Blocked by `pause()` | Requires `vaultToken.supported == true` |
-| -------------------------------------------- | -------------------------------------- | -------------------- | --------------------------------------- |
-| `setStrategyPolicyConfig`                    | `VAULT_ADMIN_ROLE`                     | No                   | No                                      |
-| `allocateVaultTokenToStrategy`               | `ALLOCATOR_ROLE`                       | Yes                  | Yes                                     |
-| `deallocateVaultTokenFromStrategy`           | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE` | No                   | No                                      |
-| `deallocateAllVaultTokenFromStrategy`        | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE` | No                   | No                                      |
-| `harvestYieldFromStrategy`                   | `VAULT_ADMIN_ROLE`                     | Yes                  | No                                      |
-| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                      | Yes                  | Yes                                     |
-| `pause`                                      | `PAUSER_ROLE` or `VAULT_ADMIN_ROLE`    | N/A                  | N/A                                     |
-| `unpause`                                    | `VAULT_ADMIN_ROLE`                     | N/A                  | N/A                                     |
+| Function                                     | Allowed caller(s)                            | Blocked by `pause()` | Requires `vaultToken.supported == true` |
+| -------------------------------------------- | -------------------------------------------- | -------------------- | --------------------------------------- |
+| `setStrategyPolicyConfig`                    | `VAULT_ADMIN_ROLE`                           | No                   | No                                      |
+| `allocateVaultTokenToStrategy`               | `ALLOCATOR_ROLE`                             | Yes                  | Yes                                     |
+| `deallocateVaultTokenFromStrategy`           | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`       | No                   | No                                      |
+| `deallocateAllVaultTokenFromStrategy`        | `ALLOCATOR_ROLE` or `VAULT_ADMIN_ROLE`       | No                   | No                                      |
+| `harvestYieldFromStrategy`                   | `YIELD_HARVESTER_ROLE` or `VAULT_ADMIN_ROLE` | Yes                  | No                                      |
+| `rebalanceNativeToL2` / `rebalanceErc20ToL2` | `REBALANCER_ROLE`                            | Yes                  | Yes                                     |
+| `pause`                                      | `PAUSER_ROLE` or `VAULT_ADMIN_ROLE`          | N/A                  | N/A                                     |
+| `unpause`                                    | `VAULT_ADMIN_ROLE`                           | N/A                  | N/A                                     |
 
 ## Operational Notes
 

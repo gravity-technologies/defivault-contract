@@ -49,7 +49,7 @@ V2 narrows the model:
 
 - `vaultToken` is fixed in strategy state
 - `allocate(amount)` and `withdraw(amount)` are the fund-moving surfaces
-- `totalExposure()` reports one gross vault-token-equivalent number
+- `totalExposure()` reports strategy value in vault-token units
 - the strategy does not expose a separate full-exit primitive
 - the vault uses the same withdrawal surface for tracked deallocation and residual harvest
 
@@ -73,14 +73,14 @@ The vault:
 
 The key accounting rules are:
 
-- `totalExposure()` is reported in gross vault-token units.
+- `totalExposure()` is reported in vault-token units, before exit fees and without adding back entry fees.
 - On allocation, the strategy returns `invested`.
 - For V2 lanes, the vault increases `costBasis` by `invested`.
 - On exit, the vault measures what it actually received.
-- Fee is inferred from the gap between requested gross exposure and measured receipt.
+- Fee is inferred from the gap between the requested value and what the vault actually received.
 - Residual yield is `max(0, totalExposure - costBasis)`.
 
-This creates a deliberate trust tradeoff. V2 entry accounting uses strategy-reported `invested`, while vault-side measured deltas remain sanity checks. That is acceptable only because V2 lanes are governance-controlled implementations.
+This creates a deliberate trust tradeoff. V2 entry accounting uses strategy-reported `invested`, while vault-side balance checks only reject impossible results. That is acceptable only because V2 lanes are governance-controlled implementations.
 
 For the worked USDT/GHO examples, see [v2-accounting-walkthrough.md](v2-accounting-walkthrough.md).
 

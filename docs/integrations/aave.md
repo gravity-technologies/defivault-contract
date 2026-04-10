@@ -72,7 +72,7 @@ It is:
 - zero-fee in the intended venue model
 - exposed through `allocate(amount)`, `withdraw(amount)`, and `totalExposure()`
 - the vault owns the authoritative principal ledger for the lane
-- V2 entry accounting trusts strategy-reported `invested`, while vault-side balance deltas remain sanity checks only
+- V2 entry accounting trusts strategy-reported `invested`, while vault-side balance changes only reject impossible results
 
 Operationally this is the baseline V2 lane:
 

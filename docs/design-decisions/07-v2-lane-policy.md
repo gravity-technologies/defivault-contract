@@ -42,7 +42,7 @@ The V2 model is intentionally different:
 - there is no separate emergency unwind surface; incident-time exits use the same fee and reimbursement rules as normal tracked exits.
 - V2 strategies are trusted implementations, so the vault does not treat their internal route bookkeeping as an adversarial input.
 - the vault owns the authoritative tracked principal ledger.
-- V2 entry accounting trusts strategy-reported `invested`; vault-side balance deltas remain sanity checks, not the V2 source of truth for principal.
+- V2 entry accounting trusts strategy-reported `invested`; vault-side balance changes only reject impossible results, and are not the V2 source of truth for principal.
 - final lane removal is an admin cleanup action for an economically empty lane, not a strict exact-token archival proof.
 - if a lane is impaired, governance recognizes that loss during `deallocateAll` rather than through a separate write-down path.
 

@@ -94,7 +94,7 @@ library VaultStrategyOpsLib {
 
     /**
      * @notice Reads strategy exposure from a strategy with failure normalization.
-     * @dev V2 strategies call `totalExposure()` (gross). Legacy strategies call `strategyExposure(token)`.
+     * @dev V2 strategies call `totalExposure()`. Legacy strategies call `strategyExposure(token)`.
      */
     function readStrategyExposure(address token, address strategy) public view returns (bool ok, uint256 exposure) {
         if (isYieldStrategyV2(strategy)) {
