@@ -12,7 +12,9 @@ import {PositionComponent} from "./IVaultReportingTypes.sol";
  * The vault owns all accounting (cost basis, residual computation, fee inference, reimbursement).
  *
  * Amounts in this interface are in **vault-token units**:
- * - `totalExposure()` returns strategy value in vault-token units before exit fees.
+ * - `totalExposure()` returns total strategy value in vault-token units before exit fees.
+ * - `withdrawableExposure()` returns the subset of strategy value that is operationally withdrawable now,
+ *   still in vault-token units and still before exit fees.
  * - `allocate(amount)` pulls `amount` vault-token and returns `invested` (the strategy-reported
  *   net amount treated as deployed principal for V2 lanes).
  * - `withdraw(amount)` consumes `amount` of reported strategy value and returns `received` (net of exit fee).
@@ -43,6 +45,15 @@ interface IYieldStrategyV2 {
      * @return exposure Strategy value in vault-token units.
      */
     function totalExposure() external view returns (uint256 exposure);
+
+    /**
+     * @notice Returns the strategy value that is operationally withdrawable right now for the configured lane.
+     * @dev The value is in vault-token units and before exit fees. Strategies should use this to surface
+     *      venue liquidity limits, pauses, or similar temporary constraints without redefining
+     *      `totalExposure()`.
+     * @return exposure Strategy value withdrawable now, in vault-token units.
+     */
+    function withdrawableExposure() external view returns (uint256 exposure);
 
     /// @notice Returns the strategy-held balance for one exact token address.
     /// @dev Unsupported token queries return `0`.

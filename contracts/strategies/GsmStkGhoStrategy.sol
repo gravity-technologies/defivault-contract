@@ -168,6 +168,14 @@ contract GsmStkGhoStrategy is Initializable, ReentrancyGuardUpgradeable, IYieldS
     }
 
     /// @inheritdoc IYieldStrategyV2
+    function withdrawableExposure() external view returns (uint256 exposure) {
+        uint256 directVaultToken = IERC20(vaultToken).balanceOf(address(this));
+        uint256 grossGhoAssets = _totalGhoAssets();
+        if (grossGhoAssets == 0) return directVaultToken;
+        return directVaultToken + _vaultTokenValueForGho(grossGhoAssets);
+    }
+
+    /// @inheritdoc IYieldStrategyV2
     function exactTokenBalance(address token) external view returns (uint256) {
         if (token == vaultToken || token == ghoToken || token == stkGhoToken) {
             return IERC20(token).balanceOf(address(this));

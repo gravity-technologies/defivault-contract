@@ -110,6 +110,11 @@ contract AaveV3StrategyV2 is Initializable, ReentrancyGuardUpgradeable, IYieldSt
     }
 
     /// @inheritdoc IYieldStrategyV2
+    function withdrawableExposure() external view returns (uint256 exposure) {
+        return IERC20(aToken).balanceOf(address(this)) + IERC20(vaultToken).balanceOf(address(this));
+    }
+
+    /// @inheritdoc IYieldStrategyV2
     function exactTokenBalance(address token) external view returns (uint256) {
         if (token == vaultToken || token == aToken) return IERC20(token).balanceOf(address(this));
         return 0;

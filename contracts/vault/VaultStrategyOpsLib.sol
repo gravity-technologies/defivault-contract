@@ -122,6 +122,38 @@ library VaultStrategyOpsLib {
     }
 
     /**
+     * @notice Reads strategy withdrawable exposure from a strategy with failure normalization.
+     * @dev V2 strategies call `withdrawableExposure()`. Legacy strategies fall back to
+     *      `strategyExposure(token)` because no separate liquidity surface exists there.
+     */
+    function readStrategyWithdrawableExposure(
+        address token,
+        address strategy
+    ) public view returns (bool ok, uint256 exposure) {
+        if (isYieldStrategyV2(strategy)) {
+            if (!_v2VaultTokenMatches(token, strategy)) return (false, 0);
+            try IYieldStrategyV2(strategy).withdrawableExposure() returns (uint256 value) {
+                return (true, value);
+            } catch {
+                return (false, 0);
+            }
+        }
+        return readStrategyExposure(token, strategy);
+    }
+
+    /**
+     * @notice Reads withdrawable exposure and reverts with the vault's standard error on failure.
+     */
+    function readStrategyWithdrawableExposureOrRevert(
+        address token,
+        address strategy
+    ) public view returns (uint256 exposure) {
+        (bool ok, uint256 value) = readStrategyWithdrawableExposure(token, strategy);
+        if (!ok) revert IL1TreasuryVault.InvalidStrategyExposureRead(token, strategy);
+        return value;
+    }
+
+    /**
      * @notice Reads the exact-token balance reported by a strategy for one exact token query.
      */
     function readStrategyExactTokenBalance(
@@ -230,7 +262,7 @@ library VaultStrategyOpsLib {
      * @dev Unified for V2 and legacy: `max(0, exposure - costBasis)`.
      */
     function rawHarvestableYield(address token, address strategy, uint256 costBasis) public view returns (uint256) {
-        uint256 exposure = readStrategyExposureOrRevert(token, strategy);
+        uint256 exposure = readStrategyWithdrawableExposureOrRevert(token, strategy);
         if (exposure <= costBasis) return 0;
         return exposure - costBasis;
     }

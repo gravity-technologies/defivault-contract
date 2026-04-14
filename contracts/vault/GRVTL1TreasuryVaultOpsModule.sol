@@ -267,7 +267,10 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
 
     /**
      * @notice Withdraws all tracked principal from one strategy lane, handling impairment.
-     * @dev V2: withdrawable = min(costBasis, exposure). loss = costBasis - withdrawable. costBasis = 0.
+     * @dev V2: economic recoverable value is `min(costBasis, totalExposure)`, but this path is fail-closed on
+     *      operational illiquidity. If `withdrawableExposure` is below economically recoverable principal, the
+     *      vault reverts and leaves `costBasis` unchanged for operational resolution.
+     *      When liquidity is available, loss = costBasis - economicRecoverable and costBasis = 0.
      *      Legacy: deallocateAll + costBasis -= received.
      */
     function deallocateAllVaultTokenFromStrategy(address token, address strategy) external returns (uint256 received) {
@@ -280,9 +283,19 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
             if (costBasis == 0) return 0;
 
             IL1TreasuryVault.StrategyPolicyConfig memory policy = _requireConfiguredStrategyPolicy(token, strategy);
-            uint256 exposure = VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy);
-            uint256 withdrawable = costBasis < exposure ? costBasis : exposure;
-            uint256 loss = costBasis - withdrawable;
+            uint256 economicExposure = VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy);
+            uint256 withdrawableExposure = VaultStrategyOpsLib.readStrategyWithdrawableExposureOrRevert(token, strategy);
+            uint256 economicRecoverable = costBasis < economicExposure ? costBasis : economicExposure;
+            uint256 withdrawable = costBasis < withdrawableExposure ? costBasis : withdrawableExposure;
+            if (withdrawable < economicRecoverable) {
+                revert IL1TreasuryVault.InsufficientWithdrawableStrategyExposure(
+                    token,
+                    strategy,
+                    economicRecoverable,
+                    withdrawable
+                );
+            }
+            uint256 loss = costBasis - economicRecoverable;
 
             uint256 fee;
             if (withdrawable > 0) {

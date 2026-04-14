@@ -58,6 +58,13 @@ interface IL1TreasuryVault {
     error StrategyAccountingMismatch(address token, address strategy, uint256 strategyReported, uint256 vaultMeasured);
     /// @dev Exact fee reimbursement failed for a strict policy path.
     error FeeReimbursementFailed(address token, address strategy, uint256 requested, uint256 received);
+    /// @dev Strategy has economic value, but not enough withdrawable value to complete the requested fail-closed exit.
+    error InsufficientWithdrawableStrategyExposure(
+        address token,
+        address strategy,
+        uint256 required,
+        uint256 available
+    );
     /// @dev One V2 strategy lane cannot be explicitly finalized and removed in its current state.
     error InvalidV2StrategyFinalization(address token, address strategy);
     // --------- Roles (RBAC) ---------
