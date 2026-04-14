@@ -1,24 +1,24 @@
 ---
-title: "GHO / stkGHO Integration"
-updated: "2026-04-10"
+title: "GHO / sGHO Integration"
+updated: "2026-04-14"
 audience: "integrators, reviewers, operators"
-purpose: "document the implemented GSM -> GHO -> stkGHO strategy and current V2 policy behavior"
+purpose: "document the implemented GSM -> GHO -> sGHO strategy and current V2 policy behavior"
 implemented_surfaces:
-  - "contracts/strategies/GsmStkGhoStrategy.sol"
+  - "contracts/strategies/SGHOStrategy.sol"
   - "contracts/governance/YieldRecipientTreasury.sol"
   - "contracts/vault/GRVTL1TreasuryVault.sol"
 ---
 
-# GHO / stkGHO Integration
+# GHO / sGHO Integration
 
 ## Scope
 
-This page describes the implemented `GsmStkGhoStrategy` behavior in this repository.
+This page describes the implemented `SGHOStrategy` behavior in this repository.
 
 Primary users:
 
-- engineers integrating the stkGHO strategy lane
-- reviewers validating reimbursement and unwind assumptions
+- engineers integrating the sGHO strategy lane
+- reviewers validating unwind and accounting assumptions
 - operators configuring treasury reimbursement and yield-recipient flows
 
 ## Adapter Model
@@ -26,30 +26,31 @@ Primary users:
 Deployment is single-lane:
 
 - one strategy instance binds one input `vaultToken`
-- the lane is `vaultToken -> GSM -> GHO -> stkGHO`
+- the lane is `vaultToken -> GSM -> GHO -> sGHO`
 - mutating calls revert on token mismatch
-- the strategy integrates the live stkGHO token surface directly
-- the current implementation supports only synchronous exits, so stkGHO cooldown must remain `0`
+- the strategy integrates the live ERC4626 `sGHO` token surface directly
+- exits are synchronous; there is no claim flow or cooldown flow
 
 Reporting model:
 
 - `exactTokenBalance(vaultToken)` reports idle underlying held by the strategy
 - `exactTokenBalance(gho)` reports idle GHO held by the strategy
-- `exactTokenBalance(stkGho)` reports the directly held invested stkGHO balance
-- `positionBreakdown()` reports stkGHO as the invested position plus any residual GHO / vault-token dust
+- `exactTokenBalance(sGho)` reports the directly held invested `sGHO` balance
+- `positionBreakdown()` reports `sGHO` as the invested position plus any residual GHO or vault-token dust
 
 Exposure model:
 
 - `totalExposure()` reports strategy value in vault-token units
-- exposure is a vault-token accounting view, not a guaranteed net exit quote
+- `withdrawableExposure()` reports redeemable-now value in vault-token units
+- `totalExposure()` is the economic claim view
+- `withdrawableExposure()` is the operational liquidity view
 - the value is before exit fees, but entry fees are not added back into it
-- treasury reimbursement is intentionally excluded from exposure and bridge-liquidity planning
 
 Supported lane assumption:
 
 - this strategy is intended for stablecoin lanes such as USDC and USDT
 - the lane is treated as `FixedRoute`
-- after decimal conversion, `vaultToken`, GHO, and stkGHO are treated as the same stablecoin unit
+- after decimal conversion, `vaultToken`, GHO, and sGHO are treated as the same stablecoin unit
 - the strategy owns the full fixed path and does not accept arbitrary route input
 - explicit fee is inferred by the vault from realized execution
 - any explicit exit cost is represented by the GSM exit fee on `GHO -> vault-token`
@@ -62,7 +63,8 @@ Supported lane assumption:
 - normal deallocation uses that surface to recover tracked principal
 - harvest uses the same surface to realize residual value
 - the strategy itself never requests reimbursement
-- positive stkGHO share-price drift is treated as residual value only at the vault layer
+- SGHO exits are fail-closed: if redeemable liquidity is insufficient, the strategy reverts instead of partially unwinding
+- positive sGHO share-price drift is treated as residual value only at the vault layer
 
 ## Reimbursement Model
 
@@ -70,10 +72,10 @@ The strategy does not decide whether reimbursement happens.
 
 The vault's V2 policy does.
 
-Current intended GHO lane policy:
+Current intended SGHO lane policy:
 
-- `entryCapBps = 0`
-- `exitCapBps = 7`
+- `entryCapHundredthBps = 1` (`0.01 bps`)
+- `exitCapHundredthBps = 1200` (`12 bps`)
 - `policyActive = true`
 
 Tracked entry and exit reimbursement uses a second same-transaction treasury step:
@@ -86,7 +88,7 @@ Tracked entry and exit reimbursement uses a second same-transaction treasury ste
 This means:
 
 - `VaultTokenDeallocatedFromStrategy` reports `received`, `fee`, and `loss`
-- `FeeReimbursed` on the treasury reports the reimbursed fee and remaining budget
+- `FeeReimbursed` on the treasury reports the reimbursed fee
 - harvests stay reimbursement-free
 - tracked-flow reimbursement is automatic only when treasury configuration is correct
 - reimbursement is exact-or-revert for non-zero expected fees on a reimbursing path
@@ -98,22 +100,22 @@ This means:
 
 It must be a reimbursement-capable treasury contract that:
 
-- implements the withdrawal-fee treasury marker interface
+- implements the fee reimburser marker interface
 - authorizes the vault via `setAuthorizedVault(vault, true)` before reimbursement is used
-- holds the vault-token budget for the relevant strategy lane
-- is configured per `(strategy, token, direction)` with `enabled` and `remainingBudget`
+- holds enough of the vault token to satisfy expected reimbursements
 - returns exact reimbursement or `0`, never a partial payment
+- temporary SGHO illiquidity is an operational incident, not automatic impairment recognition
 
 ## Operational Notes
 
 - `initialize()` does not force a treasury policy; the vault turns policy on later
 - before tracked reimbursement is relied on in production, admin must rotate `yieldRecipient` to a compatible treasury contract if needed
-- treasury rotation only checks marker support, native payout support, and vault authorization; lane tuple config remains operator-managed
+- treasury rotation only checks marker support, native payout support, and vault authorization; reimbursement headroom is just treasury token balance
 - paused/admin deallocation still follow the normal V2 exit policy
 - harvest bypasses reimbursement
 - normal vault deallocation uses `withdraw(amount)` against tracked outstanding only
 - residual value stays for harvest
-- GHO harvestability is based on raw residual `max(0, totalExposure - costBasis)`
+- sGHO harvestability is based on raw residual `max(0, totalExposure - costBasis)`
 - direct GHO can exist at rest as ordinary lane inventory
 - if GSM mint fee ever becomes non-zero on a zero-cap entry policy, normal allocation should revert and be escalated instead of silently continuing
 
@@ -123,17 +125,15 @@ It must be a reimbursement-capable treasury contract that:
 - the strategy holds zero tracked-principal state
 - loss recognition happens on `deallocateAll`, not through a separate write-down
 - residual value includes:
-  - unsolicited `vaultToken`, `GHO`, and `stkGHO`
+  - unsolicited `vaultToken`, `GHO`, and `sGHO`
   - share-price appreciation above the tracked vault-funded value
-- unsolicited `vaultToken`, `GHO`, and `stkGHO` in the strategy are treated as residual value only
+- unsolicited `vaultToken`, `GHO`, and `sGHO` in the strategy are treated as residual value only
 
 ## Code and Test Surfaces
 
-- Strategy implementation: [../../contracts/strategies/GsmStkGhoStrategy.sol](../../contracts/strategies/GsmStkGhoStrategy.sol)
+- Strategy implementation: [../../contracts/strategies/SGHOStrategy.sol](../../contracts/strategies/SGHOStrategy.sol)
 - Vault implementation: [../../contracts/vault/GRVTL1TreasuryVault.sol](../../contracts/vault/GRVTL1TreasuryVault.sol)
 - Treasury implementation: [../../contracts/governance/YieldRecipientTreasury.sol](../../contracts/governance/YieldRecipientTreasury.sol)
-- Strategy tests: [../../test/unit/GsmStkGhoStrategy.test.ts](../../test/unit/GsmStkGhoStrategy.test.ts)
-- Vault reimbursement tests: [../../test/unit/VaultGhoReimbursement.test.ts](../../test/unit/VaultGhoReimbursement.test.ts)
 
 ## Read Next
 

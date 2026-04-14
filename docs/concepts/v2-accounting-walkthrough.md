@@ -1,6 +1,6 @@
 # V2 Accounting Walkthrough
 
-This note explains V2 accounting using the GHO lane as the concrete example.
+This note explains V2 accounting using the SGHO lane as the concrete example.
 
 Assume the lane's `vaultToken` is `USDT`.
 
@@ -8,13 +8,13 @@ In that setup:
 
 - principal is tracked in `USDT`
 - `GHO` is the intermediate route token
-- `stkGHO` is the invested position token
+- `sGHO` is the invested position token
 - the strategy executes the route
 - the vault owns the accounting ledger
 
 Stable lane assumption:
 
-- after decimal conversion, `USDT`, `GHO`, and `stkGHO` are treated as the same dollar unit
+- after decimal conversion, `USDT`, `GHO`, and `sGHO` are treated as the same dollar unit
 - GSM entry and exit fees are handled separately by vault policy
 
 ## Mental Model
@@ -24,7 +24,7 @@ Stable lane assumption:
         +----------------------------------------+
         |                                        |
         v                                        |
-USDT vault token -> GSM -> GHO -> staking -> stkGHO
+USDT vault token -> GSM -> GHO -> sGHO
         ^                                       |
         |                                       |
         +------ GSM <- GHO <- unstake ----------+
@@ -39,22 +39,22 @@ The strategy tracks:
   nothing about principal
 ```
 
-The strategy is a route adapter. It accepts `USDT`, converts through `GHO`, stakes into `stkGHO`, and later unwinds back to `USDT`.
+The strategy is a route adapter. It accepts `USDT`, converts through `GHO`, deposits into `sGHO`, and later unwinds back to `USDT`.
 
 The vault is the accountant. It decides what is principal, what is residual yield, what fee was paid, and whether treasury reimbursement should happen.
 
 ## Main Code Surfaces
 
 - [IYieldStrategyV2](../../contracts/interfaces/IYieldStrategyV2.sol): defines the V2 unit model. Amounts are in vault-token units.
-- [GsmStkGhoStrategy](../../contracts/strategies/GsmStkGhoStrategy.sol): executes `vaultToken -> GHO -> stkGHO` and the reverse path.
+- [SGHOStrategy](../../contracts/strategies/SGHOStrategy.sol): executes `vaultToken -> GHO -> sGHO` and the reverse path.
 - [GRVTL1TreasuryVault](../../contracts/vault/GRVTL1TreasuryVault.sol): public vault surface and cost-basis view.
 - [GRVTL1TreasuryVaultOpsModule](../../contracts/vault/GRVTL1TreasuryVaultOpsModule.sol): accounting engine for allocation, deallocation, harvest, and reimbursement.
 - [VaultStrategyOpsLib](../../contracts/vault/VaultStrategyOpsLib.sol): shared reads and helpers for exposure, harvestable yield, and reimbursement measurement.
 
 Useful entry points:
 
-- `GsmStkGhoStrategy.allocate(amount)`
-- `GsmStkGhoStrategy.withdraw(amount)`
+- `SGHOStrategy.allocate(amount)`
+- `SGHOStrategy.withdraw(amount)`
 - `GRVTL1TreasuryVaultOpsModule.allocateVaultTokenToStrategy(token, strategy, amount)`
 - `GRVTL1TreasuryVaultOpsModule.deallocateVaultTokenFromStrategy(token, strategy, amount)`
 - `GRVTL1TreasuryVaultOpsModule.deallocateAllVaultTokenFromStrategy(token, strategy)`
@@ -75,7 +75,7 @@ Strategy.allocate(amount)
   |
   | 3. pull USDT from vault
   | 4. swap USDT -> GHO
-  | 5. stake GHO -> stkGHO
+  | 5. deposit GHO -> sGHO
   | 6. return invested, in USDT units
   v
 Vault accounting
@@ -122,11 +122,11 @@ The reimbursement restores vault-side cashflow. It does not increase principal. 
 
 The vault checks the fee cap before reimbursement.
 
-For a fee to be reimbursed, it must first be allowed by `entryCapBps`.
+For a fee to be reimbursed, it must first be allowed by `entryCapHundredthBps`.
 
 ```text
 fee = spent - invested
-maxFee = spent * entryCapBps / 10_000
+maxFee = spent * entryCapHundredthBps / 1_000_000
 
 if fee > maxFee:
   revert
@@ -134,15 +134,15 @@ else if fee > 0:
   reimburse exactly fee
 ```
 
-The intended GHO lane policy currently uses:
+The intended SGHO lane policy currently uses:
 
 ```text
-entryCapBps = 0
-exitCapBps  = 7
+entryCapHundredthBps = 1
+exitCapHundredthBps  = 1200
 policyActive = true
 ```
 
-So if the GHO entry path charges any entry fee when `entryCapBps = 0`, allocation should revert instead of reimbursing.
+That means the vault can reimburse up to `0.01 bps` of entry dust and up to `12 bps` on exits.
 
 ## Exposure And Yield
 
@@ -155,11 +155,11 @@ For a USDT lane, that means reported strategy value in `USDT`.
 strategy exact balances:
   idle USDT
   idle GHO
-  stkGHO shares
+  sGHO shares
 
 strategy totalExposure():
   idle USDT
-  + USDT value of GHO and stkGHO assets, without adding back entry fees
+  + USDT value of GHO and sGHO assets, without adding back entry fees
 ```
 
 The vault computes raw residual yield as:
@@ -183,8 +183,7 @@ The strategy does not label the `6` as yield. The vault derives that because rep
 
 Residual yield can come from:
 
-- stkGHO share-price appreciation
-- claimed stkGHO rewards
+- sGHO share-price appreciation
 - idle GHO sitting in the strategy
 - idle USDT sitting in the strategy
 - unsolicited tokens that increase reported exposure
@@ -204,7 +203,7 @@ Strategy.withdraw(amount)
   | 2. sweep idle USDT first
   | 3. compute GHO needed for the remaining USDT value
   | 4. use idle GHO if available
-  | 5. unstake stkGHO -> GHO if needed
+  | 5. withdraw sGHO -> GHO if needed
   | 6. swap GHO -> USDT
   | 7. send USDT to vault
   v
@@ -369,7 +368,7 @@ The reimbursement amount must be exact. If the vault expects `0.03 USDT`, the tr
 
 ## One Worked Timeline
 
-This timeline uses a non-zero entry fee to show the generic V2 reimbursement shape. With the current intended GHO policy (`entryCapBps = 0`), that entry fee would revert instead of being reimbursed.
+This timeline uses a non-zero entry fee to show the generic V2 reimbursement shape. Under the current SGHO policy, only tiny entry dust within the `0.01 bps` cap is reimbursable.
 
 ```text
 Initial:
@@ -381,7 +380,7 @@ Initial:
   spent:                   100
   invested:                 99
   entry fee:                 1
-  reimbursement:             1, if allowed by entryCapBps
+  reimbursement:             1, if allowed by entryCapHundredthBps
   costBasis after:          99
 
 2. Position appreciates
@@ -392,7 +391,7 @@ Initial:
 3. Deallocate 40 USDT tracked principal
   route proceeds:        39.97
   exit fee:               0.03
-  reimbursement:          0.03, if allowed by exitCapBps
+  reimbursement:          0.03, if allowed by exitCapHundredthBps
   costBasis after:          59
 
 4. Harvest 6 USDT residual
@@ -409,12 +408,12 @@ Initial:
 
 ## Short Version
 
-For a USDT GHO lane:
+For a USDT SGHO lane:
 
 ```text
 USDT is principal.
 GHO is route inventory.
-stkGHO is the invested position.
+sGHO is the invested position.
 costBasis is the vault's principal ledger.
 totalExposure is strategy value reported in USDT, before exit fees and without adding back entry fees.
 residual yield is max(0, totalExposure - costBasis).
@@ -427,5 +426,5 @@ harvest fees are never reimbursed.
 - [v2-strategy-brief.md](v2-strategy-brief.md)
 - [accounting-and-tvl.md](accounting-and-tvl.md)
 - [strategy-model.md](strategy-model.md)
-- [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)
+- [../integrations/gho-sgho.md](../integrations/gho-sgho.md)
 - [../design-decisions/08-gho-fixed-route-policy.md](../design-decisions/08-gho-fixed-route-policy.md)

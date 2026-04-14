@@ -10,13 +10,6 @@ import {
 
 import { parseAddress, readJson5Object, readParametersPath } from "./shared.js";
 
-type ReimbursementConfig = {
-  strategy: Address;
-  token: Address;
-  enabled: boolean;
-  remainingBudget: bigint;
-};
-
 type SeedFunding = {
   token: Address;
   amount: bigint;
@@ -28,7 +21,6 @@ type TreasuryScheduleParams = {
   treasuryBootstrapOwner?: Address;
   treasuryFinalOwner?: Address;
   authorizeVault: boolean;
-  reimbursementConfigs: ReimbursementConfig[];
   seedFunding: SeedFunding[];
   predecessor: Hex;
   salt: Hex;
@@ -112,9 +104,6 @@ function readParams(filePath: string): TreasuryScheduleParams {
   }
 
   const params = payload as Record<string, unknown>;
-  const reimbursementConfigsRaw = Array.isArray(params.reimbursementConfigs)
-    ? params.reimbursementConfigs
-    : [];
   const seedFundingRaw = Array.isArray(params.seedFunding)
     ? params.seedFunding
     : [];
@@ -137,32 +126,6 @@ function readParams(filePath: string): TreasuryScheduleParams {
       params.authorizeVault === undefined
         ? true
         : parseBoolean(params.authorizeVault, "authorizeVault"),
-    reimbursementConfigs: reimbursementConfigsRaw.map((entry, index) => {
-      if (typeof entry !== "object" || entry === null) {
-        throw new Error(
-          `invalid reimbursementConfigs[${index}]: expected object`,
-        );
-      }
-      const item = entry as Record<string, unknown>;
-      return {
-        strategy: parseAddress(
-          item.strategy,
-          `reimbursementConfigs[${index}].strategy`,
-        ),
-        token: parseAddress(item.token, `reimbursementConfigs[${index}].token`),
-        enabled:
-          item.enabled === undefined
-            ? true
-            : parseBoolean(
-                item.enabled,
-                `reimbursementConfigs[${index}].enabled`,
-              ),
-        remainingBudget: parseBigintLike(
-          item.remainingBudget ?? 0n,
-          `reimbursementConfigs[${index}].remainingBudget`,
-        ),
-      };
-    }),
     seedFunding: seedFundingRaw.map((entry, index) => {
       if (typeof entry !== "object" || entry === null) {
         throw new Error(`invalid seedFunding[${index}]: expected object`);
@@ -201,9 +164,7 @@ async function main() {
   const deployerAddress = getAddress(deployer.account.address);
   const bootstrapOwner = params.treasuryBootstrapOwner ?? deployerAddress;
   const needsBootstrapOwnerWrites =
-    params.authorizeVault ||
-    params.reimbursementConfigs.length !== 0 ||
-    params.treasuryFinalOwner !== undefined;
+    params.authorizeVault || params.treasuryFinalOwner !== undefined;
 
   if (needsBootstrapOwnerWrites && bootstrapOwner !== deployerAddress) {
     throw new Error(
@@ -222,17 +183,6 @@ async function main() {
       true,
     ]);
     authorizationHashes.push(txHash);
-    await publicClient.waitForTransactionReceipt({ hash: txHash });
-  }
-
-  const reimbursementConfigHashes: Hex[] = [];
-  for (const config of params.reimbursementConfigs) {
-    const txHash = await treasury.write.setReimbursementConfig([
-      config.strategy,
-      config.token,
-      config.enabled ? config.remainingBudget : 0n,
-    ]);
-    reimbursementConfigHashes.push(txHash);
     await publicClient.waitForTransactionReceipt({ hash: txHash });
   }
 
@@ -307,7 +257,6 @@ async function main() {
         ? params.treasuryFinalOwner
         : undefined,
     setAuthorizedVaultTxHashes: authorizationHashes,
-    reimbursementConfigTxHashes: reimbursementConfigHashes,
     fundingTxHashes: fundingHashes,
     transferOwnershipTxHash: ownershipTransferHash,
     yieldRecipientTimelockController: params.yieldRecipientTimelockController,

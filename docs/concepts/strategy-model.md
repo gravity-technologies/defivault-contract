@@ -93,11 +93,12 @@ See [../integrations/aave.md](../integrations/aave.md) for the implemented examp
 
 ### Fixed approved composite
 
-This is the current GHO / stkGHO V2 model in this repo:
+This is the current GHO / sGHO V2 model in this repo:
 
-- `exactTokenBalance(stkGho)` reports directly held invested stkGHO units
-- `positionBreakdown()` can show `stkGHO` plus residual `GHO` or vault-token dust
-- `totalExposure()` reports strategy value in vault-token units for the lane
+- `exactTokenBalance(sGho)` reports directly held invested sGHO units
+- `positionBreakdown()` can show `sGHO` plus residual `GHO` or vault-token dust
+- `totalExposure()` reports economic strategy value in vault-token units for the lane
+- `withdrawableExposure()` reports redeemable-now value for the lane
 - `withdraw(amount)` is the only exit surface
 - the vault uses the same `withdraw(amount)` surface for tracked deallocation and residual harvest
 - fee caps are enforced on realized exits, not preview calls
@@ -105,12 +106,12 @@ This is the current GHO / stkGHO V2 model in this repo:
 Rules for this model:
 
 - keep route shape fixed inside the strategy implementation,
-- report strategy value in the same token units used by the vault's principal ledger,
+- report economic value and redeemable liquidity separately,
 - keep harvest on the vault-owned residual path,
 - let the vault enforce fee caps on realized execution,
 - keep reimbursement decisions in vault policy and treasury config, not in the strategy.
 
-See [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md) for the implemented example.
+See [../integrations/gho-sgho.md](../integrations/gho-sgho.md) for the implemented example.
 
 ### Non-1:1 exposure conversion
 
@@ -156,4 +157,4 @@ If conversion depends on oracle-like inputs, document staleness and manipulation
 - [v2-strategy-brief.md](v2-strategy-brief.md)
 - [v2-accounting-walkthrough.md](v2-accounting-walkthrough.md)
 - [../integrations/aave.md](../integrations/aave.md)
-- [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)
+- [../integrations/gho-sgho.md](../integrations/gho-sgho.md)

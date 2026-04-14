@@ -3,13 +3,13 @@ pragma solidity 0.8.34;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IWithdrawalFeeTreasury} from "../interfaces/IWithdrawalFeeTreasury.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 
 /**
  * @title MockWithdrawalFeeTreasury
  * @notice Test-only treasury source for fee reimbursement flows.
  */
-contract MockWithdrawalFeeTreasury is IWithdrawalFeeTreasury {
+contract MockWithdrawalFeeTreasury is IFeeReimburser {
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS_SCALE = 10_000;
@@ -30,8 +30,8 @@ contract MockWithdrawalFeeTreasury is IWithdrawalFeeTreasury {
     mapping(address vault => bool authorizedVaults) public authorizedVaults;
     mapping(address strategy => mapping(address token => uint256 budget)) public reimbursementBudget;
 
-    function isWithdrawalFeeTreasury() external pure override returns (bytes4 selector) {
-        return IWithdrawalFeeTreasury.isWithdrawalFeeTreasury.selector;
+    function isFeeReimburser() external pure override returns (bytes4 selector) {
+        return IFeeReimburser.isFeeReimburser.selector;
     }
 
     function reimbursementConfig(

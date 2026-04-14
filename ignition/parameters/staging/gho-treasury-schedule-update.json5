@@ -9,14 +9,6 @@
     // Optional final owner for Ownable2Step handoff after bootstrap configuration.
     treasuryFinalOwner: "0x0000000000000000000000000000000000000000",
     authorizeVault: true,
-    reimbursementConfigs: [
-      {
-        strategy: "0x0000000000000000000000000000000000000000",
-        token: "0x0000000000000000000000000000000000000000",
-        enabled: true,
-        remainingBudget: "0n",
-      },
-    ],
     // Optional treasury funding transfers performed by the deployer.
     seedFunding: [
       {

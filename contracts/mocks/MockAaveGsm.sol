@@ -113,7 +113,7 @@ contract MockAaveGsm is IAaveGsm {
 
         ghoSold = maxGhoAmount;
         IERC20(gho).safeTransferFrom(msg.sender, address(this), ghoSold);
-        IMockMintableToken(underlyingAsset).mint(receiver, assetBought);
+        IERC20(underlyingAsset).safeTransfer(receiver, assetBought);
     }
 
     function getGhoAmountForSellAsset(

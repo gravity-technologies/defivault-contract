@@ -2,21 +2,21 @@
 pragma solidity 0.8.34;
 
 /**
- * @title IWithdrawalFeeTreasury
+ * @title IFeeReimburser
  * @notice Treasury reimbursement surface used by vaults for exact strategy fee top-ups.
  */
-interface IWithdrawalFeeTreasury {
+interface IFeeReimburser {
     /**
-     * @notice Marker method used to verify that an address implements the treasury reimbursement surface.
-     * @return selector The `isWithdrawalFeeTreasury()` selector.
+     * @notice Marker method used to verify that an address implements the fee reimburser surface.
+     * @return selector The `isFeeReimburser()` selector.
      */
-    function isWithdrawalFeeTreasury() external pure returns (bytes4 selector);
+    function isFeeReimburser() external pure returns (bytes4 selector);
 
     /**
-     * @notice Returns remaining reimbursement budget for one `(strategy, token)` tuple.
-     * @param strategy Strategy lane whose budget should be read.
+     * @notice Returns the remaining reimbursable capacity for one `(strategy, token)` tuple.
+     * @param strategy Strategy lane whose reimbursement headroom should be read.
      * @param token Principal token for the lane.
-     * @return remainingBudget Remaining same-token reimbursement budget for the tuple.
+     * @return remainingBudget Remaining same-token reimbursement capacity for the tuple.
      */
     function reimbursementConfig(address strategy, address token) external view returns (uint256 remainingBudget);
 
@@ -29,13 +29,13 @@ interface IWithdrawalFeeTreasury {
 
     /**
      * @notice Transfers `amount` of `token` to `recipient` as a fee reimbursement.
-     * @dev Callers are expected to be authorized vaults. Treasury implementations should return `0` when
-     * reimbursement is over budget or otherwise unavailable for the requested lane.
+     * @dev Callers are expected to be authorized vaults. Treasury implementations should revert for
+     * unauthorized callers and underfunded treasury balance.
      * @param token ERC20 token to reimburse.
-     * @param strategy Strategy lane whose reimbursement budget should be charged.
+     * @param strategy Strategy lane whose reimbursement request is being processed.
      * @param recipient Recipient that receives the reimbursement.
      * @param amount Exact reimbursement amount requested by the vault.
-     * @return reimbursed Amount the treasury transferred. Expected to be either `amount` or `0`.
+     * @return reimbursed Amount the treasury transferred. Expected to equal `amount` on success.
      */
     function reimburseFee(
         address token,

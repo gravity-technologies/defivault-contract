@@ -170,15 +170,6 @@ export const oneOffOpsTasks: TaskDefinition[] = [
     })
     .setAction(() => import("./actions/ops-harvest-yield.js"))
     .build(),
-  task("ops:claim-gho-rewards", "Claim permissionless stkGHO rewards")
-    .addOption({
-      name: "parameters",
-      description: "Path to JSON5 parameters file",
-      type: ArgumentType.FILE_WITHOUT_DEFAULT,
-      defaultValue: undefined,
-    })
-    .setAction(() => import("./actions/ops-claim-gho-rewards.js"))
-    .build(),
   task(
     "claim:failed-native-deposit",
     "Atomically claim and recover a failed native bridge deposit through NativeBridgeGateway",

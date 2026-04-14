@@ -257,6 +257,50 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     return { strategy, pool, aToken };
   }
 
+  async function deploySghoStrategy(
+    vaultAddress: `0x${string}`,
+    vaultTokenAddress: `0x${string}`,
+  ) {
+    const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
+    const sGho = await viem.deployContract("MockSgho", [gho.address]);
+    const mockPool = await viem.deployContract("MockNonERC20");
+    const aToken = await viem.deployContract("MockAaveV3AToken", [
+      vaultTokenAddress,
+      mockPool.address,
+      "Aave Mock USDT",
+      "aMUSDT",
+    ]);
+    const stataToken = await viem.deployContract("MockStataTokenV2", [
+      aToken.address,
+      vaultTokenAddress,
+    ]);
+    const gsm = await viem.deployContract("MockAaveGsm", [
+      gho.address,
+      stataToken.address,
+    ]);
+
+    const implementation = await viem.deployContract("SGHOStrategy");
+    const initializeData = encodeFunctionData({
+      abi: implementation.abi,
+      functionName: "initialize",
+      args: [
+        vaultAddress,
+        vaultTokenAddress,
+        sGho.address,
+        gsm.address,
+        "SGHO_MUSDT",
+      ],
+    });
+    const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
+      implementation.address,
+      addr(admin),
+      initializeData,
+    ]);
+    const strategy = await viem.getContractAt("SGHOStrategy", proxy.address);
+
+    return { strategy, gsm, gho, sGho, aToken, stataToken };
+  }
+
   it("tracks cost basis and harvests strategy yield to treasury", async function () {
     const { vault, vaultAsAllocator, vaultAsAdmin, token, stratA } =
       await deployBase();
@@ -1317,6 +1361,306 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     assert.equal(
       await vault.read.strategyCostBasis([token.address, stratA.address]),
+      0n,
+    );
+  });
+
+  it("reimburses SGHO entry dust through vault policy when it stays within 0.01 bps", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await viem.deployContract("MockWithdrawalFeeTreasury");
+    const { strategy, sGho } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await treasury.write.setAuthorizedVault([vault.address, true]);
+    await treasury.write.setReimbursementConfig([
+      strategy.address,
+      token.address,
+      1n,
+    ]);
+    await token.write.mint([treasury.address, 1n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await sGho.write.setAssetsPerShareWad([1_000_000_000_000_000_001n]);
+    await token.write.mint([vault.address, 100_000_000n]);
+
+    const vaultBalanceBefore = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100_000_000n,
+    ]);
+
+    const vaultBalanceAfter = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceAfter = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(vaultBalanceBefore - vaultBalanceAfter, 99_999_999n);
+    assert.equal(treasuryBalanceBefore - treasuryBalanceAfter, 1n);
+    assert.equal(await strategy.read.totalExposure(), 99_999_999n);
+    assert.equal(await strategy.read.withdrawableExposure(), 99_999_999n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      99_999_999n,
+    );
+  });
+
+  it("reverts SGHO allocation when entry loss exceeds the 0.01 bps vault cap", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await viem.deployContract("MockWithdrawalFeeTreasury");
+    const { strategy, gsm, stataToken } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await treasury.write.setAuthorizedVault([vault.address, true]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await gsm.write.setAssetToGhoExecutionBps([stataToken.address, 9_999n]);
+    await gsm.write.setAssetToGhoQuoteBps([stataToken.address, 9_999n]);
+    await token.write.mint([vault.address, 100_000_000n]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
+        token.address,
+        strategy.address,
+        100_000_000n,
+      ]),
+      vaultAsAllocator,
+      "FeeCapExceeded",
+    );
+
+    assert.equal(await strategy.read.totalExposure(), 0n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      0n,
+    );
+  });
+
+  it("allows SGHO tracked deallocation to return net proceeds and reimburse the exit fee", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await viem.deployContract("MockWithdrawalFeeTreasury");
+    const { strategy, gsm, stataToken } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await treasury.write.setAuthorizedVault([vault.address, true]);
+    await treasury.write.setReimbursementConfig([
+      strategy.address,
+      token.address,
+      12n,
+    ]);
+    await token.write.mint([treasury.address, 12n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await gsm.write.setBurnFeeBps([stataToken.address, 12n]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    const vaultBalanceBeforeDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    const vaultBalanceAfterDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceAfter = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(
+      vaultBalanceAfterDeallocate - vaultBalanceBeforeDeallocate,
+      10_000n,
+    );
+    assert.equal(treasuryBalanceBefore - treasuryBalanceAfter, 12n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      0n,
+    );
+  });
+
+  it("allows SGHO full unwind when treasury reimbursement covers the exit-fee gap", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await viem.deployContract("MockWithdrawalFeeTreasury");
+    const { strategy, gsm, stataToken } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await treasury.write.setAuthorizedVault([vault.address, true]);
+    await treasury.write.setReimbursementConfig([
+      strategy.address,
+      token.address,
+      12n,
+    ]);
+    await token.write.mint([treasury.address, 12n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await gsm.write.setBurnFeeBps([stataToken.address, 12n]);
+
+    const vaultBalanceBeforeAllocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    assert.equal(await strategy.read.totalExposure(), 10_000n);
+    assert.equal(await strategy.read.withdrawableExposure(), 10_000n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      10_000n,
+    );
+
+    const vaultBalanceBeforeDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+    ]);
+
+    const vaultBalanceAfterDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceAfter = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(
+      vaultBalanceBeforeAllocate - vaultBalanceBeforeDeallocate,
+      10_000n,
+    );
+    assert.equal(
+      vaultBalanceAfterDeallocate - vaultBalanceBeforeDeallocate,
+      10_000n,
+    );
+    assert.equal(treasuryBalanceBefore - treasuryBalanceAfter, 12n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
       0n,
     );
   });

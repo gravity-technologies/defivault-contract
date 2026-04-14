@@ -2,7 +2,7 @@
 title: "GHO Fixed Route Policy"
 added: "2026-04-02"
 audience: "contributors, reviewers, auditors, operators"
-purpose: "record the intended V2 policy shape for the GSM -> GHO -> stkGHO lane"
+purpose: "record the intended V2 policy shape for the GSM -> GHO -> sGHO lane"
 decision_type: "strategy policy, treasury policy, liveness"
 ---
 
@@ -10,10 +10,10 @@ decision_type: "strategy policy, treasury policy, liveness"
 
 ## Context
 
-The GHO lane is not a direct wrapper. It is a fixed multi-step path:
+The SGHO lane is not a direct wrapper. It is a fixed multi-step path:
 
 - `vaultToken -> GSM -> GHO`
-- `GHO -> stkGHO`
+- `GHO -> sGHO`
 - exits reverse that path
 
 That makes it the main V2 lane where the new lane-shape policy matters.
@@ -28,31 +28,31 @@ The product requirements for this lane are:
 
 ## Decision
 
-`GsmStkGhoStrategy` is treated as `FixedRoute`.
+`SGHOStrategy` is treated as `FixedRoute`.
 
 The strategy itself only exposes the fixed lane. It does not accept arbitrary routing input.
 
-The intended vault policy for the current GHO lane is:
+The intended vault policy for the current SGHO lane is:
 
-- `entryCapBps = 0`
-- `exitCapBps = 7`
+- `entryCapHundredthBps = 1` (`0.01 bps`)
+- `exitCapHundredthBps = 1200` (`12 bps`)
 - `policyActive = true`
 
 Operational meaning:
 
-- any non-zero entry fee blocks normal allocation,
-- tracked exit reimbursement is allowed only for the explicit exit fee and only within the 7 bps cap,
+- only tiny entry dust within the `0.01 bps` cap is reimbursable on allocation,
+- tracked exit reimbursement is allowed only for the explicit exit fee and only within the `12 bps` cap,
 - harvest uses the same strategy exit surface but never requests reimbursement,
 - incident-time exits use the same fee-cap and reimbursement semantics as normal tracked exits.
 - the vault owns the lane's tracked principal ledger; the strategy holds no tracked-principal state.
 - if the lane takes a real impairment, governance recognizes that loss through `deallocateAll`.
 - final removal is reserved for economically empty cleanup, not for proving every exact token balance is literally zero.
 
-The treasury boundary is direction-aware:
+The treasury boundary is simple:
 
-- reimbursement policy is keyed by `(strategy, token, direction)`,
-- entry and exit budgets are distinct,
-- the vault must be explicitly authorized on the treasury before reimbursement is relied on.
+- the vault must be explicitly authorized on the treasury before reimbursement is relied on,
+- reimbursement succeeds only if the treasury already holds enough of the reimbursed token,
+- entry and exit eligibility still remain distinct at the vault policy layer.
 
 ## Why Entry Cap Stays At Zero
 
@@ -73,6 +73,6 @@ For GHO entry:
 ## Related Docs
 
 - [07-v2-lane-policy.md](07-v2-lane-policy.md)
-- [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)
+- [../integrations/gho-sgho.md](../integrations/gho-sgho.md)
 - [../concepts/v2-accounting-walkthrough.md](../concepts/v2-accounting-walkthrough.md)
 - [../operations/vault-upgrades-and-v2-policy.md](../operations/vault-upgrades-and-v2-policy.md)

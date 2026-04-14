@@ -31,10 +31,10 @@ describe("YieldRecipientTreasury", async function () {
   it("exposes the treasury marker interface selector", async function () {
     const { treasury } = await deployTreasury();
 
-    assert.equal(await treasury.read.isWithdrawalFeeTreasury(), "0x3529510a");
+    assert.equal(await treasury.read.isFeeReimburser(), "0x1b30784a");
   });
 
-  it("lets the owner configure a token budget and read it from any strategy context", async function () {
+  it("reports remaining reimbursable capacity from current treasury balance", async function () {
     const { treasury, treasuryAsOther } = await deployTreasury();
     const strategyCallerOne = await viem.deployContract(
       "TestWithdrawalFeeTreasuryCaller",
@@ -48,22 +48,13 @@ describe("YieldRecipientTreasury", async function () {
       18,
     ]);
 
+    await token.write.mint([treasury.address, 1_000n]);
+
     await viem.assertions.revertWithCustomError(
-      treasuryAsOther.write.setReimbursementConfig([
-        strategyCallerOne.address,
-        token.address,
-        1_000n,
-      ]),
+      treasuryAsOther.write.withdrawERC20([token.address, addr(recipient), 1n]),
       treasury,
       "OwnableUnauthorizedAccount",
     );
-
-    const hash = await treasury.write.setReimbursementConfig([
-      strategyCallerOne.address,
-      token.address,
-      1_000n,
-    ]);
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
 
     assert.deepEqual(
       await treasury.read.reimbursementConfig([
@@ -79,24 +70,9 @@ describe("YieldRecipientTreasury", async function () {
       ]),
       1_000n,
     );
-
-    const updated = expectEventOnce(
-      receipt,
-      treasury,
-      "ReimbursementConfigUpdated",
-    );
-    assert.equal(
-      (updated.strategy as string).toLowerCase(),
-      strategyCallerOne.address.toLowerCase(),
-    );
-    assert.equal(
-      (updated.token as string).toLowerCase(),
-      token.address.toLowerCase(),
-    );
-    assert.equal(updated.remainingBudget, 1_000n);
   });
 
-  it("reimburses exact amounts only for enabled strategy callers within budget", async function () {
+  it("reimburses exact amounts only for enabled strategy callers within treasury balance", async function () {
     const { treasury } = await deployTreasury();
     const strategyCallerOne = await viem.deployContract(
       "TestWithdrawalFeeTreasuryCaller",
@@ -112,11 +88,6 @@ describe("YieldRecipientTreasury", async function () {
 
     await token.write.mint([treasury.address, 2_000n]);
     await treasury.write.setAuthorizedVault([strategyCallerOne.address, true]);
-    await treasury.write.setReimbursementConfig([
-      strategyCallerOne.address,
-      token.address,
-      900n,
-    ]);
 
     const recipientBefore = (await token.read.balanceOf([
       addr(recipient),
@@ -139,14 +110,14 @@ describe("YieldRecipientTreasury", async function () {
         strategyCallerOne.address,
         token.address,
       ]),
-      650n,
+      1_750n,
     );
     assert.deepEqual(
       await treasury.read.reimbursementConfig([
         strategyCallerTwo.address,
         token.address,
       ]),
-      650n,
+      1_750n,
     );
 
     const reimbursed = expectEventOnce(receipt, treasury, "FeeReimbursed");
@@ -163,10 +134,9 @@ describe("YieldRecipientTreasury", async function () {
       addr(recipient).toLowerCase(),
     );
     assert.equal(reimbursed.amount, 250n);
-    assert.equal(reimbursed.remainingBudget, 650n);
   });
 
-  it("returns zero instead of partially paying when disabled, over budget, or underfunded", async function () {
+  it("reverts when an unauthorized caller requests reimbursement", async function () {
     const { treasury } = await deployTreasury();
     const strategyCaller = await viem.deployContract(
       "TestWithdrawalFeeTreasuryCaller",
@@ -179,44 +149,45 @@ describe("YieldRecipientTreasury", async function () {
 
     await token.write.mint([treasury.address, 100n]);
 
-    const disabledHash = await strategyCaller.write.callReimburse([
-      treasury.address,
-      token.address,
-      strategyCaller.address,
-      addr(recipient),
-      50n,
-    ]);
-    await publicClient.waitForTransactionReceipt({ hash: disabledHash });
+    await viem.assertions.revertWithCustomError(
+      strategyCaller.write.callReimburse([
+        treasury.address,
+        token.address,
+        strategyCaller.address,
+        addr(recipient),
+        50n,
+      ]),
+      treasury,
+      "UnauthorizedVault",
+    );
     assert.equal(await token.read.balanceOf([addr(recipient)]), 0n);
+  });
 
-    await treasury.write.setReimbursementConfig([
-      strategyCaller.address,
-      token.address,
-      40n,
+  it("reverts when the treasury balance is insufficient", async function () {
+    const { treasury } = await deployTreasury();
+    const strategyCaller = await viem.deployContract(
+      "TestWithdrawalFeeTreasuryCaller",
+    );
+    const token = await viem.deployContract("MockERC20", [
+      "Mock Token",
+      "MOCK",
+      18,
     ]);
-    const overBudgetHash = await strategyCaller.write.callReimburse([
-      treasury.address,
-      token.address,
-      strategyCaller.address,
-      addr(recipient),
-      50n,
-    ]);
-    await publicClient.waitForTransactionReceipt({ hash: overBudgetHash });
-    assert.equal(await token.read.balanceOf([addr(recipient)]), 0n);
 
-    await treasury.write.setReimbursementConfig([
-      strategyCaller.address,
-      token.address,
-      200n,
-    ]);
-    const underfundedHash = await strategyCaller.write.callReimburse([
-      treasury.address,
-      token.address,
-      strategyCaller.address,
-      addr(recipient),
-      150n,
-    ]);
-    await publicClient.waitForTransactionReceipt({ hash: underfundedHash });
+    await token.write.mint([treasury.address, 100n]);
+    await treasury.write.setAuthorizedVault([strategyCaller.address, true]);
+
+    await viem.assertions.revertWithCustomError(
+      strategyCaller.write.callReimburse([
+        treasury.address,
+        token.address,
+        strategyCaller.address,
+        addr(recipient),
+        150n,
+      ]),
+      treasury,
+      "InsufficientTreasuryBalance",
+    );
     assert.equal(await token.read.balanceOf([addr(recipient)]), 0n);
   });
 

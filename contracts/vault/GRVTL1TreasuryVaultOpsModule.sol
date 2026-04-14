@@ -4,7 +4,7 @@ pragma solidity 0.8.34;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
-import {IWithdrawalFeeTreasury} from "../interfaces/IWithdrawalFeeTreasury.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {IYieldStrategyV2} from "../interfaces/IYieldStrategyV2.sol";
 import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
@@ -30,8 +30,8 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
     event StrategyPolicyConfigUpdated(
         address indexed vaultToken,
         address indexed strategy,
-        uint16 entryCapBps,
-        uint16 exitCapBps,
+        uint24 entryCapHundredthBps,
+        uint24 exitCapHundredthBps,
         bool policyActive
     );
 
@@ -80,9 +80,12 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         address strategy,
         IL1TreasuryVault.StrategyPolicyConfig calldata cfg
     ) external {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert IL1TreasuryVault.InvalidParam();
-        if (cfg.entryCapBps > 10_000 || cfg.exitCapBps > 10_000) revert IL1TreasuryVault.InvalidParam();
+        if (
+            cfg.entryCapHundredthBps > VaultStrategyOpsLib.HUNDREDTH_BPS_SCALE ||
+            cfg.exitCapHundredthBps > VaultStrategyOpsLib.HUNDREDTH_BPS_SCALE
+        ) revert IL1TreasuryVault.InvalidParam();
 
         if (
             !VaultStrategyOpsLib.isYieldStrategyV2(strategy) ||
@@ -98,7 +101,7 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         }
 
         // Validate treasury is compatible if any cap > 0 (fees will be reimbursed unconditionally)
-        if (cfg.entryCapBps > 0 || cfg.exitCapBps > 0) {
+        if (cfg.entryCapHundredthBps > 0 || cfg.exitCapHundredthBps > 0) {
             _requireCompatibleTreasury(token, strategy);
         }
 
@@ -106,7 +109,13 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         if (!_hasStrategyPolicyConfig[token][strategy]) {
             _hasStrategyPolicyConfig[token][strategy] = true;
         }
-        emit StrategyPolicyConfigUpdated(token, strategy, cfg.entryCapBps, cfg.exitCapBps, cfg.policyActive);
+        emit StrategyPolicyConfigUpdated(
+            token,
+            strategy,
+            cfg.entryCapHundredthBps,
+            cfg.exitCapHundredthBps,
+            cfg.policyActive
+        );
     }
 
     /**
@@ -121,14 +130,14 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         address strategy,
         uint256 amount
     ) external returns (uint256 spent) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0) || amount == 0) revert IL1TreasuryVault.InvalidParam();
         if (!_vaultTokenConfigs[token].supported) revert IL1TreasuryVault.TokenNotSupported();
 
         IL1TreasuryVault.VaultTokenStrategyConfig storage sCfg = _vaultTokenStrategyConfigs[token][strategy];
         if (!sCfg.whitelisted) revert IL1TreasuryVault.StrategyNotWhitelisted();
 
-        uint256 idle = _idleTokenBalance(token);
+        uint256 idle = VaultStrategyOpsLib.idleTokenBalance(token, address(this));
         if (idle < amount) revert IL1TreasuryVault.InvalidParam();
 
         IERC20(token).forceApprove(strategy, amount);
@@ -155,12 +164,12 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
 
             // Fee inference and cap check
             uint256 fee = spent - invested;
-            if (fee > VaultStrategyOpsLib.feeCapAmount(spent, policy.entryCapBps)) {
+            if (fee > VaultStrategyOpsLib.feeCapAmount(spent, policy.entryCapHundredthBps)) {
                 revert IL1TreasuryVault.FeeCapExceeded(
                     token,
                     strategy,
                     fee,
-                    VaultStrategyOpsLib.feeCapAmount(spent, policy.entryCapBps)
+                    VaultStrategyOpsLib.feeCapAmount(spent, policy.entryCapHundredthBps)
                 );
             }
 
@@ -219,9 +228,11 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         address strategy,
         uint256 amount
     ) external returns (uint256 received) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0) || amount == 0) revert IL1TreasuryVault.InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert IL1TreasuryVault.StrategyNotWhitelisted();
+        if (!VaultStrategyOpsLib.canWithdrawVaultTokenFromStrategy(_vaultTokenStrategyConfigs[token][strategy])) {
+            revert IL1TreasuryVault.StrategyNotWhitelisted();
+        }
 
         if (VaultStrategyOpsLib.isYieldStrategyV2(strategy)) {
             uint256 costBasis = _strategyCostBasis[token][strategy];
@@ -232,12 +243,12 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
 
             // Fee inference and cap check (also catches impairment)
             uint256 fee = amount - received;
-            if (fee > VaultStrategyOpsLib.feeCapAmount(amount, policy.exitCapBps)) {
+            if (fee > VaultStrategyOpsLib.feeCapAmount(amount, policy.exitCapHundredthBps)) {
                 revert IL1TreasuryVault.FeeCapExceeded(
                     token,
                     strategy,
                     fee,
-                    VaultStrategyOpsLib.feeCapAmount(amount, policy.exitCapBps)
+                    VaultStrategyOpsLib.feeCapAmount(amount, policy.exitCapHundredthBps)
                 );
             }
 
@@ -274,9 +285,11 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
      *      Legacy: deallocateAll + costBasis -= received.
      */
     function deallocateAllVaultTokenFromStrategy(address token, address strategy) external returns (uint256 received) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert IL1TreasuryVault.InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert IL1TreasuryVault.StrategyNotWhitelisted();
+        if (!VaultStrategyOpsLib.canWithdrawVaultTokenFromStrategy(_vaultTokenStrategyConfigs[token][strategy])) {
+            revert IL1TreasuryVault.StrategyNotWhitelisted();
+        }
 
         if (VaultStrategyOpsLib.isYieldStrategyV2(strategy)) {
             uint256 costBasis = _strategyCostBasis[token][strategy];
@@ -284,15 +297,22 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
 
             IL1TreasuryVault.StrategyPolicyConfig memory policy = _requireConfiguredStrategyPolicy(token, strategy);
             uint256 economicExposure = VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy);
-            uint256 withdrawableExposure = VaultStrategyOpsLib.readStrategyWithdrawableExposureOrRevert(token, strategy);
+            uint256 withdrawableExposure = VaultStrategyOpsLib.readStrategyWithdrawableExposureOrRevert(
+                token,
+                strategy
+            );
             uint256 economicRecoverable = costBasis < economicExposure ? costBasis : economicExposure;
             uint256 withdrawable = costBasis < withdrawableExposure ? costBasis : withdrawableExposure;
-            if (withdrawable < economicRecoverable) {
+            uint256 maxReimbursableFee = VaultStrategyOpsLib.feeCapAmount(
+                economicRecoverable,
+                policy.exitCapHundredthBps
+            );
+            if (withdrawable + maxReimbursableFee < economicRecoverable) {
                 revert IL1TreasuryVault.InsufficientWithdrawableStrategyExposure(
                     token,
                     strategy,
                     economicRecoverable,
-                    withdrawable
+                    withdrawable + maxReimbursableFee
                 );
             }
             uint256 loss = costBasis - economicRecoverable;
@@ -300,14 +320,9 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
             uint256 fee;
             if (withdrawable > 0) {
                 received = _withdrawPolicyStrategyWithBalanceDelta(token, strategy, withdrawable);
-                fee = withdrawable - received;
-                if (fee > VaultStrategyOpsLib.feeCapAmount(withdrawable, policy.exitCapBps)) {
-                    revert IL1TreasuryVault.FeeCapExceeded(
-                        token,
-                        strategy,
-                        fee,
-                        VaultStrategyOpsLib.feeCapAmount(withdrawable, policy.exitCapBps)
-                    );
+                fee = economicRecoverable - received;
+                if (fee > maxReimbursableFee) {
+                    revert IL1TreasuryVault.FeeCapExceeded(token, strategy, fee, maxReimbursableFee);
                 }
 
                 // Unconditional reimbursement on tracked flows
@@ -346,9 +361,11 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         uint256 amount,
         uint256 minReceived
     ) external returns (uint256 received) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0) || amount == 0) revert IL1TreasuryVault.InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert IL1TreasuryVault.StrategyNotWhitelisted();
+        if (!VaultStrategyOpsLib.canWithdrawVaultTokenFromStrategy(_vaultTokenStrategyConfigs[token][strategy])) {
+            revert IL1TreasuryVault.StrategyNotWhitelisted();
+        }
         address recipient = _yieldRecipient;
         if (recipient == address(0)) revert IL1TreasuryVault.InvalidParam();
 
@@ -401,7 +418,7 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
             _requireConfiguredStrategyPolicy(token, strategy);
         }
 
-        uint16 exitCapBps = _strategyPolicyConfigs[token][strategy].exitCapBps;
+        uint24 exitCapHundredthBps = _strategyPolicyConfigs[token][strategy].exitCapHundredthBps;
 
         uint256 residual = VaultStrategyOpsLib.rawHarvestableYield(token, strategy, costBasis);
         if (residual == 0 || amount > residual) revert IL1TreasuryVault.YieldNotAvailable();
@@ -410,7 +427,7 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
 
         // Exit-cap check (harvest is an exit path)
         uint256 fee = amount - withdrawnToVault;
-        uint256 maxFee = VaultStrategyOpsLib.feeCapAmount(amount, exitCapBps);
+        uint256 maxFee = VaultStrategyOpsLib.feeCapAmount(amount, exitCapHundredthBps);
         if (fee > maxFee) {
             revert IL1TreasuryVault.FeeCapExceeded(token, strategy, fee, maxFee);
         }
@@ -461,10 +478,10 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
      */
     function _requireCompatibleTreasury(address token, address strategy) private view {
         address treasury = _yieldRecipient;
-        if (!VaultStrategyOpsLib.isCompatibleWithdrawalFeeTreasury(treasury)) {
+        if (!VaultStrategyOpsLib.isCompatibleFeeReimburser(treasury)) {
             revert IL1TreasuryVault.InvalidV2StrategyPolicy(token, strategy);
         }
-        if (!IWithdrawalFeeTreasury(treasury).isAuthorizedVault(address(this))) {
+        if (!IFeeReimburser(treasury).isAuthorizedVault(address(this))) {
             revert IL1TreasuryVault.InvalidV2StrategyPolicy(token, strategy);
         }
     }
@@ -497,15 +514,10 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
      * @dev Returns zero when defensive withdrawal is disabled for the pair.
      */
     function _rawHarvestableYield(address token, address strategy) private view returns (uint256) {
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) return 0;
+        if (!VaultStrategyOpsLib.canWithdrawVaultTokenFromStrategy(_vaultTokenStrategyConfigs[token][strategy])) {
+            return 0;
+        }
         return VaultStrategyOpsLib.rawHarvestableYield(token, strategy, _strategyCostBasis[token][strategy]);
-    }
-
-    /// @notice Returns current idle vault balance for `token`, or `0` if the token read fails.
-    function _idleTokenBalance(address token) private view returns (uint256) {
-        (bool ok, uint256 balance) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
-        if (!ok) return 0;
-        return balance;
     }
 
     /// @notice Decreases tracked cost basis for one strategy lane, clamped at zero.
@@ -515,16 +527,5 @@ contract GRVTL1TreasuryVaultOpsModule is GRVTL1TreasuryVaultStorage {
         if (previousCostBasis == 0) return;
         uint256 decreaseBy = delta < previousCostBasis ? delta : previousCostBasis;
         _strategyCostBasis[token][strategy] = previousCostBasis - decreaseBy;
-    }
-
-    /// @notice Returns whether the vault currently allows defensive withdrawal from one strategy lane.
-    function _canWithdrawVaultTokenFromStrategy(address token, address strategy) private view returns (bool) {
-        IL1TreasuryVault.VaultTokenStrategyConfig storage cfg = _vaultTokenStrategyConfigs[token][strategy];
-        return cfg.whitelisted || cfg.active;
-    }
-
-    /// @notice Rejects the zero address as a vault token.
-    function _requireErc20Token(address token) private pure {
-        if (token == address(0)) revert IL1TreasuryVault.InvalidParam();
     }
 }

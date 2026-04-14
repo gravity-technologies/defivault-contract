@@ -18,8 +18,6 @@
     "deploy:strategy": "hardhat ignition deploy ./ignition/modules/StrategyCore.ts",
     "deploy:strategy-v2:family": "hardhat ignition deploy ./ignition/modules/StrategyV2Core.ts",
     "deploy:strategy-v2:lane": "hardhat ignition deploy ./ignition/modules/StrategyV2Lane.ts",
-    "deploy:gho-strategy:family": "hardhat ignition deploy ./ignition/modules/GhoStrategyCore.ts",
-    "deploy:gho-strategy:lane": "hardhat ignition deploy ./ignition/modules/GhoStrategyLane.ts",
     "deploy:yield-recipient": "hardhat ignition deploy ./ignition/modules/YieldRecipientTreasury.ts",
     "deploy:gho-treasury:schedule-update": "hardhat run ./scripts/deploy/deploy-gho-treasury-and-schedule-update.ts",
     "deploy:vault-token-strategy": "hardhat ignition deploy ./ignition/modules/VaultTokenStrategy.ts",

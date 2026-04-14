@@ -175,10 +175,10 @@ interface IL1TreasuryVault {
     /// @notice Per-lane fee policy for one `(vaultToken, strategy)` pair.
     /// @dev Reimbursement is unconditional on tracked flows when `cap > 0 && fee > 0`. Harvest is never reimbursed.
     struct StrategyPolicyConfig {
-        /// @dev Entry fee cap in bps. 0 = no fee allowed (fail-closed). >0 = fee allowed up to cap.
-        uint16 entryCapBps;
-        /// @dev Exit fee cap in bps. 0 = no fee allowed (fail-closed). >0 = fee allowed up to cap.
-        uint16 exitCapBps;
+        /// @dev Entry fee cap in hundredths of one basis point. 1 = 0.01 bps, 100 = 1 bps, 0 = no fee allowed.
+        uint24 entryCapHundredthBps;
+        /// @dev Exit fee cap in hundredths of one basis point. 1 = 0.01 bps, 100 = 1 bps, 0 = no fee allowed.
+        uint24 exitCapHundredthBps;
         /// @dev When true, normal allocation and harvest are enabled for this lane.
         ///      Deallocation is allowed regardless of this flag.
         bool policyActive;
@@ -295,8 +295,8 @@ interface IL1TreasuryVault {
     event StrategyPolicyConfigUpdated(
         address indexed vaultToken,
         address indexed strategy,
-        uint16 entryCapBps,
-        uint16 exitCapBps,
+        uint24 entryCapHundredthBps,
+        uint24 exitCapHundredthBps,
         bool policyActive
     );
 

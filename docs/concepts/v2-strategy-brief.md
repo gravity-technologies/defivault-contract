@@ -84,23 +84,23 @@ This creates a deliberate trust tradeoff. V2 entry accounting uses strategy-repo
 
 For the worked USDT/GHO examples, see [v2-accounting-walkthrough.md](v2-accounting-walkthrough.md).
 
-## GHO Lane Example
+## SGHO Lane Example
 
-The GHO lane is the clearest V2 example because its route is fixed:
+The SGHO lane is the clearest V2 example because its route is fixed:
 
 ```text
-vaultToken -> GSM -> GHO -> stkGHO
+vaultToken -> GSM -> GHO -> sGHO
 ```
 
-The GHO strategy is narrow by design:
+The SGHO strategy is narrow by design:
 
 - route shape is fixed in the implementation
 - operator-provided paths are not accepted
 - exposure is reported back in vault-token terms
 - the strategy does not decide what portion is principal or yield
-- rewards, appreciation, and leftover route inventory become harvestable only when vault-side exposure exceeds cost basis
+- share-price appreciation and leftover route inventory become harvestable only when vault-side exposure exceeds cost basis
 
-See [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md) for the implemented GHO lane behavior.
+See [../integrations/gho-sgho.md](../integrations/gho-sgho.md) for the implemented SGHO lane behavior.
 
 ## Reimbursement Boundary
 
@@ -150,6 +150,6 @@ This reduces repeated deployment cost and keeps strategy families consistent, bu
 - [v2-accounting-walkthrough.md](v2-accounting-walkthrough.md)
 - [accounting-and-tvl.md](accounting-and-tvl.md)
 - [strategy-model.md](strategy-model.md)
-- [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)
+- [../integrations/gho-sgho.md](../integrations/gho-sgho.md)
 - [../design-decisions/07-v2-lane-policy.md](../design-decisions/07-v2-lane-policy.md)
 - [../operations/vault-upgrades-and-v2-policy.md](../operations/vault-upgrades-and-v2-policy.md)

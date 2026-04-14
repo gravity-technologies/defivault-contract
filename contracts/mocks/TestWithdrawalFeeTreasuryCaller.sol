@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.34;
 
-import {IWithdrawalFeeTreasury} from "../interfaces/IWithdrawalFeeTreasury.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 
 /**
  * @title TestWithdrawalFeeTreasuryCaller
- * @notice Test-only helper that calls a withdrawal-fee treasury as a contract strategy caller.
+ * @notice Test-only helper that calls a fee reimburser as a contract strategy caller.
  */
 contract TestWithdrawalFeeTreasuryCaller {
     function callReimburse(
@@ -15,6 +15,6 @@ contract TestWithdrawalFeeTreasuryCaller {
         address recipient,
         uint256 amount
     ) external returns (uint256 reimbursed) {
-        return IWithdrawalFeeTreasury(treasury).reimburseFee(token, strategy, recipient, amount);
+        return IFeeReimburser(treasury).reimburseFee(token, strategy, recipient, amount);
     }
 }
