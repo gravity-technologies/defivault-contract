@@ -503,8 +503,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       token.address,
       v2Strategy.address,
       {
-        entryCapBps: 0,
-        exitCapBps: 0,
+        entryCapHundredthBps: 0,
+        exitCapHundredthBps: 0,
         policyActive: true,
       },
     ]);
@@ -625,8 +625,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       token.address,
       strategy.address,
       {
-        entryCapBps: 0,
-        exitCapBps: 0,
+        entryCapHundredthBps: 0,
+        exitCapHundredthBps: 0,
         policyActive: true,
       },
     ]);
@@ -643,8 +643,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       strategy.address,
     ]);
     assert.equal(initialPolicy.policyActive, true);
-    assert.equal(initialPolicy.entryCapBps, 0);
-    assert.equal(initialPolicy.exitCapBps, 0);
+    assert.equal(initialPolicy.entryCapHundredthBps, 0);
+    assert.equal(initialPolicy.exitCapHundredthBps, 0);
 
     await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
@@ -724,8 +724,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       strategy.address,
     ]);
     assert.equal(postRotationPolicy.policyActive, true);
-    assert.equal(postRotationPolicy.entryCapBps, 0);
-    assert.equal(postRotationPolicy.exitCapBps, 0);
+    assert.equal(postRotationPolicy.entryCapHundredthBps, 0);
+    assert.equal(postRotationPolicy.exitCapHundredthBps, 0);
   });
 
   it("finalizes a drained V2 lane and clears its policy metadata", async function () {
@@ -764,8 +764,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       token.address,
       strategy.address,
       {
-        entryCapBps: 0,
-        exitCapBps: 0,
+        entryCapHundredthBps: 0,
+        exitCapHundredthBps: 0,
         policyActive: true,
       },
     ]);
@@ -882,8 +882,8 @@ describe("GRVTL1TreasuryVault upgrade safety", async function () {
       token.address,
       strategy.address,
       {
-        entryCapBps: 0,
-        exitCapBps: 0,
+        entryCapHundredthBps: 0,
+        exitCapHundredthBps: 0,
         policyActive: true,
       },
     ]);

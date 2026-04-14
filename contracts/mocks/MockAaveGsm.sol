@@ -17,6 +17,7 @@ contract MockAaveGsm is IAaveGsm {
     using SafeERC20 for IERC20;
 
     uint256 private constant BPS_SCALE = 10_000;
+    uint256 private constant WAD = 1e18;
 
     error InvalidParam();
 
@@ -29,6 +30,7 @@ contract MockAaveGsm is IAaveGsm {
     uint256 public ghoToAssetExecutionBps;
     uint256 public ghoToAssetQuoteSpendBps;
     uint256 public assetToGhoScale;
+    uint256 public priceRatio = WAD;
 
     constructor(address gho_, address underlyingAsset_) {
         if (gho_ == address(0) || underlyingAsset_ == address(0)) revert InvalidParam();
@@ -78,12 +80,38 @@ contract MockAaveGsm is IAaveGsm {
         assetToGhoScale = scale_;
     }
 
+    function setPriceRatio(uint256 ratio_) external {
+        if (ratio_ == 0) revert InvalidParam();
+        priceRatio = ratio_;
+    }
+
     function GHO_TOKEN() external view returns (address) {
         return gho;
     }
 
     function UNDERLYING_ASSET() external view returns (address) {
         return underlyingAsset;
+    }
+
+    function getFeeStrategy() external view returns (address) {
+        return address(this);
+    }
+
+    function PRICE_STRATEGY() external view returns (address) {
+        return address(this);
+    }
+
+    function getBuyFee(uint256 amount) external view returns (uint256 fee) {
+        fee = (amount * burnFeeBps) / BPS_SCALE;
+    }
+
+    function getSellFee(uint256 amount) external view returns (uint256 fee) {
+        uint256 quoteBps = _quoteBpsOrDefault(assetToGhoQuoteBps, assetToGhoExecutionBps);
+        fee = amount - ((amount * quoteBps) / BPS_SCALE);
+    }
+
+    function PRICE_RATIO() external view returns (uint256 ratio) {
+        return priceRatio;
     }
 
     function sellAsset(uint256 maxAmount, address receiver) external returns (uint256 assetSold, uint256 ghoBought) {
@@ -113,7 +141,7 @@ contract MockAaveGsm is IAaveGsm {
 
         ghoSold = maxGhoAmount;
         IERC20(gho).safeTransferFrom(msg.sender, address(this), ghoSold);
-        IMockMintableToken(underlyingAsset).mint(receiver, assetBought);
+        IERC20(underlyingAsset).safeTransfer(receiver, assetBought);
     }
 
     function getGhoAmountForSellAsset(

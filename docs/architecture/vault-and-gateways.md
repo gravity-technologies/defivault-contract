@@ -16,7 +16,7 @@
 - `YieldRecipientTreasury`: optional treasury boundary for direction-aware fee reimbursement
 - `AaveV3Strategy`: legacy vault-only adapter for the Aave lane
 - `AaveV3StrategyV2`: single-lane Aave V2 adapter
-- `GsmStkGhoStrategy`: vault-only adapter for the `vaultToken -> GSM -> GHO -> stkGHO` lane
+- `SGHOStrategy`: vault-only adapter for the `vaultToken -> GSM -> GHO -> sGHO` lane
 
 ## Topology
 
@@ -34,11 +34,11 @@
          allocate/deallocate  |                     |                            | requestL2TransactionTwoBridges(...)
                               v                     v                            v
                      +----------------+   +--------------------+   +--------------------------+
-                     | AaveV3Strategy |   | GsmStkGhoStrategy |   | BridgeHub + SharedBridge  |
+                     | AaveV3Strategy |   | SGHOStrategy       |   | BridgeHub + SharedBridge  |
                      +--------+-------+   +---------+---------+   +-------------+-------------+
                               |                     |                           ^
                               v                     v                           |
-                           Aave V3          GSM -> GHO -> stkGHO        NativeBridgeGateway
+                           Aave V3          GSM -> GHO -> sGHO         NativeBridgeGateway
 ```
 
 ## Strategy Path
@@ -55,7 +55,7 @@ Implemented strategy examples:
 
 - [AaveV3Strategy](../../contracts/strategies/AaveV3Strategy.sol): documented in [../integrations/aave.md](../integrations/aave.md)
 - [AaveV3StrategyV2](../../contracts/strategies/AaveV3StrategyV2.sol): documented in [../integrations/aave.md](../integrations/aave.md)
-- [GsmStkGhoStrategy](../../contracts/strategies/GsmStkGhoStrategy.sol): documented in [../integrations/gho-stkgho.md](../integrations/gho-stkgho.md)
+- [SGHOStrategy](../../contracts/strategies/SGHOStrategy.sol): documented in [../integrations/gho-sgho.md](../integrations/gho-sgho.md)
 
 ### V2 Policy Layer
 

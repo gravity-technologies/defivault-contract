@@ -10,7 +10,7 @@ import {IL1ZkSyncBridgeHub} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IGRVTBridgeProxyFeeToken} from "../external/IGRVTBridgeProxyFeeToken.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
-import {IWithdrawalFeeTreasury} from "../interfaces/IWithdrawalFeeTreasury.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 import {PositionComponent, ConservativeTokenTotals, TokenTotals} from "../interfaces/IVaultReportingTypes.sol";
 import {VaultBridgeLib} from "./VaultBridgeLib.sol";
 import {GRVTL1TreasuryVaultViewModule} from "./GRVTL1TreasuryVaultViewModule.sol";
@@ -414,19 +414,19 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function isSupportedVaultToken(address vaultToken) external view override returns (bool) {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         return _supportedVaultTokenSet[vaultToken];
     }
 
     /// @inheritdoc IL1TreasuryVault
     function isBridgeableVaultToken(address vaultToken) external view override returns (bool) {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         return _bridgeableVaultTokens[vaultToken];
     }
 
     /// @inheritdoc IL1TreasuryVault
     function setVaultTokenConfig(address token, VaultTokenConfig calldata cfg) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         (bool ok, ) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
         if (!ok) revert InvalidParam();
         _vaultTokenConfigs[token] = cfg;
@@ -437,7 +437,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function setBridgeableVaultToken(address token, bool bridgeable) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         (bool ok, ) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
         if (!ok) revert InvalidParam();
         _bridgeableVaultTokens[token] = bridgeable;
@@ -446,7 +446,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function isStrategyWhitelistedForVaultToken(address token, address strategy) external view override returns (bool) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _vaultTokenStrategyConfigs[token][strategy].whitelisted;
     }
@@ -456,7 +456,7 @@ contract GRVTL1TreasuryVault is
         address token,
         address strategy
     ) external view override returns (VaultTokenStrategyConfig memory) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _vaultTokenStrategyConfigs[token][strategy];
     }
@@ -470,7 +470,7 @@ contract GRVTL1TreasuryVault is
         address strategy,
         VaultTokenStrategyConfig calldata cfg
     ) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         if (cfg.whitelisted && !_vaultTokenConfigs[token].supported) revert TokenNotSupported();
 
@@ -507,14 +507,14 @@ contract GRVTL1TreasuryVault is
         address token,
         address strategy
     ) external view override returns (StrategyPolicyConfig memory) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _strategyPolicyConfigs[token][strategy];
     }
 
     /// @inheritdoc IL1TreasuryVault
     function hasStrategyPolicyConfig(address token, address strategy) external view override returns (bool) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _hasStrategyPolicyConfig[token][strategy];
     }
@@ -526,7 +526,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function finalizeStrategyRemoval(address token, address strategy) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         if (
             !VaultStrategyOpsLib.isYieldStrategyV2(strategy) ||
@@ -548,7 +548,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function refreshStrategyTvlTokens(address vaultToken, address strategy) external override onlyVaultAdmin {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         if (strategy == address(0)) revert InvalidParam();
         if (!_isActiveVaultTokenStrategy(vaultToken, strategy)) revert StrategyNotWhitelisted();
         _refreshStrategyTvlTokens(vaultToken, strategy);
@@ -585,7 +585,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function strategyCostBasis(address token, address strategy) external view override returns (uint256) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _strategyCostBasis[token][strategy];
     }
@@ -596,7 +596,7 @@ contract GRVTL1TreasuryVault is
             GRVTL1TreasuryVaultViewModule(_viewModule).harvestableYield(
                 token,
                 strategy,
-                _canWithdrawVaultTokenFromStrategy(token, strategy),
+                VaultStrategyOpsLib.canWithdrawVaultTokenFromStrategy(_vaultTokenStrategyConfigs[token][strategy]),
                 _strategyCostBasis[token][strategy]
             );
     }
@@ -616,7 +616,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function isTrackedTvlToken(address token) external view override returns (bool) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         return _trackedTvlTokenSet[token];
     }
 
@@ -644,7 +644,7 @@ contract GRVTL1TreasuryVault is
 
     /// @inheritdoc IL1TreasuryVault
     function setTrackedTvlTokenOverride(address token, bool enabled, bool forceTrack) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
 
         if (enabled) {
             _trackedTvlTokenOverrideEnabled[token] = true;
@@ -1113,27 +1113,12 @@ contract GRVTL1TreasuryVault is
         return _vaultTokenStrategyConfigs[token][strategy].active;
     }
 
-    /**
-     * @notice Returns true if funds may be withdrawn from `strategy` for `token`.
-     * @dev Withdrawal is permitted when the strategy is either:
-     *      - Whitelisted (`VaultTokenStrategyConfig.whitelisted == true`), OR
-     *      - Active (present in `_vaultTokenStrategies`) — i.e. in withdraw-only mode.
-     *
-     *      This keeps the deallocation path resilient during de-whitelist transitions: allocation
-     *      permission can be revoked immediately (`whitelisted = false`) while existing positions
-     *      remain withdrawable until fully drained (`active = true` until removal).
-     */
-    function _canWithdrawVaultTokenFromStrategy(address token, address strategy) internal view returns (bool) {
-        VaultTokenStrategyConfig storage cfg = _vaultTokenStrategyConfigs[token][strategy];
-        return cfg.whitelisted || cfg.active;
-    }
-
     function _requireCompatibleYieldRecipientTreasury(address treasury) internal view {
-        if (!VaultStrategyOpsLib.isCompatibleWithdrawalFeeTreasury(treasury)) {
+        if (!VaultStrategyOpsLib.isCompatibleFeeReimburser(treasury)) {
             revert IncompatibleYieldRecipientTreasury(treasury);
         }
 
-        IWithdrawalFeeTreasury feeTreasury = IWithdrawalFeeTreasury(treasury);
+        IFeeReimburser feeTreasury = IFeeReimburser(treasury);
         if (!feeTreasury.isAuthorizedVault(address(this))) {
             revert IncompatibleYieldRecipientTreasury(treasury);
         }
@@ -1266,14 +1251,5 @@ contract GRVTL1TreasuryVault is
             _activeStrategies[removeIndex] = _activeStrategies[lastIndex];
         }
         _activeStrategies.pop();
-    }
-
-    /**
-     * @notice Validates token input for ERC20-only APIs.
-     * @dev Token-domain vault APIs never use `address(0)` as a native ETH sentinel.
-     *      Native ETH uses explicit entrypoints such as `rebalanceNativeToL2`.
-     */
-    function _requireErc20Token(address token) internal pure {
-        if (token == address(0)) revert InvalidParam();
     }
 }

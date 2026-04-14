@@ -80,7 +80,7 @@ The activation sequence is:
 2. whitelist it on the vault with `setVaultTokenStrategyConfig`,
 3. make sure `yieldRecipient` is a compatible treasury,
 4. authorize the vault on the treasury,
-5. configure treasury budget per `(strategy, token, direction)` for tracked entry and exit reimbursement,
+5. fund the treasury with enough of the vault token for tracked entry and exit reimbursement,
 6. set `StrategyPolicyConfig` on the vault,
 7. record the final lane policy in the operation record.
 
@@ -104,10 +104,10 @@ Example calldata shape:
 
 ```bash
 cast calldata \
-  "setStrategyPolicyConfig(address,address,(uint16,uint16,bool))" \
+  "setStrategyPolicyConfig(address,address,(uint24,uint24,bool))" \
   <vaultToken> \
   <strategy> \
-  "(<entryCapBps>,<exitCapBps>,<policyActive>)"
+  "(<entryCapHundredthBps>,<exitCapHundredthBps>,<policyActive>)"
 ```
 
 ## Recommended Current V2 Policies
@@ -116,31 +116,35 @@ cast calldata \
 
 Use this for `AaveV3StrategyV2`:
 
-- `entryCapBps = 0`
-- `exitCapBps = 0`
+- `entryCapHundredthBps = 0`
+- `exitCapHundredthBps = 0`
 - tracked entry and exit reimbursement comes from treasury configuration, not per-lane booleans
 - `policyActive = true`
 
-### GHO / stkGHO
+### SGHO
 
-Use this for `GsmStkGhoStrategy`:
+Use this for `SGHOStrategy`:
 
-- `entryCapBps = 0`
-- `exitCapBps = 7`
+- `entryCapHundredthBps = 1` (`0.01 bps`)
+- `exitCapHundredthBps = 1200` (`12 bps`)
 - `policyActive = true`
 
-Treasury preconditions for the GHO lane:
+Treasury preconditions for the SGHO lane:
 
 - `yieldRecipient` must implement the reimbursement treasury interface,
 - the vault must be authorized on that treasury,
-- reimbursement budget must be funded for `(strategy, token)` before reimbursing tracked flows are relied on.
+- the treasury must hold enough of the vault token before reimbursing tracked flows are relied on.
+
+Reimbursement protects tracked flows from allowed route fees only.
+
+It does not make SGHO illiquidity withdrawable, and it must not be treated as a substitute for exit liquidity.
 
 Treasury rotation does not pre-validate lane tuples anymore. It only checks that the replacement treasury:
 
 - implements the reimbursement treasury interface,
 - authorizes the vault.
 
-Lane-specific reimbursement config and budget remain an operator responsibility.
+Treasury funding remains an operator responsibility.
 
 ## Incident Operations
 
@@ -152,6 +156,7 @@ Incident-time L2 restoration is an operator workflow:
 
 - deallocate the lanes you want to unwind,
 - keep reimbursement and fee-cap semantics identical to normal exits,
+- treat temporary SGHO illiquidity as a fail-closed condition that must be resolved before full unwind,
 - unpause when ready to bridge,
 - use the normal native or ERC20 rebalance path.
 

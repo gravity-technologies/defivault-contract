@@ -23,7 +23,7 @@ contract GRVTL1TreasuryVaultViewModule {
         address strategy,
         bool isActive
     ) external view returns (PositionComponent[] memory components) {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         if (strategy == address(0)) revert IL1TreasuryVault.InvalidParam();
         if (!isActive) return components;
         return VaultStrategyOpsLib.readStrategyPositionBreakdownOrRevert(vaultToken, strategy);
@@ -42,9 +42,9 @@ contract GRVTL1TreasuryVaultViewModule {
         address token,
         address[] calldata activeStrategies
     ) external view returns (TokenTotals memory totals) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
 
-        totals.idle = _idleTokenBalance(vault, token);
+        totals.idle = VaultStrategyOpsLib.idleTokenBalance(token, vault);
         totals.total = totals.idle;
 
         for (uint256 i = 0; i < activeStrategies.length; ++i) {
@@ -77,7 +77,7 @@ contract GRVTL1TreasuryVaultViewModule {
         bool canWithdraw,
         uint256 costBasis
     ) external view returns (uint256 amount) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert IL1TreasuryVault.InvalidParam();
         if (!canWithdraw) return 0;
         return VaultStrategyOpsLib.rawHarvestableYield(token, strategy, costBasis);
@@ -96,7 +96,7 @@ contract GRVTL1TreasuryVaultViewModule {
         address token,
         address[] calldata activeStrategies
     ) external view returns (ConservativeTokenTotals memory status) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         return _buildConservativeTokenTotals(vault, token, activeStrategies);
     }
 
@@ -114,7 +114,7 @@ contract GRVTL1TreasuryVaultViewModule {
     ) external view returns (ConservativeTokenTotals[] memory statuses) {
         statuses = new ConservativeTokenTotals[](tokens.length);
         for (uint256 i = 0; i < tokens.length; ++i) {
-            _requireErc20Token(tokens[i]);
+            VaultStrategyOpsLib.requireErc20Token(tokens[i]);
             statuses[i] = _buildConservativeTokenTotals(vault, tokens[i], activeStrategies);
         }
     }
@@ -144,7 +144,7 @@ contract GRVTL1TreasuryVaultViewModule {
         address token,
         address[] calldata activeStrategies
     ) private view returns (ConservativeTokenTotals memory status) {
-        status.idle = _idleTokenBalance(vault, token);
+        status.idle = VaultStrategyOpsLib.idleTokenBalance(token, vault);
         status.total = status.idle;
 
         for (uint256 i = 0; i < activeStrategies.length; ++i) {
@@ -158,15 +158,5 @@ contract GRVTL1TreasuryVaultViewModule {
             status.strategy += amount;
             status.total += amount;
         }
-    }
-
-    function _idleTokenBalance(address vault, address token) private view returns (uint256) {
-        (bool ok, uint256 balance) = VaultStrategyOpsLib.tryBalanceOf(token, vault);
-        if (!ok) return 0;
-        return balance;
-    }
-
-    function _requireErc20Token(address token) private pure {
-        if (token == address(0)) revert IL1TreasuryVault.InvalidParam();
     }
 }

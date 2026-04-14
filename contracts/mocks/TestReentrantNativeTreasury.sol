@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.34;
 
-import {IWithdrawalFeeTreasury} from "../interfaces/IWithdrawalFeeTreasury.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 
 /**
  * @title TestReentrantNativeTreasury
  * @notice Test-only treasury receiver that attempts reentrancy during native harvest payout.
  * @dev Used to validate vault `nonReentrant` protection on wrapped-native harvest -> ETH transfer branch.
  */
-contract TestReentrantNativeTreasury is IWithdrawalFeeTreasury {
+contract TestReentrantNativeTreasury is IFeeReimburser {
     error InvalidParam();
 
     address public immutable vault;
@@ -22,19 +22,15 @@ contract TestReentrantNativeTreasury is IWithdrawalFeeTreasury {
         vault = vault_;
     }
 
-    function isWithdrawalFeeTreasury() external pure override returns (bytes4 selector) {
-        return IWithdrawalFeeTreasury.isWithdrawalFeeTreasury.selector;
-    }
-
-    function reimbursementConfig(address, address) external pure override returns (uint256 remainingBudget) {
-        return 0;
+    function isFeeReimburser() external pure override returns (bytes4 selector) {
+        return IFeeReimburser.isFeeReimburser.selector;
     }
 
     function isAuthorizedVault(address) external pure override returns (bool allowed) {
         return true;
     }
 
-    function reimburseFee(address, address, address, uint256) external pure override returns (uint256 reimbursed) {
+    function reimburseFee(address, address, uint256) external pure override returns (uint256 reimbursed) {
         return 0;
     }
 

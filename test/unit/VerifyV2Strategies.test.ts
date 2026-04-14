@@ -15,10 +15,6 @@ const AAVE_V2_INITIALIZE_ABI = parseAbi([
   "function initialize(address vault,address aavePool,address vaultToken,address aToken,string strategyName)",
 ]);
 
-const GHO_STRATEGY_INITIALIZE_ABI = parseAbi([
-  "function initialize(address vault,address stkGho,address gsm,address stkGhoRewardsDistributor,string strategyName)",
-]);
-
 function withDeploymentDir(args: {
   artifactFiles: Array<{ name: string; contractName: string }>;
   deployedAddresses: Record<string, string>;
@@ -104,59 +100,6 @@ describe("verify-v2-strategies helpers", function () {
     });
   });
 
-  it("resolves GHO family implementation and beacon targets", function () {
-    withDeploymentDir({
-      artifactFiles: [
-        {
-          name: "GhoStrategyFamilyModule#GhoStrategyImplementation.json",
-          contractName: "GsmStkGhoStrategy",
-        },
-      ],
-      deployedAddresses: {
-        "GhoStrategyFamilyModule#GhoStrategyImplementation":
-          "0x2000000000000000000000000000000000000001",
-        "GhoStrategyFamilyModule#GhoStrategyBeacon":
-          "0x2000000000000000000000000000000000000002",
-      },
-      manifest: {
-        network: { name: "sepolia" },
-        resolvedParams: {
-          GhoStrategyFamilyModule: {
-            beaconOwner: "0x2000000000000000000000000000000000000003",
-          },
-        },
-      },
-      run(deploymentDir) {
-        const { network, targets } =
-          loadVerificationTargetsFromDeploymentDir(deploymentDir);
-
-        assert.equal(network, "sepolia");
-
-        assert.deepEqual(targets, [
-          {
-            address: "0x2000000000000000000000000000000000000001",
-            contract:
-              "contracts/strategies/GsmStkGhoStrategy.sol:GsmStkGhoStrategy",
-            constructorArgs: [],
-            label: "GHO strategy implementation",
-            slug: "gho-strategy-implementation",
-          },
-          {
-            address: "0x2000000000000000000000000000000000000002",
-            contract:
-              "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol:UpgradeableBeacon",
-            constructorArgs: [
-              "0x2000000000000000000000000000000000000001",
-              "0x2000000000000000000000000000000000000003",
-            ],
-            label: "GHO strategy beacon",
-            slug: "gho-strategy-beacon",
-          },
-        ]);
-      },
-    });
-  });
-
   it("resolves an Aave V2 lane proxy with encoded init calldata", function () {
     const expectedCalldata = encodeFunctionData({
       abi: AAVE_V2_INITIALIZE_ABI,
@@ -211,67 +154,6 @@ describe("verify-v2-strategies helpers", function () {
             ],
             label: "Aave V2 lane proxy",
             slug: "aave-v2-lane-proxy",
-          },
-        ]);
-      },
-    });
-  });
-
-  it("resolves a GHO lane proxy with encoded init calldata", function () {
-    const expectedCalldata = encodeFunctionData({
-      abi: GHO_STRATEGY_INITIALIZE_ABI,
-      functionName: "initialize",
-      args: [
-        "0x4000000000000000000000000000000000000001",
-        "0x4000000000000000000000000000000000000004",
-        "0x4000000000000000000000000000000000000005",
-        "0x4000000000000000000000000000000000000006",
-        "GSM_STKGHO_USDC",
-      ],
-    });
-
-    withDeploymentDir({
-      artifactFiles: [
-        {
-          name: "GhoStrategyLaneModule#Strategy.json",
-          contractName: "GsmStkGhoStrategy",
-        },
-      ],
-      deployedAddresses: {
-        "GhoStrategyLaneModule#GhoStrategyProxy":
-          "0x4000000000000000000000000000000000000008",
-      },
-      manifest: {
-        network: { name: "sepolia" },
-        resolvedParams: {
-          GhoStrategyLaneModule: {
-            strategyBeacon: "0x4000000000000000000000000000000000000009",
-            vaultProxy: "0x4000000000000000000000000000000000000001",
-            stkGhoToken: "0x4000000000000000000000000000000000000004",
-            gsmAdapter: "0x4000000000000000000000000000000000000005",
-            stkGhoRewardsDistributor:
-              "0x4000000000000000000000000000000000000006",
-            strategyName: "GSM_STKGHO_USDC",
-          },
-        },
-      },
-      run(deploymentDir) {
-        const { network, targets } =
-          loadVerificationTargetsFromDeploymentDir(deploymentDir);
-
-        assert.equal(network, "sepolia");
-
-        assert.deepEqual(targets, [
-          {
-            address: "0x4000000000000000000000000000000000000008",
-            contract:
-              "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol:BeaconProxy",
-            constructorArgs: [
-              "0x4000000000000000000000000000000000000009",
-              expectedCalldata,
-            ],
-            label: "GHO lane proxy",
-            slug: "gho-lane-proxy",
           },
         ]);
       },
@@ -359,91 +241,6 @@ describe("verify-v2-strategies helpers", function () {
         assert.throws(
           () => loadVerificationTargetsFromDeploymentDir(deploymentDir),
           /deployment manifest is missing network.name/,
-        );
-      },
-    });
-  });
-
-  it("fails cleanly when both family artifacts are present", function () {
-    withDeploymentDir({
-      artifactFiles: [
-        {
-          name: "StrategyV2FamilyModule#StrategyV2Implementation.json",
-          contractName: "AaveV3StrategyV2",
-        },
-        {
-          name: "GhoStrategyFamilyModule#GhoStrategyImplementation.json",
-          contractName: "GsmStkGhoStrategy",
-        },
-      ],
-      deployedAddresses: {},
-      manifest: { resolvedParams: {} },
-      run(deploymentDir) {
-        assert.throws(
-          () =>
-            resolveVerificationTargets(
-              deploymentDir,
-              { resolvedParams: {} },
-              {},
-            ),
-          /ambiguous V2 family deployment/,
-        );
-      },
-    });
-  });
-
-  it("fails cleanly when both lane proxies are present", function () {
-    withDeploymentDir({
-      artifactFiles: [
-        {
-          name: "StrategyV2LaneModule#Strategy.json",
-          contractName: "AaveV3StrategyV2",
-        },
-      ],
-      deployedAddresses: {
-        "StrategyV2LaneModule#StrategyV2Proxy":
-          "0x7000000000000000000000000000000000000001",
-        "GhoStrategyLaneModule#GhoStrategyProxy":
-          "0x7000000000000000000000000000000000000002",
-      },
-      manifest: {
-        resolvedParams: {
-          StrategyV2LaneModule: {
-            strategyBeacon: "0x7000000000000000000000000000000000000003",
-            vaultProxy: "0x7000000000000000000000000000000000000004",
-            aavePool: "0x7000000000000000000000000000000000000005",
-            vaultToken: "0x7000000000000000000000000000000000000006",
-            aToken: "0x7000000000000000000000000000000000000007",
-            strategyName: "AAVE_V3_USDT_V2",
-          },
-        },
-      },
-      run(deploymentDir) {
-        assert.throws(
-          () =>
-            resolveVerificationTargets(
-              deploymentDir,
-              {
-                resolvedParams: {
-                  StrategyV2LaneModule: {
-                    strategyBeacon:
-                      "0x7000000000000000000000000000000000000003",
-                    vaultProxy: "0x7000000000000000000000000000000000000004",
-                    aavePool: "0x7000000000000000000000000000000000000005",
-                    vaultToken: "0x7000000000000000000000000000000000000006",
-                    aToken: "0x7000000000000000000000000000000000000007",
-                    strategyName: "AAVE_V3_USDT_V2",
-                  },
-                },
-              },
-              {
-                "StrategyV2LaneModule#StrategyV2Proxy":
-                  "0x7000000000000000000000000000000000000001",
-                "GhoStrategyLaneModule#GhoStrategyProxy":
-                  "0x7000000000000000000000000000000000000002",
-              },
-            ),
-          /ambiguous V2 lane deployment/,
         );
       },
     });

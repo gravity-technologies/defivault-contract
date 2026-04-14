@@ -90,11 +90,10 @@ Record:
 
 ### 2. Deploy Strategy Core
 
-There are currently three strategy deployment paths in this repo:
+There are currently two strategy deployment paths in this repo:
 
 - `npm run deploy:strategy`: Aave lane via `ignition/modules/StrategyCore.ts`
 - `npm run deploy:strategy-v2:family` and `npm run deploy:strategy-v2:lane`: beacon-backed Aave V2 family and lanes
-- `npm run deploy:gho-strategy:family` and `npm run deploy:gho-strategy:lane`: beacon-backed GHO / stkGHO family and lanes
 
 #### Aave Strategy
 
@@ -167,57 +166,6 @@ Record:
 - deployment tx hashes
 - this is the usable strategy instance to register in the vault
 
-#### GHO / stkGHO Strategy Family
-
-Prepare `ignition/parameters/<env>/gho-strategy-core.json5` with:
-
-- `beaconOwner`
-
-Command:
-
-```bash
-npm run deploy:gho-strategy:family -- \
-  --network <network> \
-  --parameters ignition/parameters/<env>/gho-strategy-core.json5
-```
-
-Record:
-
-- strategy implementation address
-- strategy beacon address
-- deployment tx hashes
-- note: this does not deploy a usable strategy proxy
-
-#### GHO / stkGHO Strategy Lane
-
-Prepare `ignition/parameters/<env>/gho-strategy-lane.json5` with:
-
-- `strategyBeacon`
-- `vaultProxy`
-- `stkGhoToken`
-- `gsmAdapter`
-- `stkGhoRewardsDistributor`
-- `strategyName`
-
-Command:
-
-```bash
-npm run deploy:gho-strategy:lane -- \
-  --network <network> \
-  --parameters ignition/parameters/<env>/gho-strategy-lane.json5
-```
-
-Record:
-
-- strategy proxy address
-- deployment tx hashes
-- this is the usable strategy instance to register in the vault
-
-Additional operator requirement for the GHO lane:
-
-- before reimbursing exits are relied on, admin must rotate `yieldRecipient` to a compatible treasury contract,
-- that treasury must authorize the vault; lane reimbursement config and budget are still an operator responsibility,
-- current intended GHO policy is entry cap `0`, exit cap `7`, `policyActive = true`,
 - incident response should not treat treasury reimbursement as bridgeable liquidity.
 
 ### 3. Configure Supported Vault Tokens
@@ -265,13 +213,13 @@ Prepare direct admin or multisig calldata against the vault proxy instead.
 Recommended configs:
 
 - `AaveV3StrategyV2`: `(0, 0, true)`
-- `GsmStkGhoStrategy`: `(0, 7, true)`
+- `SGHOStrategy`: `(1, 1200, true)`
 
 For reimbursing lanes, do not activate policy until:
 
 - `yieldRecipient` is a compatible treasury,
 - the vault is authorized on that treasury,
-- the treasury budget is configured for the correct `(strategy, token)` lane before those reimbursing flows are relied on.
+- the treasury holds enough of the reimbursed token before those reimbursing flows are relied on.
 
 ### 5. Grant Operational Roles
 

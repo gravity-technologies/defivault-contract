@@ -36,7 +36,7 @@ The vault upgrade path is:
 This means:
 
 - `AaveV3Strategy` remains backward-compatible,
-- `AaveV3StrategyV2` and `GsmStkGhoStrategy` are new lanes added after the vault upgrade,
+- `AaveV3StrategyV2` and `SGHOStrategy` are new lanes added after the vault upgrade,
 - the vault can service both legacy and V2 strategy surfaces at runtime,
 - operators can stop new allocations to legacy lanes, drain them, and move capital to V2 lanes over time.
 

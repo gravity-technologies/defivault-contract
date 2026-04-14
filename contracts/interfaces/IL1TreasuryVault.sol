@@ -175,10 +175,10 @@ interface IL1TreasuryVault {
     /// @notice Per-lane fee policy for one `(vaultToken, strategy)` pair.
     /// @dev Reimbursement is unconditional on tracked flows when `cap > 0 && fee > 0`. Harvest is never reimbursed.
     struct StrategyPolicyConfig {
-        /// @dev Entry fee cap in bps. 0 = no fee allowed (fail-closed). >0 = fee allowed up to cap.
-        uint16 entryCapBps;
-        /// @dev Exit fee cap in bps. 0 = no fee allowed (fail-closed). >0 = fee allowed up to cap.
-        uint16 exitCapBps;
+        /// @dev Entry fee cap in hundredths of one basis point. 1 = 0.01 bps, 100 = 1 bps, 0 = no fee allowed.
+        uint24 entryCapHundredthBps;
+        /// @dev Exit fee cap in hundredths of one basis point. 1 = 0.01 bps, 100 = 1 bps, 0 = no fee allowed.
+        uint24 exitCapHundredthBps;
         /// @dev When true, normal allocation and harvest are enabled for this lane.
         ///      Deallocation is allowed regardless of this flag.
         bool policyActive;
@@ -295,8 +295,8 @@ interface IL1TreasuryVault {
     event StrategyPolicyConfigUpdated(
         address indexed vaultToken,
         address indexed strategy,
-        uint16 entryCapBps,
-        uint16 exitCapBps,
+        uint24 entryCapHundredthBps,
+        uint24 exitCapHundredthBps,
         bool policyActive
     );
 
@@ -343,8 +343,11 @@ interface IL1TreasuryVault {
     function allocateVaultTokenToStrategy(address vaultToken, address strategy, uint256 amount) external;
 
     /// @notice Deallocates vault-token balance from strategy back into vault idle balance.
-    /// @dev For V2, this consumes `amount` of reported strategy value. The vault infers fee = amount - received
-    ///      and unconditionally reimburses from treasury. Residual value stays for harvest.
+    /// @dev For V2, this withdraws up to the economically recoverable portion of `amount`.
+    ///      economicRecoverable = min(amount, totalExposure).
+    ///      If withdrawable exposure is below economicRecoverable, the call reverts and leaves cost basis unchanged.
+    ///      When liquidity is available, loss = amount - economicRecoverable, only
+    ///      economicRecoverable - received is treated as reimbursable fee, and residual value stays for harvest.
     /// @param vaultToken Vault token used for the strategy position.
     /// @param strategy Strategy source.
     /// @param amount Requested amount of reported strategy value to withdraw.
@@ -356,8 +359,11 @@ interface IL1TreasuryVault {
     ) external returns (uint256 received);
 
     /// @notice Deallocates all tracked strategy-held vault-token balance for a vault token.
-    /// @dev For V2, this handles impairment: withdrawable = min(costBasis, totalExposure).
-    ///      Loss = costBasis - withdrawable. costBasis is zeroed regardless. Residual stays for harvest.
+    /// @dev For V2, this handles impairment with a fail-closed liquidity check.
+    ///      economicRecoverable = min(costBasis, totalExposure).
+    ///      If withdrawable exposure is below economicRecoverable, the call reverts and leaves cost basis unchanged.
+    ///      When withdrawable exposure is sufficient, loss = costBasis - economicRecoverable, costBasis is zeroed,
+    ///      and any residual stays for harvest.
     /// @param vaultToken Vault token used for the strategy position.
     /// @param strategy Strategy source.
     /// @return received Actual measured amount received by vault.

@@ -44,10 +44,6 @@ const AAVE_V2_INITIALIZE_ABI = parseAbi([
   "function initialize(address vault,address aavePool,address vaultToken,address aToken,string strategyName)",
 ]);
 
-const GHO_STRATEGY_INITIALIZE_ABI = parseAbi([
-  "function initialize(address vault,address stkGho,address gsm,address stkGhoRewardsDistributor,string strategyName)",
-]);
-
 export function fail(message: string): never {
   throw new Error(message);
 }
@@ -116,18 +112,6 @@ export function targetForFamily(
     artifactsDir,
     "#StrategyV2Implementation.json",
   );
-  const ghoImplementationArtifact = findArtifact(
-    artifactsDir,
-    "#GhoStrategyImplementation.json",
-  );
-  if (
-    aaveImplementationArtifact !== null &&
-    ghoImplementationArtifact !== null
-  ) {
-    fail(
-      "ambiguous V2 family deployment: found both Aave and GHO implementation artifacts",
-    );
-  }
 
   if (aaveImplementationArtifact !== null) {
     if (
@@ -167,46 +151,6 @@ export function targetForFamily(
     ];
   }
 
-  if (ghoImplementationArtifact !== null) {
-    if (
-      ghoImplementationArtifact.artifact.contractName !== "GsmStkGhoStrategy"
-    ) {
-      fail("unexpected GHO family artifact contract");
-    }
-    const resolved = manifest.resolvedParams?.GhoStrategyFamilyModule as
-      | { beaconOwner?: string }
-      | undefined;
-    const implementation =
-      deployedAddresses["GhoStrategyFamilyModule#GhoStrategyImplementation"];
-    const beacon =
-      deployedAddresses["GhoStrategyFamilyModule#GhoStrategyBeacon"];
-    if (
-      typeof implementation !== "string" ||
-      typeof beacon !== "string" ||
-      typeof resolved?.beaconOwner !== "string"
-    ) {
-      fail("missing GHO family deployment data");
-    }
-    return [
-      {
-        address: implementation,
-        contract:
-          "contracts/strategies/GsmStkGhoStrategy.sol:GsmStkGhoStrategy",
-        constructorArgs: [],
-        label: "GHO strategy implementation",
-        slug: "gho-strategy-implementation",
-      },
-      {
-        address: beacon,
-        contract:
-          "@openzeppelin/contracts/proxy/beacon/UpgradeableBeacon.sol:UpgradeableBeacon",
-        constructorArgs: [implementation, resolved.beaconOwner],
-        label: "GHO strategy beacon",
-        slug: "gho-strategy-beacon",
-      },
-    ];
-  }
-
   return [];
 }
 
@@ -223,14 +167,6 @@ export function targetForLane(
 
   const aaveProxyAddress =
     deployedAddresses["StrategyV2LaneModule#StrategyV2Proxy"];
-  const ghoProxyAddress =
-    deployedAddresses["GhoStrategyLaneModule#GhoStrategyProxy"];
-  if (
-    typeof aaveProxyAddress === "string" &&
-    typeof ghoProxyAddress === "string"
-  ) {
-    fail("ambiguous V2 lane deployment: found both Aave and GHO lane proxies");
-  }
 
   const resolved = manifest.resolvedParams ?? {};
 
@@ -277,53 +213,6 @@ export function targetForLane(
         constructorArgs: [params.strategyBeacon, initializeCalldata],
         label: "Aave V2 lane proxy",
         slug: "aave-v2-lane-proxy",
-      },
-    ];
-  }
-
-  if (strategyArtifact.artifact.contractName === "GsmStkGhoStrategy") {
-    if (typeof ghoProxyAddress !== "string") {
-      fail("missing GHO lane proxy deployment data");
-    }
-    const params = resolved.GhoStrategyLaneModule as
-      | {
-          gsmAdapter?: Address;
-          stkGhoRewardsDistributor?: Address;
-          stkGhoToken?: Address;
-          strategyBeacon?: Address;
-          strategyName?: string;
-          vaultProxy?: Address;
-        }
-      | undefined;
-    if (
-      typeof params?.strategyBeacon !== "string" ||
-      typeof params?.vaultProxy !== "string" ||
-      typeof params?.stkGhoToken !== "string" ||
-      typeof params?.gsmAdapter !== "string" ||
-      typeof params?.stkGhoRewardsDistributor !== "string" ||
-      typeof params?.strategyName !== "string"
-    ) {
-      fail("missing GHO lane deployment data");
-    }
-    const initializeCalldata = encodeFunctionData({
-      abi: GHO_STRATEGY_INITIALIZE_ABI,
-      functionName: "initialize",
-      args: [
-        params.vaultProxy,
-        params.stkGhoToken,
-        params.gsmAdapter,
-        params.stkGhoRewardsDistributor,
-        params.strategyName,
-      ],
-    });
-    return [
-      {
-        address: ghoProxyAddress,
-        contract:
-          "@openzeppelin/contracts/proxy/beacon/BeaconProxy.sol:BeaconProxy",
-        constructorArgs: [params.strategyBeacon, initializeCalldata],
-        label: "GHO lane proxy",
-        slug: "gho-lane-proxy",
       },
     ];
   }

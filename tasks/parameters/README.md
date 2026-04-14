@@ -7,7 +7,6 @@ Use `tasks/parameters/<environment>/` for Hardhat task inputs such as:
 
 - strategy allocation and deallocation
 - yield harvests
-- permissionless stkGHO reward claims
 - yield-recipient schedule and execute flows
 - vault and strategy upgrade tasks
 - failed native deposit recovery

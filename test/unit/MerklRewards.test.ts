@@ -12,7 +12,7 @@ describe("Merkl reward parsing", async function () {
   const recipient = getAddress("0x504E0B7dC9ED1071f3042b31Ee64DFEdc1b14E1d");
   const rewardToken = getAddress("0x1a88Df1cFe15Af22B3c4c783D4e6F7F9e0C1885d");
 
-  it("selects the stkGHO reward entry and computes the claim delta", function () {
+  it("selects the reward entry and computes the claim delta", function () {
     const payload = [
       {
         chain: { id: 1 },
@@ -30,7 +30,7 @@ describe("Merkl reward parsing", async function () {
             token: {
               address: rewardToken,
               decimals: 18,
-              symbol: "stkGHO",
+              symbol: "rewardToken",
             },
           },
         ],
@@ -65,7 +65,7 @@ describe("Merkl reward parsing", async function () {
               amount: "1000",
               claimed: "1000",
               proofs: [],
-              token: { address: rewardToken, symbol: "stkGHO" },
+              token: { address: rewardToken, symbol: "rewardToken" },
             },
           ],
         },
@@ -89,7 +89,7 @@ describe("Merkl reward parsing", async function () {
               amount: "1000",
               claimed: "1000",
               proofs: [],
-              token: { address: rewardToken, symbol: "stkGHO" },
+              token: { address: rewardToken, symbol: "rewardToken" },
             },
             {
               recipient,
@@ -98,7 +98,7 @@ describe("Merkl reward parsing", async function () {
               proofs: [
                 "0x1111111111111111111111111111111111111111111111111111111111111111",
               ],
-              token: { address: rewardToken, symbol: "stkGHO" },
+              token: { address: rewardToken, symbol: "rewardToken" },
             },
           ],
         },
@@ -127,7 +127,7 @@ describe("Merkl reward parsing", async function () {
                   amount: "1000",
                   claimed: "0",
                   proofs: [],
-                  token: { address: rewardToken, symbol: "stkGHO" },
+                  token: { address: rewardToken, symbol: "rewardToken" },
                 },
               ],
             },
@@ -160,7 +160,7 @@ describe("Merkl reward parsing", async function () {
                   proofs: [
                     "0x1111111111111111111111111111111111111111111111111111111111111111",
                   ],
-                  token: { address: rewardToken, symbol: "stkGHO" },
+                  token: { address: rewardToken, symbol: "rewardToken" },
                 },
               ],
             },

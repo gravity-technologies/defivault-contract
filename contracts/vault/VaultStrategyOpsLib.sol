@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
-import {IWithdrawalFeeTreasury} from "../interfaces/IWithdrawalFeeTreasury.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
 import {IYieldStrategyV2} from "../interfaces/IYieldStrategyV2.sol";
 import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
@@ -19,6 +19,8 @@ import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
  */
 library VaultStrategyOpsLib {
     using SafeERC20 for IERC20;
+
+    uint256 internal constant HUNDREDTH_BPS_SCALE = 1_000_000;
 
     // --------- V2 marker ---------
 
@@ -46,8 +48,8 @@ library VaultStrategyOpsLib {
     /**
      * @notice Returns the maximum fee allowed by one fee basis and bps cap.
      */
-    function feeCapAmount(uint256 feeBasis, uint16 capBps) public pure returns (uint256 cap) {
-        return (feeBasis * capBps) / 10_000;
+    function feeCapAmount(uint256 feeBasis, uint24 capHundredthBps) public pure returns (uint256 cap) {
+        return (feeBasis * capHundredthBps) / HUNDREDTH_BPS_SCALE;
     }
 
     // --------- Legacy deallocation ---------
@@ -79,12 +81,12 @@ library VaultStrategyOpsLib {
     function reimburseFee(
         address token,
         address treasury,
-        address strategy,
+        address,
         uint256 amount
     ) public returns (uint256 reported, uint256 received) {
         IERC20 asset = IERC20(token);
         uint256 beforeBal = asset.balanceOf(address(this));
-        reported = IWithdrawalFeeTreasury(treasury).reimburseFee(token, strategy, address(this), amount);
+        reported = IFeeReimburser(treasury).reimburseFee(token, address(this), amount);
         uint256 afterBal = asset.balanceOf(address(this));
         if (afterBal < beforeBal) revert IL1TreasuryVault.InvalidParam();
         received = afterBal - beforeBal;
@@ -221,12 +223,12 @@ library VaultStrategyOpsLib {
     // --------- Treasury compatibility ---------
 
     /**
-     * @notice Returns true when `treasury` implements the withdrawal-fee treasury marker interface.
+     * @notice Returns true when `treasury` implements the fee reimburser marker interface.
      */
-    function isCompatibleWithdrawalFeeTreasury(address treasury) public view returns (bool) {
+    function isCompatibleFeeReimburser(address treasury) public view returns (bool) {
         if (treasury == address(0) || treasury.code.length == 0) return false;
-        try IWithdrawalFeeTreasury(treasury).isWithdrawalFeeTreasury() returns (bytes4 selector) {
-            return selector == IWithdrawalFeeTreasury.isWithdrawalFeeTreasury.selector;
+        try IFeeReimburser(treasury).isFeeReimburser() returns (bytes4 selector) {
+            return selector == IFeeReimburser.isFeeReimburser.selector;
         } catch {
             return false;
         }
@@ -268,6 +270,31 @@ library VaultStrategyOpsLib {
     }
 
     // --------- Utilities ---------
+
+    /**
+     * @notice Returns current ERC20 balance for `account`, or `0` if the token read fails.
+     */
+    function idleTokenBalance(address token, address account) public view returns (uint256 balance) {
+        (bool ok, uint256 tokenBalance) = tryBalanceOf(token, account);
+        if (!ok) return 0;
+        return tokenBalance;
+    }
+
+    /**
+     * @notice Returns whether one lane currently allows defensive withdrawal.
+     */
+    function canWithdrawVaultTokenFromStrategy(
+        IL1TreasuryVault.VaultTokenStrategyConfig storage cfg
+    ) public view returns (bool allowed) {
+        return cfg.whitelisted || cfg.active;
+    }
+
+    /**
+     * @notice Rejects the zero address as a vault token.
+     */
+    function requireErc20Token(address token) public pure {
+        if (token == address(0)) revert IL1TreasuryVault.InvalidParam();
+    }
 
     /**
      * @notice Performs a defensive ERC20 `balanceOf` probe.

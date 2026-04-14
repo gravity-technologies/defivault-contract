@@ -14,7 +14,8 @@ This docs tree is organized top-down: start with concepts, then architecture, th
 - [concepts/accounting-and-tvl.md](concepts/accounting-and-tvl.md): cost basis, exposure, tracked TVL tokens, and indexer guidance.
 - [concepts/strategy-model.md](concepts/strategy-model.md): canonical strategy adapter model, V2 trust assumptions, and reporting rules.
 - [concepts/v2-strategy-brief.md](concepts/v2-strategy-brief.md): reviewer-oriented summary of the V2 lane model.
-- [concepts/v2-accounting-walkthrough.md](concepts/v2-accounting-walkthrough.md): worked V2 accounting examples using the GHO lane.
+- [concepts/v2-accounting-walkthrough.md](concepts/v2-accounting-walkthrough.md): worked V2 accounting examples using the SGHO lane.
+- [integrations/SGHO_ACCOUNTING.md](integrations/SGHO_ACCOUNTING.md): route-level SGHO diagrams for entry, exit, fee, and loss accounting.
 - [architecture/vault-and-gateways.md](architecture/vault-and-gateways.md): how the implemented contracts fit together.
 - [operations/vault-upgrades-and-v2-policy.md](operations/vault-upgrades-and-v2-policy.md): current vault-upgrade and V2 lane activation procedure.
 - [reference/roles-and-permissions.md](reference/roles-and-permissions.md): compact role and policy matrix.
@@ -77,10 +78,10 @@ This docs tree is organized top-down: start with concepts, then architecture, th
   - `GRVTL1TreasuryVaultOpsModule`
   - `NativeVaultGateway`
   - `NativeBridgeGateway`
-  - `AaveV3Strategy`
-  - `AaveV3StrategyV2`
-  - `GsmStkGhoStrategy`
-  - `YieldRecipientTreasury`
+- `AaveV3Strategy`
+- `AaveV3StrategyV2`
+- `SGHOStrategy`
+- `YieldRecipientTreasury`
 - Not implemented in this repo:
   - Compound adapter
   - Morpho adapter

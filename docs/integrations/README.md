@@ -17,7 +17,7 @@ Status conventions:
 
 - Implemented today:
   - [aave.md](aave.md)
-  - [gho-stkgho.md](gho-stkgho.md)
+  - [gho-sgho.md](gho-sgho.md)
 - Not implemented today:
   - [compound.md](compound.md)
   - [morpho.md](morpho.md)

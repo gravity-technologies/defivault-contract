@@ -21,6 +21,16 @@ interface IAaveGsm {
     function UNDERLYING_ASSET() external view returns (address);
 
     /**
+     * @notice Returns the fee-strategy contract used by the GSM.
+     */
+    function getFeeStrategy() external view returns (address);
+
+    /**
+     * @notice Returns the price-strategy contract used by the GSM.
+     */
+    function PRICE_STRATEGY() external view returns (address);
+
+    /**
      * @notice Sells the GSM underlying asset in exchange for buying GHO.
      * @param maxAmount Maximum amount of underlying asset to sell.
      * @param receiver Recipient of bought GHO.
