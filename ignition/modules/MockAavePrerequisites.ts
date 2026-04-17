@@ -13,7 +13,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * - aTokenName: ERC20 name for the mock aToken.
  * - aTokenSymbol: ERC20 symbol for the mock aToken.
  */
-export default buildModule("MockAavePrerequisitesModule", (m) => {
+export default buildModule("MockAavePrerequisitesModule", (m: any) => {
   const underlyingToken = m.getParameter("underlyingToken");
   const aTokenName = m.getParameter("aTokenName");
   const aTokenSymbol = m.getParameter("aTokenSymbol");

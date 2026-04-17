@@ -171,30 +171,6 @@ export const oneOffOpsTasks: TaskDefinition[] = [
     .setAction(() => import("./actions/ops-harvest-yield.js"))
     .build(),
   task(
-    "ops:emergency-native-to-l2",
-    "Trigger the vault emergency native bridge path to L2",
-  )
-    .addOption({
-      name: "parameters",
-      description: "Path to JSON5 parameters file",
-      type: ArgumentType.FILE_WITHOUT_DEFAULT,
-      defaultValue: undefined,
-    })
-    .setAction(() => import("./actions/ops-emergency-native-to-l2.js"))
-    .build(),
-  task(
-    "ops:emergency-erc20-to-l2",
-    "Trigger the vault emergency ERC20 bridge path to L2",
-  )
-    .addOption({
-      name: "parameters",
-      description: "Path to JSON5 parameters file",
-      type: ArgumentType.FILE_WITHOUT_DEFAULT,
-      defaultValue: undefined,
-    })
-    .setAction(() => import("./actions/ops-emergency-erc20-to-l2.js"))
-    .build(),
-  task(
     "claim:failed-native-deposit",
     "Atomically claim and recover a failed native bridge deposit through NativeBridgeGateway",
   )

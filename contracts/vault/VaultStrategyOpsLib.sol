@@ -5,49 +5,59 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IWrappedNative} from "../external/IWrappedNative.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import {IYieldStrategyV2} from "../interfaces/IYieldStrategyV2.sol";
 import {PositionComponent} from "../interfaces/IVaultReportingTypes.sol";
 
+/**
+ * @title VaultStrategyOpsLib
+ * @notice Stateless library for strategy read helpers, fee math, and payout mechanics.
+ * @dev The heavy V2 orchestration (balance-delta measurement, fee inference, reimbursement)
+ *      is now inline in the OpsModule. This library retains read helpers, fee math, and legacy
+ *      deallocation wrappers used by both the OpsModule and ViewModule.
+ */
 library VaultStrategyOpsLib {
     using SafeERC20 for IERC20;
 
+    uint256 internal constant HUNDREDTH_BPS_SCALE = 1_000_000;
+
+    // --------- V2 marker ---------
+
     /**
-     * @notice Allocates strategy funds and measures net vault-side token spend as the authoritative result.
-     * @dev `spent` is the vault's net balance decrease across the external `allocate` call. Same-call
-     *      inbound transfers back to the vault reduce `spent`. Invalid balance shapes revert.
-     * @param token Vault token being allocated.
-     * @param strategy Strategy to call.
-     * @param requested Requested allocation amount.
-     * @return spent Net vault-side token balance decrease observed during allocation.
+     * @notice Returns true when `strategy` implements the V2 strategy surface.
+     * @dev Unsupported strategies and marker failures are normalized to `false`.
      */
-    function allocateWithBalanceDelta(
-        address token,
-        address strategy,
-        uint256 requested
-    ) public returns (uint256 spent) {
-        IERC20 asset = IERC20(token);
-        uint256 beforeBal = asset.balanceOf(address(this));
-        IYieldStrategy(strategy).allocate(token, requested);
-        uint256 afterBal = asset.balanceOf(address(this));
-        if (afterBal > beforeBal) {
-            revert IL1TreasuryVault.InvalidAllocationBalanceDelta(token, strategy, requested, beforeBal, afterBal);
-        }
-        spent = beforeBal - afterBal;
-        if (spent > requested) {
-            revert IL1TreasuryVault.InvalidAllocationBalanceDelta(token, strategy, requested, beforeBal, afterBal);
+    function isYieldStrategyV2(address strategy) public pure returns (bool) {
+        try IYieldStrategyV2(strategy).isYieldStrategyV2() returns (bytes4 selector) {
+            return selector == IYieldStrategyV2.isYieldStrategyV2.selector;
+        } catch {
+            return false;
         }
     }
 
     /**
-     * @notice Withdraws strategy funds and measures the vault-side balance delta as the authoritative result.
-     * @param token Vault token being withdrawn.
-     * @param strategy Strategy to call.
-     * @param requested Requested withdrawal amount.
-     * @param useAll True to call `deallocateAll`, false to call bounded `deallocate`.
-     * @return reported Amount self-reported by the strategy.
-     * @return received Amount actually measured back at the vault.
+     * @notice Returns true when the V2 strategy lane token matches `token`.
      */
-    function deallocateWithBalanceDelta(
+    function v2VaultTokenMatches(address token, address strategy) public view returns (bool) {
+        return _v2VaultTokenMatches(token, strategy);
+    }
+
+    // --------- Fee math ---------
+
+    /**
+     * @notice Returns the maximum fee allowed by one fee basis and bps cap.
+     */
+    function feeCapAmount(uint256 feeBasis, uint24 capHundredthBps) public pure returns (uint256 cap) {
+        return (feeBasis * capHundredthBps) / HUNDREDTH_BPS_SCALE;
+    }
+
+    // --------- Legacy deallocation ---------
+
+    /**
+     * @notice Withdraws legacy strategy funds and measures the vault-side balance delta.
+     */
+    function deallocateLegacyWithBalanceDelta(
         address token,
         address strategy,
         uint256 requested,
@@ -63,17 +73,171 @@ library VaultStrategyOpsLib {
         received = afterBal - beforeBal;
     }
 
+    // --------- Reimbursement ---------
+
+    /**
+     * @notice Requests fee reimbursement from treasury and measures the vault-side receipt.
+     */
+    function reimburseFee(
+        address token,
+        address treasury,
+        address,
+        uint256 amount
+    ) public returns (uint256 reported, uint256 received) {
+        IERC20 asset = IERC20(token);
+        uint256 beforeBal = asset.balanceOf(address(this));
+        reported = IFeeReimburser(treasury).reimburseFee(token, address(this), amount);
+        uint256 afterBal = asset.balanceOf(address(this));
+        if (afterBal < beforeBal) revert IL1TreasuryVault.InvalidParam();
+        received = afterBal - beforeBal;
+    }
+
+    // --------- Strategy read helpers ---------
+
+    /**
+     * @notice Reads strategy exposure from a strategy with failure normalization.
+     * @dev V2 strategies call `totalExposure()`. Legacy strategies call `strategyExposure(token)`.
+     */
+    function readStrategyExposure(address token, address strategy) public view returns (bool ok, uint256 exposure) {
+        if (isYieldStrategyV2(strategy)) {
+            if (!_v2VaultTokenMatches(token, strategy)) return (false, 0);
+            try IYieldStrategyV2(strategy).totalExposure() returns (uint256 value) {
+                return (true, value);
+            } catch {
+                return (false, 0);
+            }
+        }
+        try IYieldStrategy(strategy).strategyExposure(token) returns (uint256 value) {
+            return (true, value);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /**
+     * @notice Reads strategy exposure and reverts with the vault's standard error on failure.
+     */
+    function readStrategyExposureOrRevert(address token, address strategy) public view returns (uint256 exposure) {
+        (bool ok, uint256 value) = readStrategyExposure(token, strategy);
+        if (!ok) revert IL1TreasuryVault.InvalidStrategyExposureRead(token, strategy);
+        return value;
+    }
+
+    /**
+     * @notice Reads strategy withdrawable exposure from a strategy with failure normalization.
+     * @dev V2 strategies call `withdrawableExposure()`. Legacy strategies fall back to
+     *      `strategyExposure(token)` because no separate liquidity surface exists there.
+     */
+    function readStrategyWithdrawableExposure(
+        address token,
+        address strategy
+    ) public view returns (bool ok, uint256 exposure) {
+        if (isYieldStrategyV2(strategy)) {
+            if (!_v2VaultTokenMatches(token, strategy)) return (false, 0);
+            try IYieldStrategyV2(strategy).withdrawableExposure() returns (uint256 value) {
+                return (true, value);
+            } catch {
+                return (false, 0);
+            }
+        }
+        return readStrategyExposure(token, strategy);
+    }
+
+    /**
+     * @notice Reads withdrawable exposure and reverts with the vault's standard error on failure.
+     */
+    function readStrategyWithdrawableExposureOrRevert(
+        address token,
+        address strategy
+    ) public view returns (uint256 exposure) {
+        (bool ok, uint256 value) = readStrategyWithdrawableExposure(token, strategy);
+        if (!ok) revert IL1TreasuryVault.InvalidStrategyExposureRead(token, strategy);
+        return value;
+    }
+
+    /**
+     * @notice Reads the exact-token balance reported by a strategy for one exact token query.
+     */
+    function readStrategyExactTokenBalance(
+        address token,
+        address strategy
+    ) public view returns (bool ok, uint256 amount) {
+        if (isYieldStrategyV2(strategy)) {
+            try IYieldStrategyV2(strategy).exactTokenBalance(token) returns (uint256 value) {
+                return (true, value);
+            } catch {
+                return (false, 0);
+            }
+        }
+        try IYieldStrategy(strategy).exactTokenBalance(token) returns (uint256 value) {
+            return (true, value);
+        } catch {
+            return (false, 0);
+        }
+    }
+
+    /**
+     * @notice Reads the declared TVL-token list from a strategy for a given lane.
+     */
+    function readStrategyTvlTokens(
+        address vaultToken,
+        address strategy
+    ) public view returns (bool ok, address[] memory tokens) {
+        if (isYieldStrategyV2(strategy)) {
+            if (!_v2VaultTokenMatches(vaultToken, strategy)) return (false, tokens);
+            try IYieldStrategyV2(strategy).tvlTokens() returns (address[] memory data) {
+                return (true, data);
+            } catch {
+                return (false, tokens);
+            }
+        }
+        try IYieldStrategy(strategy).tvlTokens(vaultToken) returns (address[] memory data) {
+            return (true, data);
+        } catch {
+            return (false, tokens);
+        }
+    }
+
+    /**
+     * @notice Reads the full strategy position breakdown and normalizes failure to the vault's custom error.
+     */
+    function readStrategyPositionBreakdownOrRevert(
+        address vaultToken,
+        address strategy
+    ) public view returns (PositionComponent[] memory components) {
+        if (isYieldStrategyV2(strategy)) {
+            _requireV2VaultToken(vaultToken, strategy);
+            try IYieldStrategyV2(strategy).positionBreakdown() returns (PositionComponent[] memory data) {
+                return data;
+            } catch {
+                revert IL1TreasuryVault.InvalidStrategyTokenRead(vaultToken, strategy);
+            }
+        }
+        try IYieldStrategy(strategy).positionBreakdown(vaultToken) returns (PositionComponent[] memory data) {
+            return data;
+        } catch {
+            revert IL1TreasuryVault.InvalidStrategyTokenRead(vaultToken, strategy);
+        }
+    }
+
+    // --------- Treasury compatibility ---------
+
+    /**
+     * @notice Returns true when `treasury` implements the fee reimburser marker interface.
+     */
+    function isCompatibleFeeReimburser(address treasury) public view returns (bool) {
+        if (treasury == address(0) || treasury.code.length == 0) return false;
+        try IFeeReimburser(treasury).isFeeReimburser() returns (bytes4 selector) {
+            return selector == IFeeReimburser.isFeeReimburser.selector;
+        } catch {
+            return false;
+        }
+    }
+
+    // --------- Harvest payout ---------
+
     /**
      * @notice Pays harvested proceeds to the configured recipient and normalizes receipt accounting.
-     * @dev Wrapped-native vault token is unwrapped and sent as native ETH; all other tokens are transferred as ERC20.
-     *      Successful native payout is treated as `amount` received because the recipient may
-     *      forward or redistribute ETH during the same call and retained balance is not a reliable
-     *      receipt metric.
-     * @param vaultToken Vault token used for the harvest.
-     * @param wrappedNativeToken Canonical wrapped-native token used for native payouts.
-     * @param recipient Treasury/yield recipient.
-     * @param amount Amount to forward.
-     * @return received Amount actually counted as received by the recipient logic.
      */
     function payoutHarvestProceeds(
         address vaultToken,
@@ -96,93 +260,44 @@ library VaultStrategyOpsLib {
     }
 
     /**
-     * @notice Reads strategy exposure from a strategy with failure normalization.
-     * @param token Vault token to query.
-     * @param strategy Strategy to read.
-     * @return ok True when the strategy call succeeded.
-     * @return exposure Scalar exposure returned by the strategy when successful.
+     * @notice Returns raw harvestable value for one strategy lane.
+     * @dev Unified for V2 and legacy: `max(0, exposure - costBasis)`.
      */
-    function readStrategyExposure(address token, address strategy) public view returns (bool ok, uint256 exposure) {
-        try IYieldStrategy(strategy).strategyExposure(token) returns (uint256 value) {
-            return (true, value);
-        } catch {
-            return (false, 0);
-        }
+    function rawHarvestableYield(address token, address strategy, uint256 costBasis) public view returns (uint256) {
+        uint256 exposure = readStrategyWithdrawableExposureOrRevert(token, strategy);
+        if (exposure <= costBasis) return 0;
+        return exposure - costBasis;
+    }
+
+    // --------- Utilities ---------
+
+    /**
+     * @notice Returns current ERC20 balance for `account`, or `0` if the token read fails.
+     */
+    function idleTokenBalance(address token, address account) public view returns (uint256 balance) {
+        (bool ok, uint256 tokenBalance) = tryBalanceOf(token, account);
+        if (!ok) return 0;
+        return tokenBalance;
     }
 
     /**
-     * @notice Reads strategy exposure and reverts with the vault's standard error on failure.
-     * @param token Vault token to query.
-     * @param strategy Strategy to read.
-     * @return exposure Scalar exposure returned by the strategy.
+     * @notice Returns whether one lane currently allows defensive withdrawal.
      */
-    function readStrategyExposureOrRevert(address token, address strategy) public view returns (uint256 exposure) {
-        (bool ok, uint256 value) = readStrategyExposure(token, strategy);
-        if (!ok) revert IL1TreasuryVault.InvalidStrategyExposureRead(token, strategy);
-        return value;
+    function canWithdrawVaultTokenFromStrategy(
+        IL1TreasuryVault.VaultTokenStrategyConfig storage cfg
+    ) public view returns (bool allowed) {
+        return cfg.whitelisted || cfg.active;
     }
 
     /**
-     * @notice Returns whether a token still has any idle or strategy-side accounting exposure.
-     * @dev Conservatively returns true on strategy exposure read failure to avoid under-tracking.
-     * @param token Vault token to inspect.
-     * @param strategies Active strategy list for the vault token.
-     * @return True when idle balance exists, any strategy exposure exists, or a strategy read fails.
+     * @notice Rejects the zero address as a vault token.
      */
-    function hasAnyAccountingExposure(address token, address[] memory strategies) public view returns (bool) {
-        (bool ok, uint256 idle) = tryBalanceOf(token, address(this));
-        if (ok && idle != 0) return true;
-
-        for (uint256 i = 0; i < strategies.length; ++i) {
-            (bool exposureOk, uint256 exposure) = readStrategyExposure(token, strategies[i]);
-            if (!exposureOk || exposure != 0) return true;
-        }
-        return false;
-    }
-
-    /**
-     * @notice Reads the exact-token balance reported by a strategy for one exact token query.
-     * @dev Returns `(false, 0)` on strategy read failure.
-     * @param token Exact token to aggregate.
-     * @param strategy Strategy to query.
-     * @return ok True when the read completed successfully.
-     * @return amount Exact token balance returned by the strategy.
-     */
-    function readStrategyExactTokenBalance(
-        address token,
-        address strategy
-    ) public view returns (bool ok, uint256 amount) {
-        try IYieldStrategy(strategy).exactTokenBalance(token) returns (uint256 value) {
-            return (true, value);
-        } catch {
-            return (false, 0);
-        }
-    }
-
-    /**
-     * @notice Reads the full strategy position breakdown and normalizes failure to the vault's custom error.
-     * @param vaultToken Vault-token query passed into the strategy.
-     * @param strategy Strategy to query.
-     * @return components Full strategy position component array.
-     */
-    function readStrategyPositionBreakdownOrRevert(
-        address vaultToken,
-        address strategy
-    ) public view returns (PositionComponent[] memory components) {
-        try IYieldStrategy(strategy).positionBreakdown(vaultToken) returns (PositionComponent[] memory data) {
-            return data;
-        } catch {
-            revert IL1TreasuryVault.InvalidStrategyTokenRead(vaultToken, strategy);
-        }
+    function requireErc20Token(address token) public pure {
+        if (token == address(0)) revert IL1TreasuryVault.InvalidParam();
     }
 
     /**
      * @notice Performs a defensive ERC20 `balanceOf` probe.
-     * @dev Returns `(false, 0)` for malformed or reverting tokens instead of bubbling the failure.
-     * @param token Token contract to probe.
-     * @param account Account whose balance should be read.
-     * @return ok True when the token returned at least one full word of data.
-     * @return balance Decoded balance when `ok == true`.
      */
     function tryBalanceOf(address token, address account) public view returns (bool ok, uint256 balance) {
         (bool success, bytes memory data) = token.staticcall(abi.encodeCall(IERC20.balanceOf, (account)));
@@ -194,11 +309,23 @@ library VaultStrategyOpsLib {
 
     /**
      * @notice Sends native ETH and normalizes failure to the vault's custom error surface.
-     * @param recipient Native recipient.
-     * @param amount Native amount to transfer.
      */
     function _sendNative(address recipient, uint256 amount) private {
         (bool ok, ) = recipient.call{value: amount}("");
         if (!ok) revert IL1TreasuryVault.NativeTransferFailed();
+    }
+
+    /// @notice Returns whether a V2 strategy reports `token` as its bound lane token.
+    function _v2VaultTokenMatches(address token, address strategy) private view returns (bool) {
+        try IYieldStrategyV2(strategy).vaultToken() returns (address laneToken) {
+            return laneToken == token;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @notice Reverts unless a V2 strategy lane is bound to `token`.
+    function _requireV2VaultToken(address token, address strategy) private view {
+        if (!_v2VaultTokenMatches(token, strategy)) revert IL1TreasuryVault.InvalidParam();
     }
 }

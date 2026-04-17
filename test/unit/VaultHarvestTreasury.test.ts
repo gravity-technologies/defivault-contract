@@ -5,13 +5,19 @@ import { network } from "hardhat";
 import { encodeFunctionData, keccak256, stringToHex } from "viem";
 
 import { expectEventCount, expectEventOnce } from "../helpers/events.js";
+import {
+  configureYieldRecipientTimelockController as sharedConfigureYieldRecipientTimelockController,
+  executeSetYieldRecipientViaTimelock as sharedExecuteSetYieldRecipientViaTimelock,
+  increaseTimeAndMine as sharedIncreaseTimeAndMine,
+} from "../helpers/timelock.js";
 import { deployVaultImplementation } from "../helpers/vaultDeployment.js";
 
 describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
   const { viem } = await network.connect();
   const publicClient = await viem.getPublicClient();
   const wallets = await viem.getWalletClients();
-  const [admin, allocator, rebalancer, pauser, l2Recipient, other] = wallets;
+  const [admin, allocator, rebalancer, pauser, l2Recipient, other, harvester] =
+    wallets;
 
   function addr(wallet: (typeof wallets)[number]) {
     if (wallet.account === undefined) throw new Error("wallet has no account");
@@ -43,14 +49,12 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     },
     minDelay: bigint = 2n,
   ) {
-    const timelock = await viem.deployContract("TestTimelockController", [
-      minDelay,
-      [addr(admin)],
-      [addr(admin)],
+    return sharedConfigureYieldRecipientTimelockController(
+      viem,
+      vault,
       addr(admin),
-    ]);
-    await vault.write.setYieldRecipientTimelockController([timelock.address]);
-    return { timelock, minDelay };
+      minDelay,
+    );
   }
 
   async function executeSetYieldRecipientViaTimelock(
@@ -81,58 +85,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     newYieldRecipient: `0x${string}`,
     minDelay: bigint,
   ): Promise<`0x${string}`> {
-    const data = encodeFunctionData({
-      abi: vault.abi as any,
-      functionName: "setYieldRecipient",
-      args: [newYieldRecipient],
-    });
-    const zeroHash =
-      "0x0000000000000000000000000000000000000000000000000000000000000000";
-
-    await timelock.write.schedule([
-      vault.address,
-      0n,
-      data,
-      zeroHash,
-      zeroHash,
+    return sharedExecuteSetYieldRecipientViaTimelock(
+      publicClient as any,
+      vault,
+      timelock as any,
+      newYieldRecipient,
       minDelay,
-    ]);
-    if (minDelay > 0n) {
-      await increaseTimeAndMine(Number(minDelay));
-    }
-
-    return timelock.write.execute([
-      vault.address,
-      0n,
-      data,
-      zeroHash,
-      zeroHash,
-    ]);
+    );
   }
 
   async function increaseTimeAndMine(seconds: number) {
-    await (
-      publicClient as unknown as {
-        request: (args: {
-          method: string;
-          params?: unknown[];
-        }) => Promise<unknown>;
-      }
-    ).request({
-      method: "evm_increaseTime",
-      params: [seconds],
-    });
-    await (
-      publicClient as unknown as {
-        request: (args: {
-          method: string;
-          params?: unknown[];
-        }) => Promise<unknown>;
-      }
-    ).request({
-      method: "evm_mine",
-      params: [],
-    });
+    return sharedIncreaseTimeAndMine(publicClient as any, seconds);
   }
 
   async function deployBase() {
@@ -233,6 +196,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
         client: { public: publicClient, wallet: other },
       },
     );
+    const vaultAsHarvester = await viem.getContractAt(
+      "GRVTL1TreasuryVault",
+      vault.address,
+      {
+        client: { public: publicClient, wallet: harvester },
+      },
+    );
 
     return {
       bridge,
@@ -246,6 +216,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vaultAsPauser,
       vaultAsAdmin,
       vaultAsOther,
+      vaultAsHarvester,
     };
   }
 
@@ -284,6 +255,58 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const strategy = await viem.getContractAt("AaveV3Strategy", proxy.address);
 
     return { strategy, pool, aToken };
+  }
+
+  async function deploySghoStrategy(
+    vaultAddress: `0x${string}`,
+    vaultTokenAddress: `0x${string}`,
+  ) {
+    const gho = await viem.deployContract("MockERC20", ["GHO", "GHO", 18]);
+    const sGho = await viem.deployContract("MockSgho", [gho.address]);
+    const mockPool = await viem.deployContract("MockNonERC20");
+    const aToken = await viem.deployContract("MockAaveV3AToken", [
+      vaultTokenAddress,
+      mockPool.address,
+      "Aave Mock USDT",
+      "aMUSDT",
+    ]);
+    const stataToken = await viem.deployContract("MockStataTokenV2", [
+      aToken.address,
+      vaultTokenAddress,
+    ]);
+    const gsm = await viem.deployContract("MockAaveGsm", [
+      gho.address,
+      stataToken.address,
+    ]);
+
+    const implementation = await viem.deployContract("SGHOStrategy");
+    const initializeData = encodeFunctionData({
+      abi: implementation.abi,
+      functionName: "initialize",
+      args: [
+        vaultAddress,
+        vaultTokenAddress,
+        sGho.address,
+        gsm.address,
+        "SGHO_MUSDT",
+      ],
+    });
+    const proxy = await viem.deployContract("TestTransparentUpgradeableProxy", [
+      implementation.address,
+      addr(admin),
+      initializeData,
+    ]);
+    const strategy = await viem.getContractAt("SGHOStrategy", proxy.address);
+
+    return { strategy, gsm, gho, sGho, aToken, stataToken };
+  }
+
+  async function deployYieldRecipientTreasury(vaultAddress: `0x${string}`) {
+    const treasury = await viem.deployContract("YieldRecipientTreasury", [
+      addr(admin),
+    ]);
+    await treasury.write.setAuthorizedVault([vaultAddress, true]);
+    return treasury;
   }
 
   it("tracks cost basis and harvests strategy yield to treasury", async function () {
@@ -325,6 +348,57 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(
       await vault.read.harvestableYield([token.address, stratA.address]),
       20_000n,
+    );
+  });
+
+  it("allows yield harvesters and admins to harvest strategy yield", async function () {
+    const {
+      vault,
+      vaultAsAllocator,
+      vaultAsHarvester,
+      vaultAsOther,
+      token,
+      stratA,
+    } = await deployBase();
+
+    await vault.write.grantRole([
+      await vault.read.YIELD_HARVESTER_ROLE(),
+      addr(harvester),
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      stratA.address,
+      400_000n,
+    ]);
+    await stratA.write.setAssets([token.address, 450_000n]);
+
+    const treasury = (await vault.read.yieldRecipient()) as `0x${string}`;
+    const treasuryBefore = (await token.read.balanceOf([treasury])) as bigint;
+
+    await vaultAsHarvester.write.harvestYieldFromStrategy([
+      token.address,
+      stratA.address,
+      30_000n,
+      30_000n,
+    ]);
+
+    const treasuryAfter = (await token.read.balanceOf([treasury])) as bigint;
+    assert.equal(treasuryAfter - treasuryBefore, 30_000n);
+    assert.equal(
+      await vault.read.harvestableYield([token.address, stratA.address]),
+      20_000n,
+    );
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsOther.write.harvestYieldFromStrategy([
+        token.address,
+        stratA.address,
+        1n,
+        0n,
+      ]),
+      vaultAsOther,
+      "Unauthorized",
     );
   });
 
@@ -445,14 +519,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(allocationEvent.amount, 400_000n);
 
-    const mismatchEvent = expectEventOnce(
-      receipt,
-      vault,
-      "VaultTokenAllocationSpentMismatch",
-    );
-    assert.equal(mismatchEvent.requested, 400_000n);
-    assert.equal(mismatchEvent.actualSpent, 300_000n);
-    expectEventCount(receipt, vault, "VaultTokenAllocationSpentMismatch", 1);
+    assert.equal(allocationEvent.invested, 300_000n);
+    assert.equal(allocationEvent.fee, 0n);
 
     assert.equal(
       await vault.read.strategyCostBasis([token.address, stratA.address]),
@@ -484,14 +552,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(allocationEvent.amount, 400_000n);
 
-    const mismatchEvent = expectEventOnce(
-      receipt,
-      vault,
-      "VaultTokenAllocationSpentMismatch",
-    );
-    assert.equal(mismatchEvent.requested, 400_000n);
-    assert.equal(mismatchEvent.actualSpent, 0n);
-    expectEventCount(receipt, vault, "VaultTokenAllocationSpentMismatch", 1);
+    assert.equal(allocationEvent.invested, 0n);
+    assert.equal(allocationEvent.fee, 0n);
 
     assert.equal(
       await vault.read.strategyCostBasis([token.address, stratA.address]),
@@ -630,12 +692,16 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      forwardingTreasury.address,
       minDelay,
     );
 
@@ -738,7 +804,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(harvested.received, 30_000n);
   });
 
-  it("reverts wrapped-native harvest when treasury cannot receive ETH", async function () {
+  it("rejects switching wrapped-native yield recipient to a treasury that cannot receive ETH", async function () {
     const { vault, wrappedNative, vaultAsAllocator, vaultAsAdmin } =
       await deployBase();
 
@@ -781,10 +847,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vaultAsAdmin.write.harvestYieldFromStrategy([
         wrappedNative.address,
         wethStrategy.address,
-        30_000n,
-        30_000n,
+        50_000n,
+        50_000n,
       ]),
-      vaultAsAdmin,
+      vault,
       "NativeTransferFailed",
     );
   });
@@ -816,12 +882,16 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     ]);
     await wethStrategy.write.setAssets([wrappedNative.address, 450_000n]);
 
+    const forwardingTreasury = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault, 0n);
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      forwardingTreasury.address,
       minDelay,
     );
 
@@ -1094,6 +1164,10 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     const { vault, vaultAsAdmin, vaultAsOther } = await deployBase();
     const { timelock, minDelay } =
       await configureYieldRecipientTimelockController(vault);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
 
     await viem.assertions.revertWithCustomError(
       writeSetYieldRecipient(vaultAsOther, addr(other)),
@@ -1109,13 +1183,13 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      addr(other),
+      newYieldRecipient.address,
       minDelay,
     );
 
     assert.equal(
       ((await vault.read.yieldRecipient()) as `0x${string}`).toLowerCase(),
-      addr(other).toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
@@ -1266,15 +1340,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
   });
 
-  it("decreases cost basis on deallocate, deallocateAll, and emergency unwind", async function () {
-    const {
-      vault,
-      vaultAsAllocator,
-      vaultAsRebalancer,
-      token,
-      stratA,
-      bridge,
-    } = await deployBase();
+  it("decreases cost basis on deallocate and deallocateAll", async function () {
+    const { vault, vaultAsAllocator, token, stratA } = await deployBase();
 
     await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
@@ -1304,25 +1371,537 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       await vault.read.strategyCostBasis([token.address, stratA.address]),
       0n,
     );
+  });
+
+  it("reimburses SGHO entry dust through vault policy when it stays within 0.01 bps", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, sGho } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+    await token.write.mint([treasury.address, 1n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await sGho.write.setAssetsPerShareWad([1_000_000_000_000_000_001n]);
+    await token.write.mint([vault.address, 100_000_000n]);
+
+    const vaultBalanceBefore = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
 
     await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
-      stratA.address,
-      1_600_000n,
+      strategy.address,
+      100_000_000n,
     ]);
-    const costBasisBefore = (await vault.read.strategyCostBasis([
-      token.address,
-      stratA.address,
+
+    const vaultBalanceAfter = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceAfter = (await token.read.balanceOf([
+      treasury.address,
     ])) as bigint;
 
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 500_000n]);
-    assert.equal(await bridge.read.lastAmount(), 500_000n);
+    assert.equal(vaultBalanceBefore - vaultBalanceAfter, 99_999_999n);
+    assert.equal(treasuryBalanceBefore - treasuryBalanceAfter, 1n);
+    assert.equal(await strategy.read.totalExposure(), 99_999_999n);
+    assert.equal(await strategy.read.withdrawableExposure(), 99_999_999n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      99_999_999n,
+    );
+  });
 
-    const costBasisAfter = (await vault.read.strategyCostBasis([
+  it("models SGHO reimbursement as one shared token pool across lanes", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const laneOne = await deploySghoStrategy(vault.address, token.address);
+    const laneTwo = await deploySghoStrategy(vault.address, token.address);
+    await token.write.mint([treasury.address, 1n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    for (const lane of [laneOne.strategy.address, laneTwo.strategy.address]) {
+      await vault.write.setVaultTokenStrategyConfig([
+        token.address,
+        lane,
+        { whitelisted: true, active: true, cap: 0n },
+      ]);
+      await vault.write.setStrategyPolicyConfig([
+        token.address,
+        lane,
+        {
+          entryCapHundredthBps: 1,
+          exitCapHundredthBps: 1200,
+          policyActive: true,
+        },
+      ]);
+    }
+
+    await laneOne.sGho.write.setAssetsPerShareWad([1_000_000_000_000_000_001n]);
+    await laneTwo.sGho.write.setAssetsPerShareWad([1_000_000_000_000_000_001n]);
+    await token.write.mint([vault.address, 200_000_000n]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
       token.address,
-      stratA.address,
+      laneOne.strategy.address,
+      100_000_000n,
+    ]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
+        token.address,
+        laneTwo.strategy.address,
+        100_000_000n,
+      ]),
+      treasury,
+      "InsufficientTreasuryBalance",
+    );
+
+    assert.equal(await laneTwo.strategy.read.totalExposure(), 0n);
+    assert.equal(
+      await vault.read.strategyCostBasis([
+        token.address,
+        laneTwo.strategy.address,
+      ]),
+      0n,
+    );
+  });
+
+  it("reverts SGHO allocation when entry loss exceeds the 0.01 bps vault cap", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, gsm, stataToken } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await gsm.write.setAssetToGhoExecutionBps([stataToken.address, 9_999n]);
+    await gsm.write.setAssetToGhoQuoteBps([stataToken.address, 9_999n]);
+    await token.write.mint([vault.address, 100_000_000n]);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.allocateVaultTokenToStrategy([
+        token.address,
+        strategy.address,
+        100_000_000n,
+      ]),
+      vaultAsAllocator,
+      "FeeCapExceeded",
+    );
+
+    assert.equal(await strategy.read.totalExposure(), 0n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      0n,
+    );
+  });
+
+  it("allows SGHO tracked deallocation to return net proceeds and reimburse the exit fee", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, gsm, stataToken } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+    await token.write.mint([treasury.address, 12n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await gsm.write.setBurnFeeBps([stataToken.address, 12n]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    const vaultBalanceBeforeDeallocate = (await token.read.balanceOf([
+      vault.address,
     ])) as bigint;
-    assert.equal(costBasisBefore - costBasisAfter, 100_000n);
+    const treasuryBalanceBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    const vaultBalanceAfterDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceAfter = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(
+      vaultBalanceAfterDeallocate - vaultBalanceBeforeDeallocate,
+      10_000n,
+    );
+    assert.equal(treasuryBalanceBefore - treasuryBalanceAfter, 12n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      0n,
+    );
+  });
+
+  it("realizes SGHO tracked impairment as loss instead of reimbursing it as fee", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, sGho } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await token.write.mint([treasury.address, 12n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    await sGho.write.setAssetsPerShareWad([998_800_000_000_000_000n]);
+
+    assert.equal(await strategy.read.totalExposure(), 9_988n);
+    assert.equal(await strategy.read.withdrawableExposure(), 9_988n);
+
+    const vaultBalanceBeforeDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    await vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    const vaultBalanceAfterDeallocate = (await token.read.balanceOf([
+      vault.address,
+    ])) as bigint;
+    const treasuryBalanceAfter = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(
+      vaultBalanceAfterDeallocate - vaultBalanceBeforeDeallocate,
+      9_988n,
+    );
+    assert.equal(treasuryBalanceAfter, treasuryBalanceBefore);
+    assert.equal(await strategy.read.totalExposure(), 0n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      0n,
+    );
+  });
+
+  it("reverts SGHO tracked deallocation when liquidity is below economic recoverable principal", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, sGho } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    await sGho.write.setAssetsPerShareWad([998_800_000_000_000_000n]);
+    await sGho.write.setWithdrawalLimit([9_980n]);
+
+    assert.equal(await strategy.read.totalExposure(), 9_988n);
+    assert.equal(await strategy.read.withdrawableExposure(), 9_980n);
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.deallocateVaultTokenFromStrategy([
+        token.address,
+        strategy.address,
+        10_000n,
+      ]),
+      vaultAsAllocator,
+      "InsufficientWithdrawableStrategyExposure",
+    );
+
+    assert.equal(await token.read.balanceOf([vault.address]), 1_990_000n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      10_000n,
+    );
+  });
+
+  it("reverts SGHO full unwind when liquidity is below economic recoverable principal", async function () {
+    const { vault, vaultAsAllocator, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, gsm, stataToken, sGho } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+    await token.write.mint([treasury.address, 12n]);
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await gsm.write.setBurnFeeBps([stataToken.address, 12n]);
+    await sGho.write.setWithdrawalLimit([9_990n]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+    ]);
+
+    assert.equal(await strategy.read.totalExposure(), 10_000n);
+    assert.equal(await strategy.read.withdrawableExposure(), 9_990n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      10_000n,
+    );
+
+    await viem.assertions.revertWithCustomError(
+      vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
+        token.address,
+        strategy.address,
+      ]),
+      vaultAsAllocator,
+      "InsufficientWithdrawableStrategyExposure",
+    );
+
+    assert.equal(await token.read.balanceOf([vault.address]), 1_990_000n);
+    assert.equal(await token.read.balanceOf([treasury.address]), 12n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      10_000n,
+    );
+  });
+
+  it("harvests SGHO residual yield without requesting reimbursement from treasury", async function () {
+    const { vault, vaultAsAllocator, vaultAsAdmin, token } = await deployBase();
+    const { timelock, minDelay } =
+      await configureYieldRecipientTimelockController(vault);
+    const treasury = await deployYieldRecipientTreasury(vault.address);
+    const { strategy, gsm, stataToken, sGho } = await deploySghoStrategy(
+      vault.address,
+      token.address,
+    );
+
+    await executeSetYieldRecipientViaTimelock(
+      vault,
+      timelock,
+      treasury.address,
+      minDelay,
+    );
+
+    await vault.write.setVaultTokenStrategyConfig([
+      token.address,
+      strategy.address,
+      { whitelisted: true, active: true, cap: 0n },
+    ]);
+    await vault.write.setStrategyPolicyConfig([
+      token.address,
+      strategy.address,
+      {
+        entryCapHundredthBps: 1,
+        exitCapHundredthBps: 1200,
+        policyActive: true,
+      },
+    ]);
+
+    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
+      token.address,
+      strategy.address,
+      100_000n,
+    ]);
+
+    await gsm.write.setBurnFeeBps([stataToken.address, 12n]);
+    await sGho.write.setAssetsPerShareWad([1_100_000_000_000_000_000n]);
+    await sGho.write.mintBacking([10_000n]);
+
+    assert.equal(
+      await vault.read.harvestableYield([token.address, strategy.address]),
+      10_000n,
+    );
+
+    const treasuryBefore = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    await vaultAsAdmin.write.harvestYieldFromStrategy([
+      token.address,
+      strategy.address,
+      10_000n,
+      10_000n,
+    ]);
+
+    const treasuryAfter = (await token.read.balanceOf([
+      treasury.address,
+    ])) as bigint;
+
+    assert.equal(treasuryAfter - treasuryBefore, 10_000n);
+    assert.equal(
+      await vault.read.strategyCostBasis([token.address, strategy.address]),
+      100_000n,
+    );
+    assert.equal(
+      await vault.read.harvestableYield([token.address, strategy.address]),
+      0n,
+    );
   });
 
   it("emits new treasury and harvest events with expected args", async function () {
@@ -1369,11 +1948,14 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     assert.equal(harvestEvent.requested, 10_000n);
     assert.equal(harvestEvent.received, 10_000n);
 
-    const newYieldRecipient = addr(other);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
     const setHash = await executeSetYieldRecipientViaTimelock(
       vault,
       timelock,
-      newYieldRecipient,
+      newYieldRecipient.address,
       minDelay,
     );
     const setReceipt = await publicClient.waitForTransactionReceipt({
@@ -1390,7 +1972,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
     );
     assert.equal(
       (updatedEvent.newYieldRecipient as string).toLowerCase(),
-      newYieldRecipient.toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 
@@ -1434,9 +2016,8 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       vault,
       "StrategyReportedReceivedMismatch",
     );
-    assert.equal(mismatch.requested, 10_000n);
     assert.equal(mismatch.reported, 15_000n);
-    assert.equal(mismatch.actual, 10_000n);
+    assert.equal(mismatch.measured, 10_000n);
 
     const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
     assert.equal(harvested.requested, 10_000n);
@@ -1452,14 +2033,17 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
       [addr(admin)],
       addr(admin),
     ]);
+    const newYieldRecipient = await viem.deployContract(
+      "TestForwardingNativeTreasury",
+      [addr(other)],
+    );
 
     await vault.write.setYieldRecipientTimelockController([timelock.address]);
 
-    const newYieldRecipient = addr(other);
     const data = encodeFunctionData({
       abi: vault.abi as any,
       functionName: "setYieldRecipient",
-      args: [newYieldRecipient],
+      args: [newYieldRecipient.address],
     });
     const zeroHash =
       "0x0000000000000000000000000000000000000000000000000000000000000000";
@@ -1482,7 +2066,7 @@ describe("GRVTL1TreasuryVault harvest and treasury flows", async function () {
 
     assert.equal(
       ((await vault.read.yieldRecipient()) as `0x${string}`).toLowerCase(),
-      newYieldRecipient.toLowerCase(),
+      newYieldRecipient.address.toLowerCase(),
     );
   });
 

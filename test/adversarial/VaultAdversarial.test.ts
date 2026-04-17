@@ -239,6 +239,8 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       "VaultTokenDeallocatedFromStrategy",
     );
     assert.equal(deallocateEvent.received, 120_000n);
+    assert.equal(deallocateEvent.fee, 0n);
+    assert.equal(deallocateEvent.loss, 0n);
 
     const mismatchEvent = expectEventOnce(
       receipt,
@@ -246,7 +248,7 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       "StrategyReportedReceivedMismatch",
     );
     assert.equal(mismatchEvent.reported, 170_000n);
-    assert.equal(mismatchEvent.actual, 120_000n);
+    assert.equal(mismatchEvent.measured, 120_000n);
 
     const allBefore = (await vault.read.idleTokenBalance([
       token.address,
@@ -272,6 +274,8 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
     );
     assert.equal(allDeallocateEvent.requested, 2n ** 256n - 1n);
     assert.equal(allDeallocateEvent.received, 180_000n);
+    assert.equal(allDeallocateEvent.fee, 0n);
+    assert.equal(allDeallocateEvent.loss, 0n);
   });
 
   it("handles fee-on-transfer token with conservative accounting", async function () {
@@ -315,13 +319,6 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       await vault.read.strategyCostBasis([feeToken.address, strategy.address]),
       100_000n,
     );
-    expectEventCount(
-      allocReceipt,
-      vault,
-      "VaultTokenAllocationSpentMismatch",
-      0,
-    );
-
     await vaultAsAllocator.write.deallocateAllVaultTokenFromStrategy([
       feeToken.address,
       strategy.address,
@@ -453,159 +450,14 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       vault,
       "StrategyReportedReceivedMismatch",
     );
-    assert.equal(mismatch.requested, 30_000n);
     assert.equal(mismatch.reported, 37_000n);
-    assert.equal(mismatch.actual, 30_000n);
+    assert.equal(mismatch.measured, 30_000n);
 
     const harvested = expectEventOnce(receipt, vault, "YieldHarvested");
     assert.equal(harvested.received, 30_000n);
   });
 
-  it("continues emergency unwind when one strategy reverts", async function () {
-    const token = await viem.deployContract("MockERC20", [
-      "Mock USDT",
-      "mUSDT",
-      6,
-    ]);
-    const { vault, bridge, vaultAsAllocator, vaultAsRebalancer } =
-      await setupVaultForToken(token.address);
-    await token.write.mint([vault.address, 1_000_000n]);
-
-    const revertingStrategy = await viem.deployContract(
-      "MockRevertingStrategy",
-    );
-    const healthyStrategy = await viem.deployContract("MockYieldStrategy", [
-      vault.address,
-      "HEALTHY",
-    ]);
-
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      revertingStrategy.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      healthyStrategy.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-
-    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
-      token.address,
-      healthyStrategy.address,
-      900_000n,
-    ]);
-
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 400_000n]);
-
-    assert.equal(await bridge.read.lastAmount(), 400_000n);
-    assert.equal(await bridge.read.sendCount(), 1n);
-  });
-
-  it("bridges exact requested amount using idle plus partial strategy unwind", async function () {
-    const token = await viem.deployContract("MockERC20", [
-      "Mock USDT",
-      "mUSDT",
-      6,
-    ]);
-    const { vault, bridge, vaultAsAllocator, vaultAsRebalancer } =
-      await setupVaultForToken(token.address);
-    await token.write.mint([vault.address, 1_000_000n]);
-
-    const healthyStrategy = await viem.deployContract("MockYieldStrategy", [
-      vault.address,
-      "HEALTHY",
-    ]);
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      healthyStrategy.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-
-    await vaultAsAllocator.write.allocateVaultTokenToStrategy([
-      token.address,
-      healthyStrategy.address,
-      900_000n,
-    ]);
-
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 350_000n]);
-
-    assert.equal(await bridge.read.lastAmount(), 350_000n);
-    // Idle before emergency = 100_000, so exactly 250_000 should be pulled from strategy.
-    assert.equal(
-      componentTotal(
-        await vault.read.strategyPositionBreakdown([
-          token.address,
-          healthyStrategy.address,
-        ]),
-      ),
-      650_000n,
-    );
-  });
-
-  it("still bridges from idle when all strategies revert but idle is sufficient", async function () {
-    const token = await viem.deployContract("MockERC20", [
-      "Mock USDT",
-      "mUSDT",
-      6,
-    ]);
-    const { vault, bridge, vaultAsRebalancer } = await setupVaultForToken(
-      token.address,
-    );
-    await token.write.mint([vault.address, 500_000n]);
-
-    const revertingA = await viem.deployContract("MockRevertingStrategy");
-    const revertingB = await viem.deployContract("MockRevertingStrategy");
-
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      revertingA.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      revertingB.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 200_000n]);
-
-    assert.equal(await bridge.read.lastAmount(), 200_000n);
-  });
-
-  it("reverts emergency send when all strategies revert and idle is insufficient", async function () {
-    const token = await viem.deployContract("MockERC20", [
-      "Mock USDT",
-      "mUSDT",
-      6,
-    ]);
-    const { vault, vaultAsRebalancer } = await setupVaultForToken(
-      token.address,
-    );
-    await token.write.mint([vault.address, 100_000n]);
-
-    const revertingA = await viem.deployContract("MockRevertingStrategy");
-    const revertingB = await viem.deployContract("MockRevertingStrategy");
-
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      revertingA.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      revertingB.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-
-    await viem.assertions.revertWithCustomError(
-      vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 200_000n]),
-      vaultAsRebalancer,
-      "InvalidParam",
-    );
-  });
-
-  it("propagates bridge forced reverts on normal and emergency paths", async function () {
+  it("propagates bridge forced reverts on the normal bridge path", async function () {
     const token = await viem.deployContract("MockERC20", [
       "Mock USDT",
       "mUSDT",
@@ -620,12 +472,6 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
 
     await viem.assertions.revertWithCustomError(
       vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 100_000n]),
-      bridge,
-      "BridgeForcedRevert",
-    );
-
-    await viem.assertions.revertWithCustomError(
-      vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 100_000n]),
       bridge,
       "BridgeForcedRevert",
     );
@@ -690,7 +536,18 @@ describe("GRVTL1TreasuryVault adversarial behavior", async function () {
       strategy.address,
     ]);
 
-    await vaultAsRebalancer.write.emergencyErc20ToL2([token.address, 100_000n]);
+    await viem.assertions.revertWithCustomError(
+      vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 100_000n]),
+      vaultAsRebalancer,
+      "TokenNotSupported",
+    );
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      {
+        supported: true,
+      },
+    ]);
+    await vaultAsRebalancer.write.rebalanceErc20ToL2([token.address, 100_000n]);
 
     assert.equal(await bridge.read.lastAmount(), 100_000n);
   });

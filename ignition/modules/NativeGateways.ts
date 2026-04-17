@@ -17,7 +17,7 @@ import { transparentUpgradeableProxyArtifact } from "./shared/transparentProxyAr
  * - vaultProxy: existing GRVTL1TreasuryVault proxy address.
  * - proxyAdminOwner: owner of the native bridge gateway proxy's ProxyAdmin.
  */
-export default buildModule("NativeGatewaysModule", (m) => {
+export default buildModule("NativeGatewaysModule", (m: any) => {
   const wrappedNativeToken = m.getParameter("wrappedNativeToken");
   const grvtBridgeProxyFeeToken = m.getParameter("grvtBridgeProxyFeeToken");
   const bridgeHub = m.getParameter("bridgeHub");

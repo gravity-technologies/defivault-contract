@@ -140,8 +140,9 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
      * @param token     The underlying token withdrawn from Aave.
      * @param requested The amount requested (`type(uint256).max` for `deallocateAll`).
      * @param received  Total amount delivered to vault (Aave withdraw + residual-underlying sweep).
+     * @param reimbursableFee Exit fee amount eligible for treasury reimbursement. Always 0 for this strategy.
      */
-    event Deallocated(address indexed token, uint256 requested, uint256 received);
+    event Deallocated(address indexed token, uint256 requested, uint256 received, uint256 reimbursableFee);
 
     /**
      * @notice Emitted when residual underlying held by this strategy is swept to vault.
@@ -331,7 +332,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
             received += aavePool.withdraw(underlying, shortfall, vault);
         }
 
-        emit Deallocated(underlying, amount, received);
+        emit Deallocated(underlying, amount, received, 0);
     }
 
     /**
@@ -360,7 +361,7 @@ contract AaveV3Strategy is Initializable, ReentrancyGuardUpgradeable, IYieldStra
         }
         uint256 swept = _sweepUninvestedTokenToVault();
         if (swept != 0) received += swept;
-        emit Deallocated(underlying, requested, received);
+        emit Deallocated(underlying, requested, received, 0);
     }
 
     /// @dev Transfers strategy-held underlying to vault up to `maxAmount` and emits sweep telemetry.

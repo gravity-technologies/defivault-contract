@@ -1,0 +1,6 @@
+{
+  StrategyV2FamilyModule: {
+    // Owner of the Aave V2 strategy family's UpgradeableBeacon.
+    beaconOwner: "0x0000000000000000000000000000000000000000",
+  },
+}

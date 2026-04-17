@@ -17,7 +17,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * - For additional role members, run the module again with a different
  *   deployment id and alternate parameters.
  */
-export default buildModule("VaultRolesBootstrapModule", (m) => {
+export default buildModule("VaultRolesBootstrapModule", (m: any) => {
   const vaultProxy = m.getParameter("vaultProxy");
   const allocator = m.getParameter("allocator");
   const rebalancer = m.getParameter("rebalancer");

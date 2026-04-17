@@ -1,8 +1,8 @@
 # GRVT L1 Treasury Vault
 
-This repository contains the GRVT L1 treasury vault, its native-asset gateways, and the current Aave strategy integration. The contracts are built with Hardhat, use `viem` for interactions, and are designed around explicit RBAC, conservative accounting, and controlled L1 -> L2 rebalancing.
+This repository contains the GRVT L1 treasury vault, its native-asset gateways, and the current Aave and GHO V2 strategy integrations. The contracts are built with Hardhat, use `viem` for interactions, and are designed around explicit RBAC, conservative accounting, and controlled L1 -> L2 rebalancing.
 
-Aave is the only implemented strategy integration in this repo today. Compound, Morpho, and sUSDe docs are design guidance for future adapters, not deployed code in this repository.
+Aave, Aave V2, and GHO V2 are implemented strategy integrations in this repo today. Compound, Morpho, and sUSDe docs are design guidance for future adapters, not deployed code in this repository.
 
 ## What Is In This Repo
 
@@ -39,9 +39,12 @@ Aave is the only implemented strategy integration in this repo today. Compound, 
 The stable mental model is:
 
 - the vault keeps internal accounting in ERC20 token space,
-- strategies expose one vault-token-level exposure number for cap and harvest logic,
+- V2 strategies are trusted implementations with local execution bookkeeping,
+- the vault owns the authoritative principal ledger for V2 lanes,
+- strategies expose the reporting surfaces the vault needs for cap and harvest logic,
+- V2 impairment is a one-way governance write-down action, not an automatic recovery mechanism,
 - raw ETH appears only at explicit boundaries,
-- normal and emergency bridge flows are separate APIs.
+- incident-time restoration uses the same explicit deallocate-then-rebalance flow as normal operations.
 
 ## Local Development
 
@@ -49,6 +52,7 @@ The stable mental model is:
 npm install
 npm run compile
 npm run test
+npm run test:fork
 ```
 
 Full local validation:
@@ -56,12 +60,6 @@ Full local validation:
 ```bash
 npm run check:all
 npm run slither
-```
-
-Deployment smoke test:
-
-```bash
-npm run smoke:deployment
 ```
 
 Interactive initial stack deployment:
@@ -75,13 +73,15 @@ The interactive initial-stack deploy is environment-aware:
 - `staging` and `testnet` deploy mock Aave contracts because GRVT supplies its own underlying test token
 - `production` validates the configured live Aave pool and aToken instead of deploying mocks
 
-See [docs/operations/initial-stack-deployment.md](docs/operations/initial-stack-deployment.md).
+See [docs/operations/runbook.md](docs/operations/runbook.md).
 
 ## Read Next
 
 - Start with [docs/README.md](docs/README.md)
 - Mental model: [docs/concepts/system-overview.md](docs/concepts/system-overview.md)
 - Accounting and TVL: [docs/concepts/accounting-and-tvl.md](docs/concepts/accounting-and-tvl.md)
+- V2 strategy brief: [docs/concepts/v2-strategy-brief.md](docs/concepts/v2-strategy-brief.md)
+- V2 accounting walkthrough: [docs/concepts/v2-accounting-walkthrough.md](docs/concepts/v2-accounting-walkthrough.md)
 - Implemented architecture: [docs/architecture/vault-and-gateways.md](docs/architecture/vault-and-gateways.md)
 - Operational procedures: [docs/operations/runbook.md](docs/operations/runbook.md)
 - Design decisions: [docs/design-decisions/README.md](docs/design-decisions/README.md)

@@ -12,7 +12,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
  * - nativeBridgeGatewayProxy: existing NativeBridgeGateway proxy address.
  * - upgradeCallData: optional calldata for post-upgrade initialization (defaults to 0x).
  */
-export default buildModule("NativeBridgeGatewayUpgradeModule", (m) => {
+export default buildModule("NativeBridgeGatewayUpgradeModule", (m: any) => {
   const proxyAdmin = m.getParameter("proxyAdmin");
   const nativeBridgeGatewayProxy = m.getParameter("nativeBridgeGatewayProxy");
   const upgradeCallData = m.getParameter("upgradeCallData", "0x");

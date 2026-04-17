@@ -52,12 +52,10 @@ const RELEVANT_EVENT_NAMES = [
   "NativeBridgeGatewayUpdated",
   "TrackedTvlTokenOverrideUpdated",
   "NativeSweptToYieldRecipient",
-  "EmergencyStrategySkipped",
   "StrategyRemovalCheckFailed",
 ] as const;
 const EVENT_CATEGORY_BY_NAME = {
-  BridgeSentToL2: "Bridge & Emergency",
-  EmergencyStrategySkipped: "Bridge & Emergency",
+  BridgeSentToL2: "Bridge",
   NativeBridgeGatewayUpdated: "Lifecycle & Config",
   NativeSweptToYieldRecipient: "Yield",
   StrategyRemovalCheckFailed: "Warnings & Anomalies",
@@ -78,7 +76,7 @@ const EVENT_CATEGORIES = [
   "Lifecycle & Config",
   "Allocations & Deallocations",
   "Yield",
-  "Bridge & Emergency",
+  "Bridge",
   "Warnings & Anomalies",
 ] as const;
 const LOG_CHUNK_SIZE = 10_000n;
@@ -615,6 +613,9 @@ async function collectHistoricalEvents(args: {
         toBlock: chunkEnd,
       });
       for (const log of logs) {
+        if (log.eventName !== eventName) {
+          continue;
+        }
         if (
           log.blockNumber === null ||
           log.logIndex === null ||
@@ -1167,9 +1168,8 @@ async function summarizeEvent(args: {
     case "YieldHarvested":
       return `Harvested ${bigintArg(event.args.received)?.toString() ?? "?"} of ${tokenLabelText ?? "token"} from ${strategyArg} to ${normalizeLoggedAddress(event.args.yieldRecipient)}`;
     case "BridgeSentToL2": {
-      const emergency = booleanArg(event.args.emergency);
       const isNative = booleanArg(event.args.isNative);
-      const kind = `${emergency ? "emergency" : "normal"} ${isNative ? "native" : "ERC20"}`;
+      const kind = isNative ? "native" : "ERC20";
       return `BridgeSentToL2: ${kind} send of ${bigintArg(event.args.amount)?.toString() ?? "?"} ${tokenLabelText ?? "token"}`;
     }
     case "VaultPaused":
@@ -1186,8 +1186,6 @@ async function summarizeEvent(args: {
       return `Tracked TVL token override updated for ${tokenLabelText ?? "token"}: enabled=${String(booleanArg(event.args.enabled))}, forceTrack=${String(booleanArg(event.args.forceTrack))}`;
     case "NativeSweptToYieldRecipient":
       return `Native swept to yield recipient ${normalizeLoggedAddress(event.args.yieldRecipient)} amount=${bigintArg(event.args.amount)?.toString() ?? "?"}`;
-    case "EmergencyStrategySkipped":
-      return `Emergency unwind skipped strategy ${strategyArg} for ${tokenLabelText ?? "token"}`;
     case "StrategyRemovalCheckFailed":
       return `Strategy removal check failed for ${strategyArg} on ${tokenLabelText ?? "token"}`;
     default:

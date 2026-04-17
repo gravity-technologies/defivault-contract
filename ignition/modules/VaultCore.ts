@@ -18,7 +18,7 @@ import { transparentUpgradeableProxyArtifact } from "./shared/transparentProxyAr
  * - wrappedNativeToken: canonical wrapped-native token address (for native intent canonicalization).
  * - yieldRecipient: initial yield recipient for harvest payouts and native sweeps.
  */
-export default buildModule("VaultCoreModule", (m) => {
+export default buildModule("VaultCoreModule", (m: any) => {
   const deployAdmin = m.getParameter("deployAdmin");
   const bridgeHub = m.getParameter("bridgeHub");
   const grvtBridgeProxyFeeToken = m.getParameter("grvtBridgeProxyFeeToken");
@@ -31,16 +31,34 @@ export default buildModule("VaultCoreModule", (m) => {
   });
   const vaultBridgeLib = m.library("VaultBridgeLib", {
     id: "VaultBridgeLib",
-    after: [vaultStrategyOpsLib],
-  });
-
-  const vaultImplementation = m.contract("GRVTL1TreasuryVault", [], {
-    id: "VaultImplementation",
     libraries: {
       VaultStrategyOpsLib: vaultStrategyOpsLib,
-      VaultBridgeLib: vaultBridgeLib,
     },
   });
+  const vaultViewModule = m.contract("GRVTL1TreasuryVaultViewModule", [], {
+    id: "VaultViewModule",
+    libraries: {
+      VaultStrategyOpsLib: vaultStrategyOpsLib,
+    },
+  });
+  const vaultOpsModule = m.contract("GRVTL1TreasuryVaultOpsModule", [], {
+    id: "VaultOpsModule",
+    libraries: {
+      VaultStrategyOpsLib: vaultStrategyOpsLib,
+    },
+  });
+
+  const vaultImplementation = m.contract(
+    "GRVTL1TreasuryVault",
+    [vaultViewModule, vaultOpsModule],
+    {
+      id: "VaultImplementation",
+      libraries: {
+        VaultStrategyOpsLib: vaultStrategyOpsLib,
+        VaultBridgeLib: vaultBridgeLib,
+      },
+    },
+  );
 
   const initializeCalldata = m.encodeFunctionCall(
     vaultImplementation,
@@ -71,6 +89,8 @@ export default buildModule("VaultCoreModule", (m) => {
   return {
     vaultStrategyOpsLib,
     vaultBridgeLib,
+    vaultViewModule,
+    vaultOpsModule,
     vaultImplementation,
     vaultProxy,
     vault,

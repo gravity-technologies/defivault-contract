@@ -20,6 +20,7 @@ The implemented contracts in this repo are:
 - `NativeVaultGateway`
 - `NativeBridgeGateway`
 - `AaveV3Strategy`
+- `SGHOStrategy`
 
 High-level topology:
 
@@ -28,7 +29,7 @@ External ETH sender
     |
     v
 NativeVaultGateway --> GRVTL1TreasuryVault --> AaveV3Strategy --> Aave
-                               |
+                               |                SGHOStrategy --> GSM -> GHO -> sGHO
                                v
                     BridgeHub + SharedBridge
                                ^
@@ -47,7 +48,7 @@ It owns:
 - role-gated allocation, deallocation, harvest, and bridge actions,
 - supported-token and strategy-pair configuration,
 - cost basis and tracked TVL-token bookkeeping,
-- pause semantics and emergency paths.
+- pause semantics and the normal L1 -> L2 bridge policy.
 
 ### Strategies
 
@@ -82,7 +83,7 @@ For failed native deposits, it records the bridge-era recovery metadata at submi
 - `token-strategy pair`: one `(vaultToken, strategy)` entry with its own whitelist, active flag, and cap.
 - `exact token balance`: strategy-held balance for one literal ERC20 token address from `exactTokenBalance(token)`.
 - `position breakdown`: diagnostic token list from `positionBreakdown(vaultToken)`.
-- `receipt token`: non-vault-token component token representing the invested position, such as `aUSDT`.
+- `receipt token`: non-vault-token component token representing the invested position, such as `aUSDT` or `sGHO`.
 - `strategy cost basis`: vault-side accounting basis for one `(vaultToken, strategy)` pair.
 - `strategy exposure`: single-number vault-token exposure returned by `strategyExposure(vaultToken)` for cap and harvest math.
 - `TVL token`: any exact ERC20 token the vault can report in raw token totals.
@@ -116,5 +117,6 @@ Lifecycle states:
 
 - [strategy-model.md](strategy-model.md)
 - [accounting-and-tvl.md](accounting-and-tvl.md)
+- [v2-strategy-brief.md](v2-strategy-brief.md)
 - [../architecture/vault-and-gateways.md](../architecture/vault-and-gateways.md)
 - [../reference/roles-and-permissions.md](../reference/roles-and-permissions.md)

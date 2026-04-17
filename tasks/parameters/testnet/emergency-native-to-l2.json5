@@ -1,8 +1,0 @@
-{
-  VaultEmergencyNativeToL2Module: {
-    // Existing testnet vault proxy.
-    vaultProxy: "0x0000000000000000000000000000000000000000",
-    // Emergency native amount to bridge in wei.
-    amount: "0n",
-  },
-}

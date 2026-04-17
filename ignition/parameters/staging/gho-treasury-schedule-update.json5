@@ -1,0 +1,23 @@
+{
+  GhoTreasuryScheduleUpdate: {
+    // Existing staging vault proxy.
+    vaultProxy: "0x0000000000000000000000000000000000000000",
+    // Configured yield-recipient timelock controller on the vault.
+    yieldRecipientTimelockController: "0x0000000000000000000000000000000000000000",
+    // Defaults to the deployer when omitted. Must match the signer if this script also configures the treasury.
+    treasuryBootstrapOwner: "0x0000000000000000000000000000000000000000",
+    // Optional final owner for Ownable2Step handoff after bootstrap configuration.
+    treasuryFinalOwner: "0x0000000000000000000000000000000000000000",
+    authorizeVault: true,
+    // Optional treasury funding transfers performed by the deployer.
+    seedFunding: [
+      {
+        token: "0x0000000000000000000000000000000000000000",
+        amount: "0n",
+      },
+    ],
+    predecessor: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    salt: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    delay: "86400n",
+  },
+}

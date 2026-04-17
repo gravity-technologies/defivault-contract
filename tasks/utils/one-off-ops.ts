@@ -57,8 +57,6 @@ export const vaultAbi = parseAbi([
   "function allocateVaultTokenToStrategy(address token,address strategy,uint256 amount)",
   "function deallocateVaultTokenFromStrategy(address token,address strategy,uint256 amount) returns (uint256 received)",
   "function deallocateAllVaultTokenFromStrategy(address token,address strategy) returns (uint256 received)",
-  "function emergencyNativeToL2(uint256 amount)",
-  "function emergencyErc20ToL2(address erc20Token,uint256 amount)",
   "function harvestYieldFromStrategy(address token,address strategy,uint256 amount,uint256 minReceived)",
   "function setYieldRecipient(address newYieldRecipient)",
 ]);

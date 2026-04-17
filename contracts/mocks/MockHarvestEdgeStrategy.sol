@@ -96,12 +96,12 @@ contract MockHarvestEdgeStrategy is IYieldStrategy {
 
     function deallocate(address token, uint256 amount) external override onlyVault returns (uint256 received) {
         if (token == address(0) || amount == 0) revert InvalidParam();
-        return _deallocateInternal(token, amount);
+        received = _deallocateInternal(token, amount);
     }
 
     function deallocateAll(address token) external override onlyVault returns (uint256 received) {
         if (token == address(0)) revert InvalidParam();
-        return _deallocateInternal(token, type(uint256).max);
+        received = _deallocateInternal(token, type(uint256).max);
     }
 
     function _deallocateInternal(address token, uint256 requested) internal returns (uint256 received) {

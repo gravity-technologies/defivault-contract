@@ -64,6 +64,10 @@ const VAULT_STRATEGY_OPS_LIB_CONTRACT =
   "contracts/vault/VaultStrategyOpsLib.sol:VaultStrategyOpsLib";
 const VAULT_BRIDGE_LIB_CONTRACT =
   "contracts/vault/VaultBridgeLib.sol:VaultBridgeLib";
+const VAULT_VIEW_MODULE_CONTRACT =
+  "contracts/vault/GRVTL1TreasuryVaultViewModule.sol:GRVTL1TreasuryVaultViewModule";
+const VAULT_OPS_MODULE_CONTRACT =
+  "contracts/vault/GRVTL1TreasuryVaultOpsModule.sol:GRVTL1TreasuryVaultOpsModule";
 const VAULT_IMPLEMENTATION_CONTRACT =
   "contracts/vault/GRVTL1TreasuryVault.sol:GRVTL1TreasuryVault";
 const STRATEGY_IMPLEMENTATION_CONTRACT =
@@ -630,6 +634,9 @@ function buildManualVerifications(
     const vaultStrategyOpsLib =
       vaultCoreDeployed["VaultCoreModule#VaultStrategyOpsLib"];
     const vaultBridgeLib = vaultCoreDeployed["VaultCoreModule#VaultBridgeLib"];
+    const vaultViewModule =
+      vaultCoreDeployed["VaultCoreModule#VaultViewModule"];
+    const vaultOpsModule = vaultCoreDeployed["VaultCoreModule#VaultOpsModule"];
     const vaultImplementation =
       vaultCoreDeployed["VaultCoreModule#VaultImplementation"];
     const vaultProxy = vaultCoreDeployed["VaultCoreModule#VaultProxy"];
@@ -673,7 +680,32 @@ function buildManualVerifications(
     );
     verifications.push(
       buildContractVerification({
+        address: vaultViewModule,
+        contract: VAULT_VIEW_MODULE_CONTRACT,
+        force,
+        label: "Vault view module",
+        network,
+        provider,
+        verifyInputsDir,
+        slug: "vault-view-module",
+      }),
+    );
+    verifications.push(
+      buildContractVerification({
+        address: vaultOpsModule,
+        contract: VAULT_OPS_MODULE_CONTRACT,
+        force,
+        label: "Vault ops module",
+        network,
+        provider,
+        verifyInputsDir,
+        slug: "vault-ops-module",
+      }),
+    );
+    verifications.push(
+      buildContractVerification({
         address: vaultImplementation,
+        constructorArgs: [vaultViewModule, vaultOpsModule],
         contract: VAULT_IMPLEMENTATION_CONTRACT,
         force,
         label: "Vault implementation",

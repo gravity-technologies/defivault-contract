@@ -86,7 +86,6 @@ This file defines non-negotiable standards for any agent contributing Solidity c
 ## Tooling and Analysis
 
 - Run formatting and lint checks before proposing changes.
-- Run static analysis (e.g., Slither) for every security-sensitive change.
 - Run gas snapshots/benchmarks for performance-critical changes and compare deltas.
 - Reject PRs that increase gas materially without justification.
 

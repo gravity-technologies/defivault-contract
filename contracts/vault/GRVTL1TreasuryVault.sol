@@ -10,9 +10,11 @@ import {IL1ZkSyncBridgeHub} from "../external/IL1ZkSyncBridgeHub.sol";
 import {IGRVTBridgeProxyFeeToken} from "../external/IGRVTBridgeProxyFeeToken.sol";
 import {IL1TreasuryVault} from "../interfaces/IL1TreasuryVault.sol";
 import {INativeBridgeGateway} from "../interfaces/INativeBridgeGateway.sol";
-import {IYieldStrategy} from "../interfaces/IYieldStrategy.sol";
+import {IFeeReimburser} from "../interfaces/IFeeReimburser.sol";
 import {PositionComponent, ConservativeTokenTotals, TokenTotals} from "../interfaces/IVaultReportingTypes.sol";
 import {VaultBridgeLib} from "./VaultBridgeLib.sol";
+import {GRVTL1TreasuryVaultViewModule} from "./GRVTL1TreasuryVaultViewModule.sol";
+import {GRVTL1TreasuryVaultStorage} from "./GRVTL1TreasuryVaultStorage.sol";
 import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
 
 /**
@@ -29,14 +31,16 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *        └── VAULT_ADMIN_ROLE  – governs config, token support, strategy whitelist
  *              ├── REBALANCER_ROLE  – executes L1 → L2 bridge top-ups
  *              ├── ALLOCATOR_ROLE   – allocates/deallocates to yield strategies
+ *              ├── YIELD_HARVESTER_ROLE – harvests strategy yield
  *              └── PAUSER_ROLE      – triggers pause only
  *
  *      ### Three operational flows
  *      1. **Idle custody** – ERC20 tokens sit in the vault (via `token.balanceOf(address(this))`).
  *
- *      2. **Yield strategies** – ALLOCATOR pushes idle funds into whitelisted `IYieldStrategy`
- *         contracts (e.g. Aave V3). Cost basis on allocate uses vault-side net balance decrease;
- *         unwind accounting uses vault-side balance deltas rather than trusting strategy-reported values.
+ *      2. **Yield strategies** – ALLOCATOR pushes idle funds into whitelisted strategy contracts.
+ *         Legacy cost basis uses vault-side net balance decrease. V2 cost basis uses strategy-reported
+ *         `invested`, with vault-side balance changes used to reject impossible results. Unwind accounting measures
+ *         vault-side receipt rather than trusting strategy-reported values.
  *
  *      3. **L1 → L2 bridge** – REBALANCER calls split native/ERC20 rebalance paths.
  *         ERC20 bridge requests are submitted directly through BridgeHub's two-bridges path.
@@ -52,8 +56,6 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *        - `harvestYieldFromStrategy`
  *      Defensive *exit* actions remain callable at all times, even when paused:
  *        - `deallocateVaultTokenFromStrategy` / `deallocateAllVaultTokenFromStrategy`
- *        - `emergencyNativeToL2`
- *        - `emergencyErc20ToL2`
  *
  *      ### Strategy lifecycle
  *      A strategy transitions through the following states for a given (token, strategy) pair:
@@ -63,12 +65,12 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *        3. **Withdraw-only** – `cfg.whitelisted == false` but still present in `_vaultTokenStrategies`
  *           because the strategy still holds funds. Allocation is blocked; deallocation is allowed.
  *        4. **Removed** – strategy is absent from `_vaultTokenStrategies` and config is deleted.
- *           Reached when `IYieldStrategy.strategyExposure(token)` returns 0 at de-whitelist time, or
- *           after a full manual deallocation.
+ *           Legacy lanes can reach this state during de-whitelist when reported exposure is zero.
+ *           Policy-native lanes reach this state only through explicit `finalizeStrategyRemoval`.
  *
- *      Transition from (2) to (3)/(4) is triggered by calling `setVaultTokenStrategyConfig` with
- *      `cfg.whitelisted == false`. The vault immediately enters withdraw-only mode and probes
- *      `strategy.strategyExposure(token)` to decide whether it can advance to (4) in the same call.
+ *      Transition from (2) to (3) is triggered by calling `setVaultTokenStrategyConfig` with
+ *      `cfg.whitelisted == false`. Legacy lanes may advance to (4) in the same call if reported
+ *      exposure is zero. Policy-native lanes stay withdraw-only until `finalizeStrategyRemoval` is called.
  *
  *      `active` exists to represent vault-token membership/lifecycle independently from allocation permission:
  *      - `whitelisted` answers "can we allocate new funds?"
@@ -81,103 +83,34 @@ import {VaultStrategyOpsLib} from "./VaultStrategyOpsLib.sol";
  *      `tokenTotalsConservative` / `tokenTotalsBatch` skip invalid strategy reads and count
  *      `skippedStrategies` as a best-effort-read signal.
  *
- *      ### Emergency unwind
- *      `emergencyNativeToL2` and `emergencyErc20ToL2` bypass normal rebalance policy and remain callable while paused.
- *      If idle funds are insufficient it
- *      iterates `_vaultTokenStrategies` and pulls funds from each strategy via best-effort
- *      `try/catch` calls. Iteration is bounded by `MAX_STRATEGIES_PER_TOKEN`.
- *
  *      ### Upgrade safety
  *      50 reserved `__gap` slots follow all state variables to allow future layout additions
  *      without colliding with proxy storage.
  */
-contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable, IL1TreasuryVault {
+contract GRVTL1TreasuryVault is
+    Initializable,
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    IL1TreasuryVault,
+    GRVTL1TreasuryVaultStorage
+{
     // ============================================= Constants ======================================================
     using SafeERC20 for IERC20;
 
     bytes32 public constant override VAULT_ADMIN_ROLE = keccak256("VAULT_ADMIN_ROLE");
     bytes32 public constant override REBALANCER_ROLE = keccak256("REBALANCER_ROLE");
     bytes32 public constant override ALLOCATOR_ROLE = keccak256("ALLOCATOR_ROLE");
+    bytes32 public constant override YIELD_HARVESTER_ROLE = keccak256("YIELD_HARVESTER_ROLE");
     bytes32 public constant override PAUSER_ROLE = keccak256("PAUSER_ROLE");
     /// @notice Maximum number of strategies that can be simultaneously registered for a single token.
-    /// @dev Bounds the gas cost of emergency strategy iteration and prevents unbounded loops.
+    /// @dev Bounds registry scans and prevents unbounded loops.
     uint256 public constant MAX_STRATEGIES_PER_TOKEN = 8;
     uint256 private constant L2_TX_GAS_LIMIT = 500_000;
     uint256 private constant L2_TX_GAS_PER_PUBDATA_BYTE = 800;
 
-    // ============================================= Storage (Private) ==============================================
-
-    /// @dev L1 BridgeHub contract used for outbound L1 → L2 transfers.
-    address private _bridgeHub;
-
-    /// @dev GRVT bridge-proxy fee token used for BridgeHub `mintValue` funding.
-    address private _grvtBridgeProxyFeeToken;
-
-    /// @dev Target L2 chain id passed into BridgeHub requests.
-    uint256 private _l2ChainId;
-
-    /// @dev Configured L2 exchange recipient for top-ups and emergency sends.
-    address private _l2ExchangeRecipient;
-
-    /// @dev Wrapped-native ERC20 token used for internal accounting and strategy calls.
-    address private _wrappedNativeToken;
-
-    /// @dev Native bridge gateway used for L1 -> L2 native sends and failed-deposit recovery.
-    address private _nativeBridgeGateway;
-
-    /// @dev Native dust/forced-send sweep yield recipient.
-    address private _yieldRecipient;
-
-    /// @dev Global pause flag. When true, blocks `allocateVaultTokenToStrategy` and normal rebalances.
-    bool private _paused;
-
-    /// @dev Per-token support and risk-control parameters.
-    mapping(address token => VaultTokenConfig cfg) private _vaultTokenConfigs;
-    /// @dev Per-(token,strategy) tracked cost basis used for yield/loss reconciliation.
-    mapping(address token => mapping(address strategy => uint256 costBasis)) private _strategyCostBasis;
-
-    // Strategy registry — two synchronized data structures:
-    //
-    // 1. `_vaultTokenStrategyConfigs[token][strategy]`
-    //    Source of truth for (token, strategy) lifecycle + authorization:
-    //      - `whitelisted`: allocation permission
-    //      - `active`: vault-token membership (including withdraw-only entries)
-    //      - `cap`: optional allocation limit
-    //    Consulted by allocation/deallocation authorization checks.
-    //
-    // 2. `_vaultTokenStrategies[token]`
-    //    Enumerable strategy list for a token; iterated by `tokenTotals` and emergency unwinds.
-    //    Contains both whitelisted and withdraw-only strategies (those with remaining positions).
-    // Membership tests use `VaultTokenStrategyConfig.active` for O(1) checks; list insert/remove uses bounded linear scans
-    // because `MAX_STRATEGIES_PER_TOKEN` caps list length.
-    mapping(address token => mapping(address strategy => VaultTokenStrategyConfig cfg))
-        private _vaultTokenStrategyConfigs;
-    mapping(address token => address[] strategies) private _vaultTokenStrategies;
-    // Global active strategy index (deduped by strategy address) used by exact-token
-    // reporting paths to support component/non-underlying token queries.
-    address[] private _activeStrategies;
-    mapping(address strategy => uint256 refs) private _activeStrategyRefCount;
-    // Supported vault-token registry used for normal operations discovery.
-    address[] private _supportedVaultTokens;
-    mapping(address token => bool supported) private _supportedVaultTokenSet;
-    // Raw TVL-token registry (source of truth) for on-chain discovery and batch reporting.
-    // Read paths (`getTrackedTvlTokens`, `isTrackedTvlToken`, `tokenTotalsBatch`, `trackedTvlTokenTotals`) are intentionally
-    // storage-backed and do not discover tokens by calling strategies at read time.
-    address[] private _trackedTvlTokens;
-    mapping(address token => bool tracked) private _trackedTvlTokenSet;
-    mapping(address token => uint256 refs) private _trackedTvlTokenRefCount;
-    mapping(address token => bool trackedDirectly) private _vaultTokenDirectTvlTracked;
-    mapping(address vaultToken => mapping(address strategy => address[] tokens)) private _cachedStrategyTvlTokens;
-    // Optional admin override for tracked-TVL-token signal (emergency use only).
-    mapping(address token => bool enabled) private _trackedTvlTokenOverrideEnabled;
-    mapping(address token => bool forceTrack) private _trackedTvlTokenOverrideValue;
-    /// @dev Timelock controller authorized to update yield recipient.
-    address private _yieldRecipientTimelockController;
-    /// @dev Per-token allowlist for the generic ERC20 shared-bridge path.
-    mapping(address token => bool bridgeable) private _bridgeableVaultTokens;
-
-    /// @dev Reserved storage gap for upgrade-safe layout extension (50 × 32 bytes).
-    uint256[50] private __gap;
+    // ============================================= Storage ========================================================
+    address private immutable _viewModule;
+    address private immutable _opsModule;
 
     // =============================================== Events ===================================================
     /// @notice Emitted when the vault enters the paused state.
@@ -202,13 +135,6 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     );
 
     /**
-     * @notice Emitted during emergency unwind when a strategy's funds cannot be retrieved.
-     * @dev Skipping is non-fatal; the emergency flow continues with the next strategy.
-     *      Causes include: reporting read revert, `deallocate()` revert, or balance decreased after call.
-     */
-    event EmergencyStrategySkipped(address indexed vaultToken, address indexed strategy);
-
-    /**
      * @notice Emitted during `setVaultTokenStrategyConfig` de-listing when exposure probe call reverts.
      * @dev The strategy remains in withdraw-only mode (still in `_vaultTokenStrategies`) until its
      *      balance reaches zero and `setVaultTokenStrategyConfig` is called again to complete removal.
@@ -231,7 +157,15 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address viewModule_, address opsModule_) {
+        if (
+            viewModule_ == address(0) ||
+            viewModule_.code.length == 0 ||
+            opsModule_ == address(0) ||
+            opsModule_.code.length == 0
+        ) revert InvalidParam();
+        _viewModule = viewModule_;
+        _opsModule = opsModule_;
         _disableInitializers();
     }
 
@@ -240,8 +174,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      * @dev Can only be called once (enforced by `initializer`). Sets up the role hierarchy:
      *      DEFAULT_ADMIN_ROLE administers VAULT_ADMIN_ROLE; VAULT_ADMIN_ROLE administers the
      *      remaining operational roles. The `admin` address receives DEFAULT_ADMIN_ROLE,
-     *      VAULT_ADMIN_ROLE, and PAUSER_ROLE — operational roles (REBALANCER, ALLOCATOR) must
-     *      be granted separately. Yield sweep recipient is configured independently and must not
+     *      VAULT_ADMIN_ROLE, and PAUSER_ROLE — operational roles (REBALANCER, ALLOCATOR,
+     *      YIELD_HARVESTER) must be granted separately. Yield sweep recipient is configured independently and must not
      *      be the same as `admin`. Native bridge gateway is configured separately after deployment
      *      because it depends on the deployed vault proxy address.
      * @param admin                Initial governance admin account.
@@ -280,6 +214,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         _setRoleAdmin(VAULT_ADMIN_ROLE, DEFAULT_ADMIN_ROLE);
         _setRoleAdmin(REBALANCER_ROLE, VAULT_ADMIN_ROLE);
         _setRoleAdmin(ALLOCATOR_ROLE, VAULT_ADMIN_ROLE);
+        _setRoleAdmin(YIELD_HARVESTER_ROLE, VAULT_ADMIN_ROLE);
         _setRoleAdmin(PAUSER_ROLE, VAULT_ADMIN_ROLE);
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -326,9 +261,11 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         _;
     }
 
-    /// @dev Reverts if caller lacks both REBALANCER_ROLE and VAULT_ADMIN_ROLE.
-    modifier onlyRebalancerOrAdmin() {
-        if (!(hasRole(REBALANCER_ROLE, msg.sender) || hasRole(VAULT_ADMIN_ROLE, msg.sender))) revert Unauthorized();
+    /// @dev Reverts if caller lacks both YIELD_HARVESTER_ROLE and VAULT_ADMIN_ROLE.
+    modifier onlyYieldHarvesterOrAdmin() {
+        if (!(hasRole(YIELD_HARVESTER_ROLE, msg.sender) || hasRole(VAULT_ADMIN_ROLE, msg.sender))) {
+            revert Unauthorized();
+        }
         _;
     }
 
@@ -443,8 +380,10 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (
             newYieldRecipient == address(0) ||
             newYieldRecipient == _yieldRecipient ||
-            newYieldRecipient == address(this)
+            newYieldRecipient == address(this) ||
+            newYieldRecipient.code.length == 0
         ) revert InvalidParam();
+        _requireCompatibleYieldRecipientTreasury(newYieldRecipient);
         address previousYieldRecipient = _yieldRecipient;
         _yieldRecipient = newYieldRecipient;
         emit YieldRecipientUpdated(previousYieldRecipient, newYieldRecipient);
@@ -475,19 +414,19 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /// @inheritdoc IL1TreasuryVault
     function isSupportedVaultToken(address vaultToken) external view override returns (bool) {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         return _supportedVaultTokenSet[vaultToken];
     }
 
     /// @inheritdoc IL1TreasuryVault
     function isBridgeableVaultToken(address vaultToken) external view override returns (bool) {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         return _bridgeableVaultTokens[vaultToken];
     }
 
     /// @inheritdoc IL1TreasuryVault
     function setVaultTokenConfig(address token, VaultTokenConfig calldata cfg) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         (bool ok, ) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
         if (!ok) revert InvalidParam();
         _vaultTokenConfigs[token] = cfg;
@@ -498,7 +437,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /// @inheritdoc IL1TreasuryVault
     function setBridgeableVaultToken(address token, bool bridgeable) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         (bool ok, ) = VaultStrategyOpsLib.tryBalanceOf(token, address(this));
         if (!ok) revert InvalidParam();
         _bridgeableVaultTokens[token] = bridgeable;
@@ -507,7 +446,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /// @inheritdoc IL1TreasuryVault
     function isStrategyWhitelistedForVaultToken(address token, address strategy) external view override returns (bool) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _vaultTokenStrategyConfigs[token][strategy].whitelisted;
     }
@@ -517,7 +456,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address token,
         address strategy
     ) external view override returns (VaultTokenStrategyConfig memory) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _vaultTokenStrategyConfigs[token][strategy];
     }
@@ -531,7 +470,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address strategy,
         VaultTokenStrategyConfig calldata cfg
     ) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         if (cfg.whitelisted && !_vaultTokenConfigs[token].supported) revert TokenNotSupported();
 
@@ -542,6 +481,11 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
         if (!_isActiveVaultTokenStrategy(token, strategy)) {
             _setVaultTokenStrategyLifecycle(token, strategy, StrategyLifecycle.NotRegistered, 0);
+            return;
+        }
+
+        if (VaultStrategyOpsLib.isYieldStrategyV2(strategy)) {
+            _setVaultTokenStrategyLifecycle(token, strategy, StrategyLifecycle.WithdrawOnly, cfg.cap);
             return;
         }
 
@@ -559,8 +503,52 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /// @inheritdoc IL1TreasuryVault
+    function getStrategyPolicyConfig(
+        address token,
+        address strategy
+    ) external view override returns (StrategyPolicyConfig memory) {
+        VaultStrategyOpsLib.requireErc20Token(token);
+        if (strategy == address(0)) revert InvalidParam();
+        return _strategyPolicyConfigs[token][strategy];
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function hasStrategyPolicyConfig(address token, address strategy) external view override returns (bool) {
+        VaultStrategyOpsLib.requireErc20Token(token);
+        if (strategy == address(0)) revert InvalidParam();
+        return _hasStrategyPolicyConfig[token][strategy];
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function setStrategyPolicyConfig(address, address, StrategyPolicyConfig calldata) external override onlyVaultAdmin {
+        _delegateToModule(_opsModule);
+    }
+
+    /// @inheritdoc IL1TreasuryVault
+    function finalizeStrategyRemoval(address token, address strategy) external override onlyVaultAdmin {
+        VaultStrategyOpsLib.requireErc20Token(token);
+        if (strategy == address(0)) revert InvalidParam();
+        if (
+            !VaultStrategyOpsLib.isYieldStrategyV2(strategy) ||
+            !VaultStrategyOpsLib.v2VaultTokenMatches(token, strategy)
+        ) {
+            revert InvalidV2StrategyFinalization(token, strategy);
+        }
+
+        VaultTokenStrategyConfig storage cfg = _vaultTokenStrategyConfigs[token][strategy];
+        if (cfg.whitelisted || !cfg.active) revert InvalidV2StrategyFinalization(token, strategy);
+        if (_strategyCostBasis[token][strategy] != 0) revert InvalidV2StrategyFinalization(token, strategy);
+        if (VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy) != 0) {
+            revert InvalidV2StrategyFinalization(token, strategy);
+        }
+
+        _setVaultTokenStrategyLifecycle(token, strategy, StrategyLifecycle.NotRegistered, 0);
+        emit StrategyRemovalFinalized(token, strategy);
+    }
+
+    /// @inheritdoc IL1TreasuryVault
     function refreshStrategyTvlTokens(address vaultToken, address strategy) external override onlyVaultAdmin {
-        _requireErc20Token(vaultToken);
+        VaultStrategyOpsLib.requireErc20Token(vaultToken);
         if (strategy == address(0)) revert InvalidParam();
         if (!_isActiveVaultTokenStrategy(vaultToken, strategy)) revert StrategyNotWhitelisted();
         _refreshStrategyTvlTokens(vaultToken, strategy);
@@ -582,58 +570,43 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address vaultToken,
         address strategy
     ) external view override returns (PositionComponent[] memory components) {
-        _requireErc20Token(vaultToken);
-        if (strategy == address(0)) revert InvalidParam();
-        if (!_isGloballyActiveStrategy(strategy)) return components;
-        return VaultStrategyOpsLib.readStrategyPositionBreakdownOrRevert(vaultToken, strategy);
+        return
+            GRVTL1TreasuryVaultViewModule(_viewModule).strategyPositionBreakdown(
+                vaultToken,
+                strategy,
+                _activeStrategyRefCount[strategy] != 0
+            );
     }
 
     /// @inheritdoc IL1TreasuryVault
     function tokenTotals(address token) external view override returns (TokenTotals memory totals) {
-        _requireErc20Token(token);
-
-        totals.idle = idleTokenBalance(token);
-        totals.total = totals.idle;
-
-        address[] storage list = _activeStrategies;
-        for (uint256 i = 0; i < list.length; ++i) {
-            (bool ok, uint256 amount) = VaultStrategyOpsLib.readStrategyExactTokenBalance(token, list[i]);
-            if (!ok) revert InvalidStrategyTokenRead(token, list[i]);
-            if (amount > type(uint256).max - totals.strategy) {
-                revert InvalidStrategyTokenRead(token, list[i]);
-            }
-            if (amount > type(uint256).max - totals.total) revert InvalidStrategyTokenRead(token, list[i]);
-            totals.strategy += amount;
-            totals.total += amount;
-        }
+        return GRVTL1TreasuryVaultViewModule(_viewModule).tokenTotals(address(this), token, _activeStrategies);
     }
 
     /// @inheritdoc IL1TreasuryVault
     function strategyCostBasis(address token, address strategy) external view override returns (uint256) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         if (strategy == address(0)) revert InvalidParam();
         return _strategyCostBasis[token][strategy];
     }
 
     /// @inheritdoc IL1TreasuryVault
     function harvestableYield(address token, address strategy) public view override returns (uint256) {
-        _requireErc20Token(token);
-        if (strategy == address(0)) revert InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) return 0;
-        uint256 exposure = VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy);
-        // Cost basis follows measured vault-side net decrease on allocate, not strategy receipt.
-        // See README terminology for the worked examples behind this invariant.
-        uint256 costBasis = _strategyCostBasis[token][strategy];
-        uint256 effectiveCostBasis = costBasis < exposure ? costBasis : exposure;
-        return exposure - effectiveCostBasis;
+        return
+            GRVTL1TreasuryVaultViewModule(_viewModule).harvestableYield(
+                token,
+                strategy,
+                VaultStrategyOpsLib.canWithdrawVaultTokenFromStrategy(_vaultTokenStrategyConfigs[token][strategy]),
+                _strategyCostBasis[token][strategy]
+            );
     }
 
     /// @inheritdoc IL1TreasuryVault
     function tokenTotalsConservative(
         address token
     ) external view override returns (ConservativeTokenTotals memory status) {
-        _requireErc20Token(token);
-        return _buildConservativeTokenTotals(token);
+        return
+            GRVTL1TreasuryVaultViewModule(_viewModule).tokenTotalsConservative(address(this), token, _activeStrategies);
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -643,7 +616,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
 
     /// @inheritdoc IL1TreasuryVault
     function isTrackedTvlToken(address token) external view override returns (bool) {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
         return _trackedTvlTokenSet[token];
     }
 
@@ -651,11 +624,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     function tokenTotalsBatch(
         address[] calldata tokens
     ) external view override returns (ConservativeTokenTotals[] memory statuses) {
-        statuses = new ConservativeTokenTotals[](tokens.length);
-        for (uint256 i = 0; i < tokens.length; ++i) {
-            _requireErc20Token(tokens[i]);
-            statuses[i] = _buildConservativeTokenTotals(tokens[i]);
-        }
+        return GRVTL1TreasuryVaultViewModule(_viewModule).tokenTotalsBatch(address(this), tokens, _activeStrategies);
     }
 
     /// @inheritdoc IL1TreasuryVault
@@ -665,19 +634,17 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         override
         returns (address[] memory tokens, ConservativeTokenTotals[] memory statuses)
     {
-        uint256 len = _trackedTvlTokens.length;
-        tokens = new address[](len);
-        statuses = new ConservativeTokenTotals[](len);
-        for (uint256 i = 0; i < len; ++i) {
-            address token = _trackedTvlTokens[i];
-            tokens[i] = token;
-            statuses[i] = _buildConservativeTokenTotals(token);
-        }
+        return
+            GRVTL1TreasuryVaultViewModule(_viewModule).trackedTvlTokenTotals(
+                address(this),
+                _trackedTvlTokens,
+                _activeStrategies
+            );
     }
 
     /// @inheritdoc IL1TreasuryVault
     function setTrackedTvlTokenOverride(address token, bool enabled, bool forceTrack) external override onlyVaultAdmin {
-        _requireErc20Token(token);
+        VaultStrategyOpsLib.requireErc20Token(token);
 
         if (enabled) {
             _trackedTvlTokenOverrideEnabled[token] = true;
@@ -695,21 +662,18 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      * @notice Shared immediate-availability helper.
      * @dev Returns 0 if the token is not supported. Otherwise returns the full idle token balance.
      */
-    function _availableVaultTokenForRebalance(address vaultToken) internal view returns (uint256) {
-        if (!_vaultTokenConfigs[vaultToken].supported) return 0;
-        return idleTokenBalance(vaultToken);
-    }
-
     /// @inheritdoc IL1TreasuryVault
     function availableNativeForRebalance() external view override returns (uint256) {
-        return _availableVaultTokenForRebalance(_wrappedNativeToken);
+        if (!_vaultTokenConfigs[_wrappedNativeToken].supported) return 0;
+        return idleTokenBalance(_wrappedNativeToken);
     }
 
     /// @inheritdoc IL1TreasuryVault
     function availableErc20ForRebalance(address erc20Token) external view override returns (uint256) {
         if (erc20Token == _wrappedNativeToken) return 0;
         if (!_bridgeableVaultTokens[erc20Token]) return 0;
-        return _availableVaultTokenForRebalance(erc20Token);
+        if (!_vaultTokenConfigs[erc20Token].supported) return 0;
+        return idleTokenBalance(erc20Token);
     }
 
     /**
@@ -717,48 +681,26 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      * @dev Enforces in order:
      *      1. Token is supported (`VaultTokenConfig.supported == true`).
      *      2. Strategy is whitelisted (`VaultTokenStrategyConfig.whitelisted == true`).
-     *      3. If `VaultTokenStrategyConfig.cap != 0`, the strategy's existing strategy exposure
-     *         plus `amount` must not exceed the cap. The cap check reads
-     *         `strategy.strategyExposure(token)`.
+     *      3. If `VaultTokenStrategyConfig.cap != 0`, the requested allocation must fit within the configured cap.
+     *         Legacy lanes use existing reported strategy exposure plus `amount`.
+     *         V2 lanes use existing tracked cost basis plus the realized tracked principal added by the allocation.
      *
      *      Approval pattern: the vault grants an exact `amount` allowance to `strategy`,
      *      calls `strategy.allocate`, then resets the allowance to 0. This minimises residual
      *      approval exposure in case the strategy does not consume the full allowance.
      *
-     *      Cost-basis policy: tracked cost basis increases by measured vault-side net token balance
-     *      decrease during `allocate`, not by strategy receipt. Same-call token returns back to the
-     *      vault reduce the tracked spend by design. See README terminology for the rationale.
+     *      Cost-basis policy: V2 tracked cost basis increases by strategy-reported `invested`, while
+     *      measured vault-side token balance decrease is used to reject impossible results.
+     *      Legacy lanes continue to use measured vault-side spend as cost basis.
      *
      *      This function is blocked when the vault is paused.
      */
     function allocateVaultTokenToStrategy(
         address token,
-        address strategy,
-        uint256 amount
+        address,
+        uint256
     ) external override nonReentrant whenNotPaused onlyAllocator {
-        _requireErc20Token(token);
-        if (strategy == address(0) || amount == 0) revert InvalidParam();
-
-        if (!_vaultTokenConfigs[token].supported) revert TokenNotSupported();
-        VaultTokenStrategyConfig storage sCfg = _vaultTokenStrategyConfigs[token][strategy];
-        if (!sCfg.whitelisted) revert StrategyNotWhitelisted();
-
-        uint256 idle = idleTokenBalance(token);
-        if (idle < amount) revert InvalidParam();
-
-        if (sCfg.cap != 0) {
-            uint256 current = VaultStrategyOpsLib.readStrategyExposureOrRevert(token, strategy);
-            if (current > type(uint256).max - amount || current + amount > sCfg.cap) revert CapExceeded();
-        }
-
-        IERC20(token).forceApprove(strategy, amount);
-        uint256 spent = VaultStrategyOpsLib.allocateWithBalanceDelta(token, strategy, amount);
-        IERC20(token).forceApprove(strategy, 0);
-        _increaseStrategyCostBasis(token, strategy, spent);
-        if (spent != amount) {
-            emit VaultTokenAllocationSpentMismatch(token, strategy, amount, spent);
-        }
-        emit VaultTokenAllocatedToStrategy(token, strategy, amount);
+        _delegateToModule(_opsModule);
         _syncVaultTokenDirectTvlTracking(token);
     }
 
@@ -780,89 +722,47 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      */
     function deallocateVaultTokenFromStrategy(
         address token,
-        address strategy,
-        uint256 amount
+        address,
+        uint256
     ) external override nonReentrant onlyAllocatorOrAdmin returns (uint256 received) {
-        _requireErc20Token(token);
-        if (strategy == address(0) || amount == 0) revert InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-        (uint256 reported, uint256 measured) = VaultStrategyOpsLib.deallocateWithBalanceDelta(
-            token,
-            strategy,
-            amount,
-            false
-        );
-        received = _finalizeDeallocation(token, strategy, amount, reported, measured, true, true);
+        received = abi.decode(_delegateToModule(_opsModule), (uint256));
+        _syncVaultTokenDirectTvlTracking(token);
     }
 
     /**
      * @inheritdoc IL1TreasuryVault
      * @dev Callable while paused and when token support is removed (defensive exit).
      *
-     *      Equivalent to `deallocateVaultTokenFromStrategy` but calls `strategy.deallocateAll` instead of
-     *      `strategy.deallocate`. Uses `type(uint256).max` as the `requested` field in events to
-     *      signal an uncapped unwind.
+     *      Equivalent to `deallocateVaultTokenFromStrategy` with an uncapped tracked-principal request.
+     *      V2 strategies withdraw tracked principal only on this path; residual value remains for
+     *      explicit harvest. Uses `type(uint256).max` as the `requested` field
+     *      in events to signal an uncapped unwind.
      *
      *      Accounting: same balance-delta approach as `deallocateVaultTokenFromStrategy`. Mismatch between
      *      strategy-reported and measured received amount triggers `StrategyReportedReceivedMismatch`.
      */
     function deallocateAllVaultTokenFromStrategy(
         address token,
-        address strategy
+        address
     ) external override nonReentrant onlyAllocatorOrAdmin returns (uint256 received) {
-        _requireErc20Token(token);
-        if (strategy == address(0)) revert InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-        (uint256 reported, uint256 measured) = VaultStrategyOpsLib.deallocateWithBalanceDelta(
-            token,
-            strategy,
-            type(uint256).max,
-            true
-        );
-        received = _finalizeDeallocation(token, strategy, type(uint256).max, reported, measured, true, true);
+        received = abi.decode(_delegateToModule(_opsModule), (uint256));
+        _syncVaultTokenDirectTvlTracking(token);
     }
 
     /**
      * @notice Harvests strategy yield and pays proceeds to configured yield recipient.
-     * @dev Callable by `VAULT_ADMIN_ROLE` and blocked while paused.
-     *      Harvest deallocates from strategy without changing tracked cost basis, then pays yield recipient:
-     *      ERC20 for non-wrapped-native vault tokens, native ETH for wrapped-native vault tokens.
-     * @param token Vault token (ERC20).
-     * @param strategy Strategy source.
-     * @param amount Requested harvest amount from strategy.
-     * @param minReceived Minimum net amount that must reach yield recipient.
-     * @return received Net amount received by yield recipient.
+     * @dev Callable by `YIELD_HARVESTER_ROLE` or `VAULT_ADMIN_ROLE`, and blocked while paused.
+     *      Execution is delegated into the ops module, which realizes residual-only yield,
+     *      enforces the active policy, and pays the configured recipient before returning
+     *      the measured recipient-side amount.
      */
     function harvestYieldFromStrategy(
         address token,
-        address strategy,
-        uint256 amount,
-        uint256 minReceived
-    ) external override nonReentrant whenNotPaused onlyVaultAdmin returns (uint256 received) {
-        _requireErc20Token(token);
-        if (strategy == address(0) || amount == 0) revert InvalidParam();
-        if (!_canWithdrawVaultTokenFromStrategy(token, strategy)) revert StrategyNotWhitelisted();
-
-        address recipient = _yieldRecipient;
-        if (recipient == address(0)) revert InvalidParam();
-
-        uint256 maxYield = harvestableYield(token, strategy);
-        if (maxYield == 0 || amount > maxYield) revert YieldNotAvailable();
-
-        (uint256 reported, uint256 withdrawnToVault) = VaultStrategyOpsLib.deallocateWithBalanceDelta(
-            token,
-            strategy,
-            amount,
-            false
-        );
-        withdrawnToVault = _finalizeDeallocation(token, strategy, amount, reported, withdrawnToVault, false, false);
-        if (withdrawnToVault > maxYield) revert YieldNotAvailable();
-
-        received = VaultStrategyOpsLib.payoutHarvestProceeds(token, _wrappedNativeToken, recipient, withdrawnToVault);
-        if (received < minReceived) revert SlippageExceeded();
-        emit YieldHarvested(token, strategy, recipient, amount, received);
-        // Harvest first deallocates into vault idle, then pays yield recipient.
-        // Sync after payout so unsupported vault tokens can untrack when exposure reaches zero.
+        address,
+        uint256,
+        uint256
+    ) external override nonReentrant whenNotPaused onlyYieldHarvesterOrAdmin returns (uint256 received) {
+        received = abi.decode(_delegateToModule(_opsModule), (uint256));
         _syncVaultTokenDirectTvlTracking(token);
     }
 
@@ -872,7 +772,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      */
     function rebalanceNativeToL2(uint256 amount) external payable override nonReentrant whenNotPaused onlyRebalancer {
         if (msg.value != 0) revert InvalidParam();
-        _dispatchBridgeOutToL2(_wrappedNativeToken, amount, true, false);
+        _dispatchBridgeOutToL2(_wrappedNativeToken, amount, true);
     }
 
     /**
@@ -886,44 +786,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (msg.value != 0) revert InvalidParam();
         if (erc20Token == address(0)) revert InvalidParam();
         if (erc20Token == _wrappedNativeToken) revert InvalidParam();
-        _dispatchBridgeOutToL2(erc20Token, amount, false, false);
-    }
-
-    /**
-     * @inheritdoc IL1TreasuryVault
-     * @dev Bypass mode: skips pause check and support checks.
-     *
-     *      Auto-unwind: if wrapped-native idle balance is less than `amount`, the function iterates
-     *      `_vaultTokenStrategies[_wrappedNativeToken]` and pulls funds from each strategy via best-effort
-     *      `try/catch` deallocate calls until the shortfall is covered or all strategies are
-     *      exhausted. Strategies that revert or return a decreased balance are skipped with an
-     *      `EmergencyStrategySkipped` event. If the balance is still insufficient after the full
-     *      iteration, the call reverts.
-     */
-    function emergencyNativeToL2(uint256 amount) external payable override nonReentrant onlyRebalancerOrAdmin {
-        if (msg.value != 0) revert InvalidParam();
-        _dispatchBridgeOutToL2(_wrappedNativeToken, amount, true, true);
-    }
-
-    /**
-     * @inheritdoc IL1TreasuryVault
-     * @dev Bypass mode: skips pause check and support checks.
-     *
-     *      Auto-unwind: if vault idle balance is less than `amount`, the function iterates
-     *      `_vaultTokenStrategies[erc20Token]` and pulls funds from each strategy via best-effort
-     *      `try/catch` deallocate calls until the shortfall is covered or all strategies are
-     *      exhausted. Strategies that revert or return a decreased balance are skipped with an
-     *      `EmergencyStrategySkipped` event. If the balance is still insufficient after the full
-     *      iteration, the call reverts.
-     */
-    function emergencyErc20ToL2(
-        address erc20Token,
-        uint256 amount
-    ) external payable override nonReentrant onlyRebalancerOrAdmin {
-        if (msg.value != 0) revert InvalidParam();
-        if (erc20Token == address(0)) revert InvalidParam();
-        if (erc20Token == _wrappedNativeToken) revert InvalidParam();
-        _dispatchBridgeOutToL2(erc20Token, amount, false, true);
+        _dispatchBridgeOutToL2(erc20Token, amount, false);
     }
 
     /**
@@ -935,37 +798,6 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
      */
     function getVaultTokenStrategies(address token) external view override returns (address[] memory) {
         return _vaultTokenStrategies[token];
-    }
-
-    /**
-     * @notice Applies shared post-deallocation accounting and telemetry.
-     * @dev Optionally reduces tracked cost basis and optionally re-syncs direct vault-token TVL tracking,
-     *      allowing harvest and emergency unwind paths to reuse the same measured-delta finalizer.
-     * @param token Vault token being deallocated.
-     * @param strategy Strategy source.
-     * @param requested Amount requested from the strategy.
-     * @param reported Amount self-reported by the strategy.
-     * @param received Amount actually measured back at the vault.
-     * @param reduceCostBasis True to reduce tracked cost basis by `received`.
-     * @param syncTokenTracking True to re-run direct vault-token TVL tracking sync.
-     * @return The measured `received` amount.
-     */
-    function _finalizeDeallocation(
-        address token,
-        address strategy,
-        uint256 requested,
-        uint256 reported,
-        uint256 received,
-        bool reduceCostBasis,
-        bool syncTokenTracking
-    ) internal returns (uint256) {
-        if (reported != received) {
-            emit StrategyReportedReceivedMismatch(token, strategy, requested, reported, received);
-        }
-        if (reduceCostBasis) _decreaseStrategyCostBasis(token, strategy, received);
-        emit VaultTokenDeallocatedFromStrategy(token, strategy, requested, received);
-        if (syncTokenTracking) _syncVaultTokenDirectTvlTracking(token);
-        return received;
     }
 
     /**
@@ -1117,13 +949,13 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         address vaultToken,
         address strategy
     ) internal view returns (address[] memory tokens) {
-        try IYieldStrategy(strategy).tvlTokens(vaultToken) returns (address[] memory data) {
-            tokens = data;
-        } catch {
+        (bool ok, address[] memory data) = VaultStrategyOpsLib.readStrategyTvlTokens(vaultToken, strategy);
+        if (!ok) {
             tokens = new address[](1);
             tokens[0] = vaultToken;
             return tokens;
         }
+        tokens = data;
         for (uint256 i = 0; i < tokens.length; ++i) {
             if (tokens[i] == address(0)) revert InvalidParam();
             for (uint256 j = i + 1; j < tokens.length; ++j) {
@@ -1179,6 +1011,8 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
                 _removeVaultTokenStrategy(token, strategy);
             }
             delete _vaultTokenStrategyConfigs[token][strategy];
+            delete _strategyPolicyConfigs[token][strategy];
+            delete _hasStrategyPolicyConfig[token][strategy];
             delete _strategyCostBasis[token][strategy];
             emit VaultTokenStrategyConfigUpdated(token, strategy, false, 0);
             _syncVaultTokenDirectTvlTracking(token);
@@ -1198,13 +1032,12 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /**
-     * @notice Executes shared bridge-out flow for rebalance and emergency operations.
+     * @notice Executes the standard bridge-out flow for rebalance operations.
      * @param token Vault token (always ERC20 inside strategy calls).
      * @param amount Amount to bridge to L2.
      * @param isNativeIntent True for native branch (`token` must be wrapped-native).
-     * @param emergency True for emergency mode (supports disabled, pause-bypass behavior).
      */
-    function _dispatchBridgeOutToL2(address token, uint256 amount, bool isNativeIntent, bool emergency) internal {
+    function _dispatchBridgeOutToL2(address token, uint256 amount, bool isNativeIntent) internal {
         if (!isNativeIntent && !_bridgeableVaultTokens[token]) revert TokenNotBridgeable();
 
         VaultBridgeLib.BridgeRequest memory request = VaultBridgeLib.BridgeRequest({
@@ -1220,13 +1053,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             isNativeIntent: isNativeIntent
         });
 
-        VaultBridgeLib.EmergencyUnwindStep[] memory steps;
-        if (emergency) {
-            steps = VaultBridgeLib.prepareEmergencyBridgeOut(request, _vaultTokenStrategies[token]);
-            _finalizeEmergencyUnwind(token, steps);
-        } else {
-            VaultBridgeLib.ensureStandardBridgeOut(request, _vaultTokenConfigs[token].supported);
-        }
+        VaultBridgeLib.ensureStandardBridgeOut(request, _vaultTokenConfigs[token].supported);
 
         bytes32 txHash = isNativeIntent
             ? _bridgeNativeToL2ThroughGateway(amount)
@@ -1238,8 +1065,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             L2_TX_GAS_PER_PUBDATA_BYTE,
             _l2ExchangeRecipient,
             txHash,
-            isNativeIntent,
-            emergency
+            isNativeIntent
         );
         _syncVaultTokenDirectTvlTracking(token);
     }
@@ -1279,35 +1105,6 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
     }
 
     /**
-     * @notice Increases tracked cost basis by `delta`.
-     * @param token Vault token for position.
-     * @param strategy Strategy address.
-     * @param delta Cost-basis increment amount.
-     */
-    function _increaseStrategyCostBasis(address token, address strategy, uint256 delta) internal {
-        if (delta == 0) return;
-        uint256 previousCostBasis = _strategyCostBasis[token][strategy];
-        uint256 newCostBasis = previousCostBasis + delta;
-        _strategyCostBasis[token][strategy] = newCostBasis;
-    }
-
-    /**
-     * @notice Decreases tracked cost basis by up to `delta`.
-     * @dev Decrease is capped at current cost basis and never underflows.
-     * @param token Vault token for position.
-     * @param strategy Strategy address.
-     * @param delta Requested cost basis decrement amount.
-     */
-    function _decreaseStrategyCostBasis(address token, address strategy, uint256 delta) internal {
-        if (delta == 0) return;
-        uint256 previousCostBasis = _strategyCostBasis[token][strategy];
-        if (previousCostBasis == 0) return;
-        uint256 decreaseBy = delta < previousCostBasis ? delta : previousCostBasis;
-        uint256 newCostBasis = previousCostBasis - decreaseBy;
-        _strategyCostBasis[token][strategy] = newCostBasis;
-    }
-
-    /**
      * @notice Returns true if `strategy` is present in the active strategy list for `token`.
      * @dev Membership is tracked directly in `VaultTokenStrategyConfig.active` for O(1) checks.
      *      This avoids scanning `_vaultTokenStrategies[token]` at each authorization/read call site.
@@ -1316,46 +1113,25 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         return _vaultTokenStrategyConfigs[token][strategy].active;
     }
 
-    /**
-     * @notice Returns true when a strategy is active under at least one vault token.
-     */
-    function _isGloballyActiveStrategy(address strategy) internal view returns (bool) {
-        return _activeStrategyRefCount[strategy] != 0;
-    }
-
-    /**
-     * @notice Returns true if funds may be withdrawn from `strategy` for `token`.
-     * @dev Withdrawal is permitted when the strategy is either:
-     *      - Whitelisted (`VaultTokenStrategyConfig.whitelisted == true`), OR
-     *      - Active (present in `_vaultTokenStrategies`) — i.e. in withdraw-only mode.
-     *
-     *      This keeps the deallocation path resilient during de-whitelist transitions: allocation
-     *      permission can be revoked immediately (`whitelisted = false`) while existing positions
-     *      remain withdrawable until fully drained (`active = true` until removal).
-     */
-    function _canWithdrawVaultTokenFromStrategy(address token, address strategy) internal view returns (bool) {
-        VaultTokenStrategyConfig storage cfg = _vaultTokenStrategyConfigs[token][strategy];
-        return cfg.whitelisted || cfg.active;
-    }
-
-    /**
-     * @notice Finalizes emergency unwind steps returned by the bridge library.
-     * @dev Emits skip telemetry for failed steps and applies the shared deallocation finalizer to successful ones
-     *      without re-running tracked-TVL-token reconciliation on every loop iteration.
-     * @param token Vault token being unwound.
-     * @param steps Per-strategy unwind results returned by `VaultBridgeLib`.
-     */
-    function _finalizeEmergencyUnwind(address token, VaultBridgeLib.EmergencyUnwindStep[] memory steps) internal {
-        for (uint256 i = 0; i < steps.length; ++i) {
-            VaultBridgeLib.EmergencyUnwindStep memory step = steps[i];
-            if (step.strategy == address(0)) continue;
-            if (step.skipped) {
-                emit EmergencyStrategySkipped(token, step.strategy);
-                continue;
-            }
-            if (step.request == 0) continue;
-            _finalizeDeallocation(token, step.strategy, step.request, step.reported, step.got, true, false);
+    function _requireCompatibleYieldRecipientTreasury(address treasury) internal view {
+        if (!VaultStrategyOpsLib.isCompatibleFeeReimburser(treasury)) {
+            revert IncompatibleYieldRecipientTreasury(treasury);
         }
+
+        IFeeReimburser feeTreasury = IFeeReimburser(treasury);
+        if (!feeTreasury.isAuthorizedVault(address(this))) {
+            revert IncompatibleYieldRecipientTreasury(treasury);
+        }
+    }
+
+    function _delegateToModule(address target) internal returns (bytes memory result) {
+        (bool ok, bytes memory data) = target.delegatecall(msg.data);
+        if (!ok) {
+            assembly {
+                revert(add(data, 0x20), mload(data))
+            }
+        }
+        return data;
     }
 
     /**
@@ -1367,6 +1143,7 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
         if (_isActiveVaultTokenStrategy(token, strategy)) revert InvalidParam();
         address[] storage list = _vaultTokenStrategies[token];
         if (list.length >= MAX_STRATEGIES_PER_TOKEN) revert CapExceeded();
+        if (list.length == 0) _addActiveStrategyVaultToken(token);
         list.push(strategy);
         _vaultTokenStrategyConfigs[token][strategy].active = true;
         _increaseGlobalActiveStrategy(strategy);
@@ -1398,8 +1175,41 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             list[removeIndex] = list[lastIndex];
         }
         list.pop();
+        if (list.length == 0) _removeActiveStrategyVaultToken(token);
         _vaultTokenStrategyConfigs[token][strategy].active = false;
         _decreaseGlobalActiveStrategy(strategy);
+    }
+
+    /**
+     * @notice Adds `token` to the active-lane vault-token registry if it is not already present.
+     */
+    function _addActiveStrategyVaultToken(address token) internal {
+        if (_activeStrategyVaultTokenSet[token]) return;
+        _activeStrategyVaultTokens.push(token);
+        _activeStrategyVaultTokenSet[token] = true;
+    }
+
+    /**
+     * @notice Removes `token` from the active-lane vault-token registry using swap-pop.
+     * @dev No-op if `token` is not currently tracked.
+     */
+    function _removeActiveStrategyVaultToken(address token) internal {
+        if (!_activeStrategyVaultTokenSet[token]) return;
+        uint256 removeIndex = type(uint256).max;
+        for (uint256 i = 0; i < _activeStrategyVaultTokens.length; ++i) {
+            if (_activeStrategyVaultTokens[i] == token) {
+                removeIndex = i;
+                break;
+            }
+        }
+        if (removeIndex == type(uint256).max) return;
+
+        uint256 lastIndex = _activeStrategyVaultTokens.length - 1;
+        if (removeIndex != lastIndex) {
+            _activeStrategyVaultTokens[removeIndex] = _activeStrategyVaultTokens[lastIndex];
+        }
+        _activeStrategyVaultTokens.pop();
+        delete _activeStrategyVaultTokenSet[token];
     }
 
     /**
@@ -1441,39 +1251,5 @@ contract GRVTL1TreasuryVault is Initializable, AccessControlUpgradeable, Reentra
             _activeStrategies[removeIndex] = _activeStrategies[lastIndex];
         }
         _activeStrategies.pop();
-    }
-
-    /**
-     * @notice Builds best-effort totals for one exact TVL token.
-     * @dev Scans global active strategies so non-underlying component-token queries are complete.
-     * Invalid exact-token balance reads are skipped and counted.
-     */
-    function _buildConservativeTokenTotals(
-        address token
-    ) internal view returns (ConservativeTokenTotals memory status) {
-        status.idle = idleTokenBalance(token);
-        status.total = status.idle;
-
-        address[] storage list = _activeStrategies;
-        for (uint256 i = 0; i < list.length; ++i) {
-            (bool ok, uint256 amount) = VaultStrategyOpsLib.readStrategyExactTokenBalance(token, list[i]);
-            if (!ok || amount > type(uint256).max - status.strategy || amount > type(uint256).max - status.total) {
-                unchecked {
-                    ++status.skippedStrategies;
-                }
-                continue;
-            }
-            status.strategy += amount;
-            status.total += amount;
-        }
-    }
-
-    /**
-     * @notice Validates token input for ERC20-only APIs.
-     * @dev Token-domain vault APIs never use `address(0)` as a native ETH sentinel.
-     *      Native ETH uses explicit entrypoints such as `rebalanceNativeToL2`.
-     */
-    function _requireErc20Token(address token) internal pure {
-        if (token == address(0)) revert InvalidParam();
     }
 }

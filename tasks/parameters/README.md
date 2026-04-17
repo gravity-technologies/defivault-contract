@@ -8,7 +8,6 @@ Use `tasks/parameters/<environment>/` for Hardhat task inputs such as:
 - strategy allocation and deallocation
 - yield harvests
 - yield-recipient schedule and execute flows
-- emergency bridge operations
 - vault and strategy upgrade tasks
 - failed native deposit recovery
 

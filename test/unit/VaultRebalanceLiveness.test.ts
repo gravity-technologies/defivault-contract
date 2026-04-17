@@ -162,24 +162,29 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
-  it("allows emergencyErc20ToL2 while paused and token support is disabled", async function () {
+  it("requires restoring the normal bridge path before sending funds to L2", async function () {
     const { vault, token, grvtBridgeProxyFeeToken, bridgeHub } =
       await deploySystem();
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
     await vault.write.setVaultTokenConfig([
       token.address,
       supportedTokenConfig,
     ]);
     await vault.write.setBridgeableVaultToken([token.address, true]);
-    await vault.write.setVaultTokenConfig([
-      token.address,
-      unsupportedTokenConfig,
-    ]);
-
     await token.write.mint([vault.address, 75n]);
     await vault.write.pause();
 
-    await vault.write.emergencyErc20ToL2([token.address, 75n]);
+    await viem.assertions.revertWithCustomError(
+      vault.write.rebalanceErc20ToL2([token.address, 75n]),
+      vault,
+      "Paused",
+    );
+
+    await vault.write.unpause();
+    await vault.write.rebalanceErc20ToL2([token.address, 75n]);
 
     assert.equal(await bridgeHub.read.requestCount(), 1n);
     assert.equal(await token.read.balanceOf([vault.address]), 0n);
@@ -188,10 +193,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       await grvtBridgeProxyFeeToken.read.balanceOf([bridgeHub.address]),
       1n,
     );
-    assert.equal(await vault.read.paused(), true);
   });
 
-  it("fully exits Aave exposure during emergency unwind when residual underlying is included in exposure", async function () {
+  it("manual full Aave exit while paused can be bridged after support is restored", async function () {
     const { vault, token, bridgeHub } = await deploySystem();
     const { strategy, aToken } = await deployAaveStrategy(
       vault.address,
@@ -199,7 +203,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
 
     const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([allocatorRole, admin.account.address]);
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
     await vault.write.setVaultTokenConfig([
       token.address,
@@ -227,7 +233,16 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       unsupportedTokenConfig,
     ]);
     await vault.write.pause();
-    await vault.write.emergencyErc20ToL2([token.address, 101n]);
+    await vault.write.deallocateAllVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+    ]);
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.unpause();
+    await vault.write.rebalanceErc20ToL2([token.address, 101n]);
 
     assert.equal(await bridgeHub.read.requestCount(), 1n);
     assert.equal(await token.read.balanceOf([bridgeHub.address]), 101n);
@@ -237,7 +252,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(await strategy.read.strategyExposure([token.address]), 0n);
   });
 
-  it("uses bounded Aave deallocation for partial emergency unwinds", async function () {
+  it("manual partial Aave exit while paused leaves remaining exposure for later rebalance", async function () {
     const { vault, token, bridgeHub } = await deploySystem();
     const { strategy, aToken } = await deployAaveStrategy(
       vault.address,
@@ -245,7 +260,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
 
     const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([allocatorRole, admin.account.address]);
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
     await vault.write.setVaultTokenConfig([
       token.address,
@@ -271,7 +288,17 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       unsupportedTokenConfig,
     ]);
     await vault.write.pause();
-    await vault.write.emergencyErc20ToL2([token.address, 50n]);
+    await vault.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+      50n,
+    ]);
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.unpause();
+    await vault.write.rebalanceErc20ToL2([token.address, 50n]);
 
     assert.equal(await bridgeHub.read.requestCount(), 1n);
     assert.equal(await bridgeHub.read.lastAmount(), 50n);
@@ -282,7 +309,7 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(await strategy.read.strategyExposure([token.address]), 51n);
   });
 
-  it("uses residual underlying before Aave withdraw during partial emergency unwinds", async function () {
+  it("uses residual underlying before Aave withdraw during paused manual unwinds", async function () {
     const { vault, token, bridgeHub } = await deploySystem();
     const { strategy, aToken } = await deployAaveStrategy(
       vault.address,
@@ -290,7 +317,9 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
 
     const allocatorRole = await vault.read.ALLOCATOR_ROLE();
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
     await vault.write.grantRole([allocatorRole, admin.account.address]);
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
     await vault.write.setVaultTokenConfig([
       token.address,
@@ -318,7 +347,17 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
       unsupportedTokenConfig,
     ]);
     await vault.write.pause();
-    await vault.write.emergencyErc20ToL2([token.address, 102n]);
+    await vault.write.deallocateVaultTokenFromStrategy([
+      token.address,
+      strategy.address,
+      102n,
+    ]);
+    await vault.write.setVaultTokenConfig([
+      token.address,
+      supportedTokenConfig,
+    ]);
+    await vault.write.unpause();
+    await vault.write.rebalanceErc20ToL2([token.address, 102n]);
 
     assert.equal(await bridgeHub.read.requestCount(), 1n);
     assert.equal(await bridgeHub.read.lastAmount(), 102n);
@@ -327,50 +366,6 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     assert.equal(await aToken.read.balanceOf([strategy.address]), 1n);
     assert.equal(await token.read.balanceOf([strategy.address]), 0n);
     assert.equal(await strategy.read.strategyExposure([token.address]), 1n);
-  });
-
-  it("uses Aave full-exit deallocation when the emergency unwind drains the whole strategy", async function () {
-    const { vault, token, bridgeHub } = await deploySystem();
-    const { strategy, aToken } = await deployAaveStrategy(
-      vault.address,
-      token.address,
-    );
-
-    const allocatorRole = await vault.read.ALLOCATOR_ROLE();
-    await vault.write.grantRole([allocatorRole, admin.account.address]);
-
-    await vault.write.setVaultTokenConfig([
-      token.address,
-      supportedTokenConfig,
-    ]);
-    await vault.write.setBridgeableVaultToken([token.address, true]);
-    await vault.write.setVaultTokenStrategyConfig([
-      token.address,
-      strategy.address,
-      { whitelisted: true, active: false, cap: 0n },
-    ]);
-
-    await token.write.mint([vault.address, 100n]);
-    await vault.write.allocateVaultTokenToStrategy([
-      token.address,
-      strategy.address,
-      100n,
-    ]);
-
-    await vault.write.setVaultTokenConfig([
-      token.address,
-      unsupportedTokenConfig,
-    ]);
-    await vault.write.pause();
-    await vault.write.emergencyErc20ToL2([token.address, 100n]);
-
-    assert.equal(await bridgeHub.read.requestCount(), 1n);
-    assert.equal(await bridgeHub.read.lastAmount(), 100n);
-    assert.equal(await token.read.balanceOf([bridgeHub.address]), 100n);
-    assert.equal(await token.read.balanceOf([vault.address]), 0n);
-    assert.equal(await aToken.read.balanceOf([strategy.address]), 0n);
-    assert.equal(await token.read.balanceOf([strategy.address]), 0n);
-    assert.equal(await strategy.read.strategyExposure([token.address]), 0n);
   });
 
   it("reverts rebalanceErc20ToL2 while paused", async function () {
@@ -408,23 +403,6 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
 
     await viem.assertions.revertWithCustomError(
       vault.write.rebalanceErc20ToL2([token.address, 10n]),
-      vault,
-      "TokenNotBridgeable",
-    );
-  });
-
-  it("reverts emergencyErc20ToL2 for non-bridgeable tokens even when paused", async function () {
-    const { vault, token } = await deploySystem();
-
-    await vault.write.setVaultTokenConfig([
-      token.address,
-      supportedTokenConfig,
-    ]);
-    await token.write.mint([vault.address, 50n]);
-    await vault.write.pause();
-
-    await viem.assertions.revertWithCustomError(
-      vault.write.emergencyErc20ToL2([token.address, 10n]),
       vault,
       "TokenNotBridgeable",
     );
@@ -493,23 +471,28 @@ describe("GRVTL1TreasuryVault rebalance liveness", async function () {
     );
   });
 
-  it("routes native emergency sends through native bridge branch", async function () {
+  it("requires unpause before native rebalance proceeds", async function () {
     const { vault, bridgeHub, wrappedNative, nativeBridgeGateway } =
       await deploySystem();
+    const rebalancerRole = await vault.read.REBALANCER_ROLE();
+
+    await vault.write.grantRole([rebalancerRole, admin.account.address]);
 
     await vault.write.setVaultTokenConfig([
       wrappedNative.address,
       supportedTokenConfig,
     ]);
-    await vault.write.setVaultTokenConfig([
-      wrappedNative.address,
-      unsupportedTokenConfig,
-    ]);
     await wrappedNative.write.deposit({ value: 9n });
     await wrappedNative.write.transfer([vault.address, 9n]);
     await vault.write.pause();
 
-    await vault.write.emergencyNativeToL2([9n]);
+    await viem.assertions.revertWithCustomError(
+      vault.write.rebalanceNativeToL2([9n]),
+      vault,
+      "Paused",
+    );
+    await vault.write.unpause();
+    await vault.write.rebalanceNativeToL2([9n]);
 
     const nativeTokenAddress = await bridgeHub.read.nativeTokenAddress();
     assert.equal(await bridgeHub.read.requestCount(), 1n);

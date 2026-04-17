@@ -61,7 +61,7 @@ describe("treasury vault state report helpers", function () {
       "Allocations & Deallocations",
     );
     assert.equal(eventCategory("YieldHarvested"), "Yield");
-    assert.equal(eventCategory("BridgeSentToL2"), "Bridge & Emergency");
+    assert.equal(eventCategory("BridgeSentToL2"), "Bridge");
     assert.equal(
       eventCategory("StrategyReportedReceivedMismatch"),
       "Warnings & Anomalies",
